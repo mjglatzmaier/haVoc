@@ -144,8 +144,6 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     ei.dark_sq_pawns[white] = p.get_pieces<white, pawn>() & bitboards::colored_sqs[black];
     ei.light_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[white];
     ei.dark_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[black];
-    ei.central_pawns[white] = p.get_pieces<white, pawn>() & bitboards::big_center_mask;
-    ei.central_pawns[black] = p.get_pieces<black, pawn>() & bitboards::big_center_mask;
     ei.queen_sqs[white] = p.get_pieces<white, queen>();
     ei.queen_sqs[black] = p.get_pieces<black, queen>();
     ei.pawn_holes[white] = ei.pe->backward[white] << 8;
@@ -390,15 +388,12 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         // about the bishop currently in hand.
         const bool this_light = (sq_bb & bitboards::colored_sqs[white]) != 0ULL;
 
-        // Bishop color tracking
-        if (sq_bb & bitboards::colored_sqs[white]) {
+        // Which square colors this side has a bishop on, for the pair bonus at
+        // the end of the function.
+        if (this_light)
             light_sq = true;
-            ei.bishop_colors[c][white] = true;
-        }
-        if (sq_bb & bitboards::colored_sqs[black]) {
+        else
             dark_sq = true;
-            ei.bishop_colors[c][black] = true;
-        }
 
         // X-Ray attacks on valuable pieces
         score += bits::count(bitboards::battks[s] & valuable_enemies);
