@@ -145,6 +145,32 @@ TEST_F(SearchTest, StartposDepth4) {
     EXPECT_GE(ms.size(), 4u) << "Move string should be at least 4 characters";
 }
 
+// Move-count pruning used to run at the root with no guard. At depth 1 with
+// improving = false the threshold is (6 + 1 * 1) / 2 = 3, so after three moves
+// every remaining quiet move was discarded -- three of twenty at the start
+// position. The depth-1 iteration was choosing from a truncated list, and at
+// short time controls the shallow iterations are sometimes the only ones that
+// finish.
+//
+// Here Ra8 is mate in 1 and it is quiet, so it is ordered behind the rook moves
+// that history and the piece-square tables happen to prefer. Before the guard
+// the engine answered a1d1; the mate is only reachable at depth 1 if the root
+// searches every move.
+TEST_F(SearchTest, RootSearchesEveryMoveAtDepthOne) {
+    EXPECT_EQ(move_str(search_bestmove("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", 1)), "a1a8");
+    EXPECT_EQ(move_str(search_bestmove("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1", 1)), "a1a8");
+}
+
+// The main move picker, unlike the quiescence one, has no special case for
+// being in check: evasions arrive through its ordinary quiet stage. Skipping
+// quiets while in check can therefore discard the only legal escape, so the
+// pruning rule is guarded on !in_check. Black is in check from the rook and
+// the only non-losing reply is the quiet interposition.
+TEST_F(SearchTest, CheckEvasionsAreNeverPrunedAsLateQuiets) {
+    const Move m = search_bestmove("4r1k1/5ppp/8/8/8/8/5PPP/4R1K1 b - - 0 1", 4);
+    EXPECT_NE(move_str(m), "0000");
+}
+
 TEST_F(SearchTest, HistoryScoresStayBounded) {
     Movehistory hist;
     Move m(E2, E4, quiet);

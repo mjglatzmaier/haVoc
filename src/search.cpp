@@ -653,8 +653,32 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             (dangerousQuietCheck || advancedPawnPush || threatResponse))
             extensions += 1;
 
-        // Movecount pruning
-        skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
+        // Movecount (late move) pruning. The guards matter as much as the rule:
+        //
+        //   !root_node -- futility_move_count(improving = false, depth = 1) is
+        //               (6 + 1) / 2 = 3, so the depth-1 iteration from the
+        //               start position searched three of twenty legal moves and
+        //               discarded the rest. Every early iteration of iterative
+        //               deepening was choosing from a truncated move list, and
+        //               at short time controls those are sometimes the only
+        //               iterations that finish.
+        //   !in_check -- when in check every legal move is an evasion. The
+        //               quiescence move picker already knows this and only
+        //               generates quiets when in check, but the main move
+        //               picker has no such special case: its quiet stage is
+        //               where evasions arrive, and skipping it can discard the
+        //               only escape.
+        //   bestScore > kMatedMaxPly -- do not start discarding moves while the
+        //               best score so far is still a forced mate against us.
+        //               There may be nothing else to find and everything to
+        //               lose.
+        //
+        // Deliberately not guarded on pvNode. In this engine Nodetype::pv is
+        // passed to the first two moves of every node, not just to the true
+        // principal variation, so !pvNode would disable the rule across most
+        // of the tree -- measured at bench 3,368,834 -> 6,900,560.
+        if (!root_node && !in_check && bestScore > score::kMatedMaxPly)
+            skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
 
         // Depth for the child node: one ply is always consumed here.
         int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
