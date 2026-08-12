@@ -436,33 +436,34 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         return static_eval_val;
     }
 
-    // Forward pruning conditions
-    const bool forward_prune =
-        (!in_check && !pvNode && (stack - 1)->curr_move.type == static_cast<U8>(quiet) &&
-         !stack->null_search && !singular_search && std::abs(alpha - beta) == 1 && hasStaticValue);
+    // Forward pruning conditions. `null_search` already prevents two null moves
+    // in a row, which is the only ordering restriction null-move pruning needs.
+    const bool forward_prune = (!in_check && !pvNode && !stack->null_search && !singular_search &&
+                                std::abs(alpha - beta) == 1 && hasStaticValue);
 
     // Null move pruning
     bool null_move_allowed =
         (pos.to_move() == white ? pos.non_pawn_material<white>() : pos.non_pawn_material<black>());
-    int null_penalty = (depth >= 30) ? 4 : (depth >= 20) ? 6 : 8;
 
-    if (forward_prune && null_move_allowed && depth >= 6 &&
-        static_eval_val - null_penalty * (64 - depth) >= beta) {
+    if (forward_prune && null_move_allowed && depth >= 3 && static_eval_val >= beta) {
 
-        int R = (depth >= 6 ? std::max(3, static_cast<int>(depth) / 2) : 2);
-        int ndepth = depth - R;
+        // Reduce more when the static eval is far above beta, since the null
+        // move is then more likely to hold.
+        int R = 3 + static_cast<int>(depth) / 6 + std::min(3, (static_eval_val - beta) / 200);
+        int ndepth = std::max(0, static_cast<int>(depth) - R);
 
         (stack + 1)->null_search = true;
         pos.do_null_move();
         int null_eval =
-            (ndepth <= 1 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
+            (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
                          : -search<non_pv>(pos, -beta, -beta + 1, static_cast<U16>(ndepth),
                                            stack + 1, thread_id));
         pos.undo_null_move();
         (stack + 1)->null_search = false;
 
         if (null_eval >= beta) {
-            return null_eval;
+            // A null move never proves a mate, so do not propagate mate scores.
+            return null_eval >= score::kMateMaxPly ? beta : null_eval;
         } else {
             Move tm = (stack + 1)->best_move;
             if (tm.type == static_cast<U8>(capture) && beta - null_eval >= 500)
