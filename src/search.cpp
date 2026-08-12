@@ -686,9 +686,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 int hist = history_.score(move, to_mv);
                 R += (hist < -2000) ? 1 : 0;
 
-                // Reduce more at cut nodes
-                if (!pvNode)
-                    R += 1;
+                // NOTE: non-PV nodes are *not* reduced further here. The
+                // reduction table already encodes the cut-node penalty:
+                // bitboards::reductions[0][..] is built as
+                // bitboards::reductions[1][..] + 1. Adding another +1 at this
+                // site applied the same idea twice, reducing non-PV moves by 2
+                // plies more than PV moves instead of 1.
 
                 // Reduce less for moves with good history
                 if (hist > 4000)
