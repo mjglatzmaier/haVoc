@@ -6,7 +6,10 @@
 
 namespace havoc {
 
-/// Middlegame piece-square tables [piece][square].
+/// Default middlegame piece-square tables [piece][square].
+///
+/// These are starting values only. The live tables are held in `parameters`
+/// so that they can be tuned; see square_score() in parameters.hpp.
 constexpr std::array<std::array<int, 64>, 6> kPieceSquareMiddlegame = {{
     // Pawn
     {{0,  0,  0,  0,  0,  0,  0,  0,  10, 10, 10, 10, 10, 10, 10, 10, 5, 5, 5,  20, 20, 5,
@@ -38,7 +41,7 @@ constexpr std::array<std::array<int, 64>, 6> kPieceSquareMiddlegame = {{
       -40, -30, -20, -20, -20, -20, -30, -40, -50, -30, -30, -30, -30, -30, -30, -50}},
 }};
 
-/// Endgame piece-square tables [piece][square].
+/// Default endgame piece-square tables [piece][square].
 constexpr std::array<std::array<int, 64>, 6> kPieceSquareEndgame = {{
     // Pawn
     {{0,   0,   0,   0,   0,   0,   0,   0,   5,  10, 10, 15, 15, 10, 10, 5,
@@ -69,21 +72,9 @@ constexpr std::array<std::array<int, 64>, 6> kPieceSquareEndgame = {{
       -20, -10, 0,   5,   5,   0,   -10, -20, -30, -20, -10, -10, -10, -10, -20, -30}},
 }};
 
-/// Tapered piece-square score interpolated between middlegame and endgame.
-/// game_phase: 0 = pure endgame, 24 = pure middlegame.
-template <Color c> [[nodiscard]] constexpr int square_score(Piece p, Square s, int game_phase);
-
-template <> [[nodiscard]] constexpr int square_score<white>(Piece p, Square s, int game_phase) {
-    int mid = kPieceSquareMiddlegame[p][s];
-    int eg = kPieceSquareEndgame[p][s];
-    return (eg * game_phase + mid * (24 - game_phase)) / 24;
-}
-
-template <> [[nodiscard]] constexpr int square_score<black>(Piece p, Square s, int game_phase) {
-    int s1 = 56 - 8 * sq_row(s) + sq_col(s);
-    int mid = kPieceSquareMiddlegame[p][s1];
-    int eg = kPieceSquareEndgame[p][s1];
-    return (eg * game_phase + mid * (24 - game_phase)) / 24;
+/// Mirror a square vertically, mapping black's view onto white's tables.
+[[nodiscard]] constexpr int mirror_square(Square s) {
+    return 56 - 8 * sq_row(s) + sq_col(s);
 }
 
 } // namespace havoc

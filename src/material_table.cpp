@@ -1,6 +1,7 @@
 #include "havoc/material_table.hpp"
 
 #include "havoc/bitboard.hpp"
+#include "havoc/parameters.hpp"
 #include "havoc/position.hpp"
 
 #include <algorithm>
@@ -10,10 +11,13 @@ namespace havoc {
 
 namespace {
 
-int16_t evaluate_material(const position& p, material_entry& e) {
+int16_t evaluate_material(const position& p, material_entry& e, const parameters& params) {
     constexpr int sign[2] = {1, -1};
-    constexpr float material_vals[5] = {0.0f, 300.0f, 315.0f, 480.0f, 910.0f};
     constexpr Piece pieces[4] = {knight, bishop, rook, queen};
+
+    // Piece values come from the tunable parameter set. Pawns are deliberately
+    // absent from this loop: they are scored by the pawn table, so counting
+    // them here as well would be a double count.
 
     int16_t total_score = 0;
     e.endgame = EndgameType::none;
@@ -24,7 +28,7 @@ int16_t evaluate_material(const position& p, material_entry& e) {
         for (auto piece : pieces) {
             int n = static_cast<int>(p.number_of(c, piece));
             e.number[piece] += static_cast<U8>(n);
-            total_score += static_cast<int16_t>(sign[c] * n * material_vals[piece]);
+            total_score += static_cast<int16_t>(sign[c] * n * params.material_value[piece]);
             total[c] += n;
             eg_pieces[c][piece] += n;
         }
@@ -61,7 +65,7 @@ int16_t evaluate_material(const position& p, material_entry& e) {
     else if (total_eg <= 2)
         e.endgame = EndgameType::Unknown;
 
-    // Game phase: 24 = middlegame, 0 = endgame
+    // Game phase: 0 = middlegame (full board), 24 = endgame (bare board).
     int game_phase = 24;
     game_phase -= e.number[queen] * 4;
     game_phase -= e.number[rook] * 2;
@@ -74,7 +78,7 @@ int16_t evaluate_material(const position& p, material_entry& e) {
 
 } // namespace
 
-material_table::material_table() {
+material_table::material_table(const parameters& params) : params_(&params) {
     init();
 }
 
@@ -98,7 +102,7 @@ material_entry* material_table::fetch(const position& p) const {
     }
     entries_[idx] = {};
     entries_[idx].key = k;
-    entries_[idx].score = evaluate_material(p, entries_[idx]);
+    entries_[idx].score = evaluate_material(p, entries_[idx], *params_);
     return &entries_[idx];
 }
 

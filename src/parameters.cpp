@@ -1,6 +1,7 @@
 #include "havoc/parameters.hpp"
 
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -12,8 +13,13 @@ bool parameters::load(const std::string& filename) {
         return false;
 
     std::string line;
-    auto params = all_params();
+    // save() and load() share one definition of "every tunable". When they
+    // disagreed, whole groups were written to disk and silently ignored on the
+    // way back in -- including when a tuned file was loaded into the engine
+    // over the UCI 'ParamFile' path.
+    auto params = every_param();
 
+    std::size_t applied = 0, unknown = 0;
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#')
             continue;
@@ -34,14 +40,27 @@ bool parameters::load(const std::string& filename) {
         trim(key);
         trim(val);
 
+        bool matched = false;
         for (auto& [name, ptr] : params) {
             if (name == key) {
-                *ptr = std::stoi(val);
+                try {
+                    *ptr = std::stoi(val);
+                    matched = true;
+                } catch (const std::exception&) {
+                    // Leave the parameter at its current value rather than
+                    // aborting: a single malformed line should not discard an
+                    // otherwise usable file.
+                }
                 break;
             }
         }
+        matched ? ++applied : ++unknown;
     }
-    return true;
+
+    if (unknown > 0)
+        std::cerr << "info string load_params: " << applied << " applied, " << unknown
+                  << " unrecognised key(s) ignored" << std::endl;
+    return applied > 0;
 }
 
 bool parameters::save(const std::string& filename) const {
@@ -49,13 +68,7 @@ bool parameters::save(const std::string& filename) const {
     if (!out.is_open())
         return false;
 
-    // Save all params from all stages
-    auto cat = const_cast<parameters*>(this)->all_params(TuneStage::category);
-    auto fine = const_cast<parameters*>(this)->all_params(TuneStage::fine);
-    // fine already includes shape params, so cat + fine covers everything
-    for (const auto& [name, ptr] : cat)
-        out << name << " = " << *ptr << "\n";
-    for (const auto& [name, ptr] : fine)
+    for (const auto& [name, ptr] : const_cast<parameters*>(this)->every_param())
         out << name << " = " << *ptr << "\n";
     return true;
 }
@@ -124,6 +137,26 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         return result;
     }
 
+    if (stage == TuneStage::pst) {
+        // Stage 4: the piece-square tables themselves -- 2 phases x 6 pieces
+        // x 64 squares. By far the largest group of weights in the evaluation
+        // and, until they were moved out of squares.hpp, the only major group
+        // the tuner could not see.
+        static const char* piece_names[6] = {"pawn", "knight", "bishop",
+                                             "rook", "queen",  "king"};
+        for (size_t pc = 0; pc < 6; ++pc)
+            for (size_t sq = 0; sq < 64; ++sq)
+                result.emplace_back(std::string("pst_mg_") + piece_names[pc] + "_" +
+                                        std::to_string(sq),
+                                    &pst_mg[pc][sq]);
+        for (size_t pc = 0; pc < 6; ++pc)
+            for (size_t sq = 0; sq < 64; ++sq)
+                result.emplace_back(std::string("pst_eg_") + piece_names[pc] + "_" +
+                                        std::to_string(sq),
+                                    &pst_eg[pc][sq]);
+        return result;
+    }
+
     // Stage 3 (fine): material values + everything from stage 2
     // Material values
     for (size_t i = 0; i < material_value.size(); ++i)
@@ -133,6 +166,18 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
     auto stage2 = all_params(TuneStage::shape);
     result.insert(result.end(), stage2.begin(), stage2.end());
 
+    return result;
+}
+
+std::vector<std::pair<std::string, int*>> parameters::every_param() {
+    // Single source of truth for "every tunable". save() and load() must agree
+    // on this set; when they did not, whole groups were written to disk and
+    // then silently ignored on the way back in.
+    auto result = all_params(TuneStage::category);
+    for (auto stage : {TuneStage::fine, TuneStage::pst}) {
+        auto s = all_params(stage);
+        result.insert(result.end(), s.begin(), s.end());
+    }
     return result;
 }
 

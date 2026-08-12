@@ -40,7 +40,7 @@ class EvalTest : public ::testing::Test {
 TEST_F(EvalTest, StartposIsApproximatelyZero) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -54,7 +54,7 @@ TEST_F(EvalTest, StartposIsApproximatelyZero) {
 TEST_F(EvalTest, ExtraQueenForWhite) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White has a queen, black doesn't (removed from d8)
@@ -68,7 +68,7 @@ TEST_F(EvalTest, ExtraQueenForWhite) {
 TEST_F(EvalTest, KingKnightVsKingIsDraw) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     auto pos = make_pos("8/8/8/8/4k3/8/8/K1N5 w - - 0 1");
@@ -81,7 +81,7 @@ TEST_F(EvalTest, KingKnightVsKingIsDraw) {
 TEST_F(EvalTest, EvalIsSymmetric) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // Symmetric position with white to move
@@ -191,7 +191,7 @@ TEST_F(EvalTest, TTHashfull) {    havoc::hash_table tt;
 TEST_F(EvalTest, KRK_WinningForRookSide) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White: Ke1, Ra1; Black: Ke8 — no pawns
@@ -205,7 +205,7 @@ TEST_F(EvalTest, KRK_WinningForRookSide) {
 TEST_F(EvalTest, KQK_WinningForQueenSide) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White: Ke1, Qd1; Black: Ke8 — no pawns
@@ -219,7 +219,7 @@ TEST_F(EvalTest, KQK_WinningForQueenSide) {
 TEST_F(EvalTest, OppositeColorBishops_Scaled) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // Position with opposite color bishops and equal pawns
@@ -255,6 +255,97 @@ TEST_F(EvalTest, TablebaseStubNotAvailable) {
 
 TEST_F(EvalTest, BookStubNotLoaded) {
     EXPECT_FALSE(havoc::book::is_loaded());
+}
+
+// Every parameter that save() writes must survive a load(). These two used
+// different parameter sets, so category scales and material values were
+// written to disk and then silently ignored on the way back in -- which made
+// tuned parameter files unusable even when the tuning itself was sound.
+TEST_F(EvalTest, ParameterFileRoundTripsEveryStage) {
+    havoc::parameters original;
+
+    original.sq_score_category_scale = 79;
+    original.king_safety_category_scale = 108;
+    original.passed_pawn_category_scale = 146;
+    original.king_danger_divisor = 254;
+    original.material_value[havoc::knight] = 321;
+    original.material_value[havoc::rook] = 497;
+    original.knight_mobility_scale = 117;
+
+    const std::string path = "havoc_param_roundtrip_test.txt";
+    ASSERT_TRUE(original.save(path));
+
+    havoc::parameters loaded;
+    ASSERT_TRUE(loaded.load(path));
+
+    EXPECT_EQ(loaded.sq_score_category_scale, 79);
+    EXPECT_EQ(loaded.king_safety_category_scale, 108);
+    EXPECT_EQ(loaded.passed_pawn_category_scale, 146);
+    EXPECT_EQ(loaded.king_danger_divisor, 254);
+    EXPECT_EQ(loaded.material_value[havoc::knight], 321);
+    EXPECT_EQ(loaded.material_value[havoc::rook], 497);
+    EXPECT_EQ(loaded.knight_mobility_scale, 117);
+
+    std::remove(path.c_str());
+}
+
+TEST_F(EvalTest, LoadingAMissingParameterFileFails) {
+    havoc::parameters p;
+    EXPECT_FALSE(p.load("this_file_does_not_exist_havoc.txt"));
+}
+
+// material_value used to be dead configuration: the real piece values were a
+// constexpr table inside material_table.cpp, so the tuner could move these
+// numbers all day without changing a single evaluation.
+TEST_F(EvalTest, PieceValuesAreLive) {
+    auto eval_with = [](int queen_value) {
+        havoc::parameters params;
+        params.material_value[havoc::queen] = queen_value;
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        // White is a queen up.
+        auto pos = make_pos("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+        return eval.evaluate(pos);
+    };
+
+    const int cheap = eval_with(400);
+    const int dear = eval_with(1200);
+
+    EXPECT_GT(dear, cheap) << "raising the queen's value must raise the score "
+                              "of a position that is a queen up";
+    EXPECT_GT(dear - cheap, 100);
+}
+
+// The scaling tables are indexed by the Piece enum, which runs pawn..king.
+// They were sized 5, so sq_score_scaling[king] read one past the end -- and
+// the value that happened to sit there was 0, which silently multiplied the
+// entire king piece-square table by zero.
+TEST_F(EvalTest, ScalingTablesCoverEveryPiece) {
+    havoc::parameters p;
+    EXPECT_GT(p.sq_score_scaling.size(), static_cast<size_t>(havoc::king));
+    EXPECT_GT(p.mobility_scaling.size(), static_cast<size_t>(havoc::king));
+    EXPECT_EQ(p.sq_score_scaling[havoc::king], 1);
+    EXPECT_EQ(p.mobility_scaling[havoc::king], 1);
+}
+
+TEST_F(EvalTest, KingPieceSquareTableIsLive) {
+    auto eval_with = [](int king_scaling) {
+        havoc::parameters params;
+        params.sq_score_scaling[havoc::king] = king_scaling;
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        // Material on the board, so the pawnless-endgame short circuit does
+        // not return a draw before the king table is consulted, and the kings
+        // are on *different* table entries -- a symmetric position would have
+        // the two sides' king scores cancel exactly.
+        auto pos = make_pos("r1bqkb1r/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/K1BQ1BNR w kq - 0 1");
+        return eval.evaluate(pos);
+    };
+
+    EXPECT_NE(eval_with(1), eval_with(4))
+        << "scaling the king piece-square table must change the evaluation";
 }
 
 } // namespace

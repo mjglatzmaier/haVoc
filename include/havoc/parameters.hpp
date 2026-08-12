@@ -3,6 +3,8 @@
 /// @file parameters.hpp
 /// @brief Evaluation parameters / tuning constants for the HCE evaluator.
 
+#include "havoc/squares.hpp"
+
 #include <array>
 #include <string>
 #include <utility>
@@ -14,7 +16,8 @@ namespace havoc {
 enum class TuneStage {
     category, // Stage 1: category-level scale factors
     shape,    // Stage 2: curve shapes and individual weights
-    fine      // Stage 3: PSTs, material values
+    fine,     // Stage 3: material values + stage 2
+    pst       // Stage 4: the 768 piece-square table entries
 };
 
 struct parameters {
@@ -30,11 +33,22 @@ struct parameters {
     int king_danger_divisor = 256;
     int tempo = 5; // centipawns, fixed small side-to-move advantage. Not tuned.
 
-    // Piece-square score scaling (indexed by Piece enum)
-    std::vector<int> sq_score_scaling{1, 1, 1, 1, 1};
+    // Live piece-square tables [piece][square], seeded from the defaults in
+    // squares.hpp. These are the single largest group of evaluation weights
+    // (768 numbers) and were previously constexpr, which put them entirely
+    // out of the tuner's reach.
+    std::array<std::array<int, 64>, 6> pst_mg = kPieceSquareMiddlegame;
+    std::array<std::array<int, 64>, 6> pst_eg = kPieceSquareEndgame;
+
+    // Piece-square score scaling, indexed by the Piece enum, which runs
+    // pawn..king -- six entries, not five. These were sized 5 while
+    // hce.cpp indexed them with king (== 5), reading one past the end.
+    // std::array keeps the size tied to the enum and makes the mistake
+    // impossible to repeat silently.
+    std::array<int, 6> sq_score_scaling{1, 1, 1, 1, 1, 1};
 
     // Mobility scaling (indexed by Piece enum)
-    std::vector<int> mobility_scaling{1, 1, 1, 1, 1};
+    std::array<int, 6> mobility_scaling{1, 1, 1, 1, 1, 1};
 
     // Per-piece mobility curve scale factors (percentage: 100 = 1.0x)
     int knight_mobility_scale = 100;
@@ -132,6 +146,22 @@ struct parameters {
 
     /// Returns all tunable params as name/pointer pairs for the tuner.
     std::vector<std::pair<std::string, int*>> all_params(TuneStage stage = TuneStage::shape);
+
+    /// Every tunable parameter across every stage. save() and load() both go
+    /// through this so they cannot drift apart.
+    std::vector<std::pair<std::string, int*>> every_param();
 };
+
+/// Tapered piece-square score interpolated between middlegame and endgame.
+/// game_phase: 0 = pure middlegame, 24 = pure endgame. This matches
+/// material_entry::phase_interpolant, which counts *down* from 24 as material
+/// is removed; the previous comments here and on that field had it backwards.
+template <Color c>
+[[nodiscard]] inline int square_score(const parameters& p, Piece pc, Square s, int game_phase) {
+    const int idx = (c == white) ? static_cast<int>(s) : mirror_square(s);
+    const int mid = p.pst_mg[pc][idx];
+    const int eg = p.pst_eg[pc][idx];
+    return (eg * game_phase + mid * (24 - game_phase)) / 24;
+}
 
 } // namespace havoc

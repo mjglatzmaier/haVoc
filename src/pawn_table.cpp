@@ -97,7 +97,7 @@ template <Color c> int16_t evaluate_pawns(const position& p, pawn_entry& e, cons
         int row = util::row(s);
         int col_idx = util::col(s);
 
-        score += static_cast<int16_t>(par.sq_score_scaling[pawn] * square_score<c>(pawn, s, 0));
+        score += static_cast<int16_t>(par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 0));
         score += static_cast<int16_t>(pawn_scaling[col_idx] * material_vals[pawn]);
 
         // Pawn attacks
