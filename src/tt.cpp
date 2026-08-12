@@ -16,7 +16,6 @@ inline size_t next_pow2(size_t x) {
 hash_table::hash_table() {
     resize(128);
 }
-
 void hash_table::resize(size_t size_mb) {
     sz_mb_ = size_mb;
     cluster_count_ = 1024ULL * 1024 * sz_mb_ / sizeof(hash_cluster);
@@ -46,8 +45,9 @@ bool hash_table::fetch(U64 key, hash_data& e) {
     return false;
 }
 
-void hash_table::save(U64 key, U8 depth, U8 bound, U8 age, const Move& m, int16_t score,
+void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
                       bool /*pv_node*/) {
+    const U8 age = generation_;
     entry* e = first_entry(key);
     entry* replace = e;
 
@@ -58,7 +58,7 @@ void hash_table::save(U64 key, U8 depth, U8 bound, U8 age, const Move& m, int16_
         }
 
         if ((e->pkey ^ e->dkey) == key) {
-            if (age - e->age() > 1 && depth > e->depth() - 4) {
+            if (relative_age(e->age()) > 1 && depth > e->depth() - 4) {
                 replace = e;
                 break;
             }

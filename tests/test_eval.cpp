@@ -104,7 +104,7 @@ TEST_F(EvalTest, TTStoreAndFetch) {
     tt.resize(1); // 1 MB
 
     havoc::Move m(havoc::E2, havoc::E4, havoc::quiet);
-    tt.save(0x123456789ABCDEF0ULL, 10, havoc::bound_exact, 1, m, 150, true);
+    tt.save(0x123456789ABCDEF0ULL, 10, havoc::bound_exact, m, 150, true);
 
     havoc::hash_data hd;
     bool found = tt.fetch(0x123456789ABCDEF0ULL, hd);
@@ -121,7 +121,7 @@ TEST_F(EvalTest, TTNegativeScore) {
     tt.resize(1);
 
     havoc::Move m(havoc::D7, havoc::D5, havoc::quiet);
-    tt.save(0xFEDCBA9876543210ULL, 5, havoc::bound_low, 2, m, -300, false);
+    tt.save(0xFEDCBA9876543210ULL, 5, havoc::bound_low, m, -300, false);
 
     havoc::hash_data hd;
     bool found = tt.fetch(0xFEDCBA9876543210ULL, hd);

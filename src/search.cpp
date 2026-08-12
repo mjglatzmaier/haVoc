@@ -101,6 +101,7 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
     history_.clear();
 
     signals_.stop = false;
+    tt_.new_search();
 
     p.set_nodes_searched(0);
     p.set_qnodes_searched(0);
@@ -682,7 +683,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     Bound bound = (bestScore >= beta                                        ? bound_low
                    : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                             : bound_high);
-    tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), stack->ply, best_move,
+    tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
              score_to_tt(bestScore, stack->ply), pvNode);
 
     return bestScore;
@@ -831,7 +832,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     Bound bound = (best_score >= beta                                        ? bound_low
                    : pv_type && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                              : bound_high);
-    tt_.save(p.key(), qsdepth, static_cast<U8>(bound), stack->ply, best_move,
+    tt_.save(p.key(), qsdepth, static_cast<U8>(bound), best_move,
              score_to_tt(best_score, stack->ply), pv_type);
 
     return best_score;

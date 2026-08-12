@@ -36,7 +36,8 @@ inline void prefetch(const void* addr) {
 //   bits 30-37 : depth        (8 bits)
 //   bits 38-53 : |score|      (16 bits)
 //   bit  54    : score sign   (1 bit, 1 = negative)
-//   bits 55-63 : age          (9 bits)
+//   bits 55-62 : generation   (8 bits)
+//   bit  63    : (unused)
 //
 // pkey = zobrist_key ^ dkey   (Hyatt's XOR trick)
 
@@ -100,9 +101,16 @@ struct hash_cluster {
 class hash_table {
     size_t sz_mb_ = 0;
     size_t cluster_count_ = 0;
+    U8 generation_ = 0;
     std::unique_ptr<hash_cluster[]> entries_;
 
     void alloc(size_t size_mb);
+
+    /// Number of searches elapsed since `age` was written, accounting for the
+    /// 8-bit wraparound of the generation counter.
+    [[nodiscard]] int relative_age(U8 age) const {
+        return static_cast<int>(static_cast<U8>(generation_ - age));
+    }
 
   public:
     hash_table();
@@ -113,11 +121,16 @@ class hash_table {
     hash_table& operator=(const hash_table&) = delete;
     hash_table& operator=(hash_table&&) = delete;
 
-    void save(U64 key, U8 depth, U8 bound, U8 age, const Move& m, int16_t score, bool pv_node);
+    void save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score, bool pv_node);
     bool fetch(U64 key, hash_data& e);
     void clear();
     void resize(size_t size_mb);
 
+    /// Bumps the generation counter; call once at the start of every search so
+    /// that entries from previous searches become preferred replacement victims.
+    void new_search() { ++generation_; }
+
+    [[nodiscard]] U8 generation() const { return generation_; }
     [[nodiscard]] int hashfull() const;
 
     [[nodiscard]] inline entry* first_entry(U64 key) {
