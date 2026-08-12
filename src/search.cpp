@@ -117,7 +117,7 @@ unsigned SearchEngine::reduction(bool pv_node, bool improving, int d, int mc) {
 }
 
 int SearchEngine::futility_move_count(bool improving, U16 depth) {
-    return (6 + depth * depth) / (2 - static_cast<int>(improving));
+    return (params_.futility_base + depth * depth) / (2 - static_cast<int>(improving));
 }
 
 /// Full static evaluation with lazy cutoffs disabled. Used where a score is
@@ -128,11 +128,15 @@ int SearchEngine::static_eval(position& p, int thread_id) {
 }
 
 float SearchEngine::lazy_eval_margin_search(int depth, bool advanced_pawn) {
-    return advanced_pawn ? -1.0f : 225.0f * (1.0f - std::exp((depth - 64.0f) / 20.0f));
+    return advanced_pawn ? -1.0f
+                         : static_cast<float>(params_.lazy_margin) *
+                               (1.0f - std::exp((depth - 64.0f) / 20.0f));
 }
 
 float SearchEngine::lazy_eval_margin(int depth, bool advanced_pawn) {
-    return advanced_pawn ? -1.0f : 225.0f * (1.0f - std::exp((depth - 64.0f) / 20.0f));
+    return advanced_pawn ? -1.0f
+                         : static_cast<float>(params_.lazy_margin) *
+                               (1.0f - std::exp((depth - 64.0f) / 20.0f));
 }
 
 // ─── Start search ───────────────────────────────────────────────────────────
@@ -591,8 +595,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     // Reverse futility pruning: if our static eval is so good that even after
     // subtracting a margin we still beat beta, just return the static eval.
-    if (!in_check && !pvNode && depth <= 6 && !stack->null_search && !singular_search &&
-        static_eval_val - 80 * depth >= beta && static_eval_val < score::kMate - 100) {
+    if (!in_check && !pvNode && depth <= params_.rfp_max_depth && !stack->null_search &&
+        !singular_search && static_eval_val - params_.rfp_margin * depth >= beta &&
+        static_eval_val < score::kMate - 100) {
         return static_eval_val;
     }
 
@@ -605,11 +610,13 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     bool null_move_allowed =
         (pos.to_move() == white ? pos.non_pawn_material<white>() : pos.non_pawn_material<black>());
 
-    if (forward_prune && null_move_allowed && depth >= 3 && static_eval_val >= beta) {
+    if (forward_prune && null_move_allowed && depth >= params_.nmp_min_depth &&
+        static_eval_val >= beta) {
 
         // Reduce more when the static eval is far above beta, since the null
         // move is then more likely to hold.
-        int R = 3 + static_cast<int>(depth) / 6 + std::min(3, (static_eval_val - beta) / 200);
+        int R = params_.nmp_base_r + static_cast<int>(depth) / params_.nmp_depth_div +
+                std::min(params_.nmp_eval_max, (static_eval_val - beta) / params_.nmp_eval_div);
         int ndepth = std::max(0, static_cast<int>(depth) - R);
 
         (stack + 1)->null_search = true;
@@ -688,27 +695,28 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         auto dangerousQuietCheck = isQuiet && pos.quiet_gives_dangerous_check(move);
 
         // History pruning: skip quiet moves with terrible history at shallow depths
-        if (!pvNode && !in_check && depth <= 3 && !hashOrKiller && isQuiet &&
-            bestScore > score::kMatedMaxPly) {
+        if (!pvNode && !in_check && depth <= params_.history_prune_depth && !hashOrKiller &&
+            isQuiet && bestScore > score::kMatedMaxPly) {
             int hist_score = history_.score(move, pos.to_move());
-            if (hist_score < -4096 * depth) {
+            if (hist_score < -params_.history_prune_margin * depth) {
                 continue;
             }
         }
 
         // Skip captures with negative SEE
         if (isCapture && !hashOrKiller && !pvNode && !isEvasion && !isPromotion &&
-            bestScore < alpha && depth <= 1 && moves_searched > 1 && (SEE = pos.see(move)) < 0)
+            bestScore < alpha && depth <= params_.see_prune_depth && moves_searched > 1 &&
+            (SEE = pos.see(move)) < 0)
             continue;
 
         // Singular extension: if the hash move is significantly better than
         // all alternatives, extend it by 1 ply. The alternatives are measured
         // by re-searching this node with the hash move excluded.
         int singular_ext = 0;
-        if (!root_node && !singular_search && depth >= 8 && move == ttm && !stack->null_search &&
-            ttvalue != score::kNegInf && (tt_bound == bound_low || tt_bound == bound_exact) &&
-            tt_depth >= depth - 3) {
-            int singular_beta = ttvalue - 2 * depth;
+        if (!root_node && !singular_search && depth >= params_.singular_min_depth && move == ttm &&
+            !stack->null_search && ttvalue != score::kNegInf &&
+            (tt_bound == bound_low || tt_bound == bound_exact) && tt_depth >= depth - 3) {
+            int singular_beta = ttvalue - params_.singular_margin * depth;
             int singular_depth = (depth - 1) / 2;
 
             const int16_t saved_static_eval = stack->static_eval;
@@ -805,12 +813,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             // Late move reduction
             if (!threatResponse && !hashOrKiller && !dangerousQuietCheck && !captureFollowup &&
                 !advancedPawnPush && !isPromotion && !isEvasion && !givesCheck && !anyPawnsOn7th &&
-                depth >= 3 && bestScore <= alpha) {
+                depth >= params_.lmr_min_depth && bestScore <= alpha) {
                 unsigned R = reduction(pvNode, improving, depth, moves_searched);
 
                 // Reduce more for moves with bad history
                 int hist = history_.score(move, to_mv);
-                R += (hist < -2000) ? 1 : 0;
+                R += (hist < -params_.lmr_hist_bad) ? 1 : 0;
 
                 // NOTE: non-PV nodes are *not* reduced further here. The
                 // reduction table already encodes the cut-node penalty:
@@ -820,7 +828,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 // plies more than PV moves instead of 1.
 
                 // Reduce less for moves with good history
-                if (hist > 4000)
+                if (hist > params_.lmr_hist_good)
                     R = std::max(0u, R - 1);
 
                 // Don't reduce into qsearch
@@ -895,7 +903,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     // Best move bonus
     if (bestScore >= alpha && bestScore < beta && best_move.f != best_move.t) {
-        auto bonus = 2 * depth;
+        auto bonus = params_.best_move_bonus * depth;
         apply_history_bonus(stack->best_move_history()[to_mv][best_move.f][best_move.t], bonus);
     }
 

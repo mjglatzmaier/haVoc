@@ -71,6 +71,12 @@ class SearchEngine {
     void clear();
     void load_params(const std::string& filename);
 
+    /// Direct access to the search's own parameter block. Search constants
+    /// (reductions, margins, pruning depths) have no Texel gradient and are
+    /// tuned by SPSA against game results, so tests and tuners need to be able
+    /// to perturb them in-process.
+    parameters& params() { return params_; }
+
   private:
     hash_table tt_;
     Threadpool<Searchthread> search_threads_;
@@ -116,10 +122,10 @@ class SearchEngine {
 
     // Pruning helpers
     static unsigned reduction(bool pv_node, bool improving, int d, int mc);
-    static int futility_move_count(bool improving, U16 depth);
+    int futility_move_count(bool improving, U16 depth);
     int static_eval(position& p, int thread_id);
-    static float lazy_eval_margin_search(int depth, bool advanced_pawn);
-    static float lazy_eval_margin(int depth, bool advanced_pawn);
+    float lazy_eval_margin_search(int depth, bool advanced_pawn);
+    float lazy_eval_margin(int depth, bool advanced_pawn);
 };
 
 } // namespace havoc

@@ -8,6 +8,7 @@
 
 #include <sstream>
 
+#include <functional>
 #include <limits>
 #include <utility>
 #include <set>
@@ -390,6 +391,126 @@ TEST_F(SearchTest, ARepetitionIsADrawEvenWhenTheSideToMoveIsInCheck) {
     EXPECT_GT(score, -200) << "search missed a repetition draw that arrives "
                               "while the side to move is in check";
     EXPECT_LT(score, 200);
+}
+
+// Every parameter registered in TuneStage::search must actually reach the
+// search. This is the search-side mirror of
+// EvalTest.EveryTunableParameterReachesTheEvaluation, and it exists for the
+// same reason: a knob that is registered with the tuner but wired to nothing
+// costs a full SPSA arm per iteration and produces a confident-looking value
+// that means nothing.
+//
+// The evaluation test cannot cover these. Search constants do not change what
+// any position is worth, only which nodes get visited, so perturbing one
+// leaves every static evaluation identical. The observable is the node count
+// of a fixed-depth search instead.
+TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
+    // The bench position set: the same twelve positions the engine reports
+    // node counts for, chosen to span openings, tactical middlegames and a
+    // pawn endgame. A smaller set leaves some pruning paths unvisited and
+    // makes a live parameter look dead.
+    const std::vector<std::string> fens = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/3P1N1P/PPP1NPP1/R2Q1RK1 w - - 0 1",
+        "r1bqkb1r/pppppppp/2n2n2/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+        "r1bqk2r/ppppbppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+        "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+        "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+        "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1N1P/PPP1BPP1/RNBQR1K1 w - - 0 8",
+        "2rr2k1/pp3ppp/2n1bn2/2q1p3/8/1NP2N1P/PP3PP1/R1BQR1K1 w - - 5 14",
+    };
+
+    // One engine across all twelve positions, exactly as bench does. The
+    // history table is deliberately not cleared between searches, so it only
+    // reaches useful magnitudes after several positions have contributed; a
+    // fresh engine per position keeps it near zero and makes the
+    // history-dependent parameters look dead when they are not.
+    auto nodes_with = [&](const std::function<void(parameters&)>& perturb) {
+        SearchEngine engine;
+        perturb(engine.params());
+        U64 total = 0;
+        for (const auto& fen : fens) {
+            auto pos = make_pos(fen);
+            SearchLimits lims{};
+            lims.depth = 8;
+            engine.start(pos, lims, /*silent=*/true);
+            engine.wait();
+            total += engine.total_nodes();
+        }
+        return total;
+    };
+
+    const U64 baseline = nodes_with([](parameters&) {});
+    ASSERT_GT(baseline, 0u) << "baseline search visited no nodes";
+
+    parameters probe;
+    std::vector<std::string> dead;
+
+    for (auto& [name, slot] : probe.all_params(TuneStage::search)) {
+        const int original = *slot;
+        bool moved = false;
+
+        // Try both directions and a couple of magnitudes: some of these are
+        // small integers where a large step saturates a clamp, and some are
+        // margins in centipawns where a small step is swallowed entirely.
+        for (int delta : {1, -1, 4, -4, 64, -64, 1024, -1024}) {
+            const int value = original + delta;
+            if (value < 0)
+                continue;
+            const std::string key = name;
+            if (nodes_with([&](parameters& p) {
+                    for (auto& [n, s] : p.all_params(TuneStage::search))
+                        if (n == key)
+                            *s = value;
+                }) != baseline) {
+                moved = true;
+                break;
+            }
+        }
+
+        *slot = original;
+        if (!moved)
+            dead.push_back(name);
+    }
+
+    // Parameters that no perturbation can make the search notice. Measured, not
+    // assumed: instrumenting a bench shows the raw history table spans only
+    // [-191, +7208] over an entire run, because history is a reward-dominated
+    // signal here -- 32095 bonuses against 8128 penalties, since a cutoff node
+    // has tried a mean of 0.34 quiet moves before it cuts. The negative tail
+    // therefore never approaches the thresholds these three read:
+    //
+    //   history_prune_margin  fired 0 times in 106498 opportunities
+    //   history_prune_depth   guards that same dead branch
+    //   lmr_hist_bad          fired 0 times in 79068 opportunities
+    //
+    // They are registered so the tuner can reach them once the scale mismatch
+    // between the history bonus and kMaxHistory is corrected. The assertion is
+    // that `dead` is a SUBSET of this list, so bringing one to life does not
+    // break the test but introducing a new dead knob does.
+    const std::set<std::string> known_dead = {
+        "history_prune_depth",
+        "history_prune_margin",
+        "lmr_hist_bad",
+    };
+
+    std::vector<std::string> unexpected;
+    for (const auto& d : dead)
+        if (!known_dead.count(d))
+            unexpected.push_back(d);
+
+    EXPECT_TRUE(unexpected.empty()) << "search parameters registered with the tuner that no "
+                                       "amount of perturbation can make the search notice: "
+                                    << [&] {
+                                           std::string s;
+                                           for (const auto& d : unexpected)
+                                               s += "\n  " + d;
+                                           return s;
+                                       }();
 }
 
 } // namespace

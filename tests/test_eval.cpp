@@ -613,8 +613,18 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
     auto slots = params.every_param();
     std::vector<std::string> dead;
 
+    // Search constants are tunable but deliberately invisible to the
+    // evaluation: they decide which nodes get visited, not what a position is
+    // worth. Their coverage is asserted by
+    // SearchTest.EverySearchParameterReachesTheSearch instead.
+    std::set<std::string> search_params;
+    for (auto& [name, slot] : params.all_params(havoc::TuneStage::search))
+        search_params.insert(name);
+
     for (auto& [name, slot] : slots) {
         if (name.rfind("pst_", 0) == 0)
+            continue;
+        if (search_params.count(name))
             continue;
 
         const int original = *slot;
