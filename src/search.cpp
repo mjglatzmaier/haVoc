@@ -100,6 +100,13 @@ int SearchEngine::futility_move_count(bool improving, U16 depth) {
     return (6 + depth * depth) / (2 - static_cast<int>(improving));
 }
 
+/// Full static evaluation with lazy cutoffs disabled. Used where a score is
+/// needed but the position cannot be searched any further.
+int SearchEngine::static_eval(position& p, int thread_id) {
+    auto* sthread = search_threads_[thread_id];
+    return static_cast<int>(std::lround(sthread->evaluator->evaluate(p, -1.0f)));
+}
+
 float SearchEngine::lazy_eval_margin_search(int depth, bool advanced_pawn) {
     return advanced_pawn ? -1.0f : 225.0f * (1.0f - std::exp((depth - 64.0f) / 20.0f));
 }
@@ -301,6 +308,12 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
         depth = static_cast<U16>(params_.fixed_depth);
 
     constexpr unsigned stack_size = MAX_PLY + 4;
+    // search() and qsearch() bail out at ply >= MAX_PLY, and the deepest node
+    // they can still enter before that check fires sits at index MAX_PLY + 1
+    // (the root is placed at index 2 and holds ply 1). Anything smaller would
+    // let the recursion write past the end of this array.
+    static_assert(stack_size >= MAX_PLY + 2,
+                  "search stack must hold every ply the MAX_PLY guard admits");
     SearchNode stack[stack_size];
     Move pv_line[MAX_PLY + 4];
 
@@ -406,6 +419,14 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
+
+    // The search stack is a fixed MAX_PLY + 4 array and every recursion steps
+    // one node forward, so the tree has to be cut off before it can run off the
+    // end. Nothing else bounds it: extensions can push the real ply past the
+    // nominal depth, and qsearch recurses on captures and check evasions with no
+    // depth counter at all. Return a static verdict rather than recursing.
+    if (stack->ply >= MAX_PLY)
+        return in_check ? score::kDraw : static_eval(pos, thread_id);
 
     if (!root_node && !in_check && pos.is_draw())
         return score::kDraw;
@@ -773,6 +794,11 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
     bool in_check = p.in_check();
     stack->in_check = in_check;
+
+    // See the matching guard in search(): qsearch has no depth counter, so a
+    // long chain of captures and check evasions is bounded only by the stack.
+    if (stack->ply >= MAX_PLY)
+        return in_check ? score::kDraw : static_eval(p, thread_id);
 
     hash_data e;
     e.depth = 0;

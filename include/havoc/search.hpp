@@ -94,6 +94,7 @@ class SearchEngine {
     // Pruning helpers
     static unsigned reduction(bool pv_node, bool improving, int d, int mc);
     static int futility_move_count(bool improving, U16 depth);
+    int static_eval(position& p, int thread_id);
     static float lazy_eval_margin_search(int depth, bool advanced_pawn);
     static float lazy_eval_margin(int depth, bool advanced_pawn);
 };
