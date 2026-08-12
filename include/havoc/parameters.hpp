@@ -31,7 +31,15 @@ struct parameters {
     int pawn_structure_category_scale = 100;
     int space_category_scale = 100;
     int king_danger_divisor = 256;
-    int tempo = 5; // centipawns, fixed small side-to-move advantage. Not tuned.
+    /// Bonus, in centipawns, for having the move. Measured, not assumed: this
+    /// term was effectively inert until the side-to-move convention was
+    /// unified, because the old `stm_sign * (score + tempo)` is just
+    /// `score + tempo` in white-relative terms at every leaf -- a constant
+    /// that cancels out of every comparison the search makes. Switching it on
+    /// at 5cp measured -40.1 +/- 41.9 Elo over 202 self-play games (LOS 3%):
+    /// the side-to-move oscillation it injects costs more search stability
+    /// than the term is worth here. Left at 0 pending a proper sweep.
+    int tempo = 0;
 
     // Live piece-square tables [piece][square], seeded from the defaults in
     // squares.hpp. These are the single largest group of evaluation weights

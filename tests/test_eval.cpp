@@ -354,6 +354,9 @@ TEST_F(EvalTest, KingPieceSquareTableIsLive) {
 // added after the side-to-move flip rather than before it.
 TEST_F(EvalTest, TempoFavoursWhicheverSideIsToMove) {
     havoc::parameters params;
+    // Force a non-zero tempo: the shipped default is 0, which would make this
+    // invariant hold trivially and stop it guarding anything.
+    params.tempo = 25;
     havoc::pawn_table pt(params);
     havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
@@ -369,6 +372,7 @@ TEST_F(EvalTest, TempoFavoursWhicheverSideIsToMove) {
 // the same sign convention as the full path.
 TEST_F(EvalTest, LazyEvalAgreesWithTheFullEvalOnSign) {
     havoc::parameters lazy;
+    lazy.tempo = 25;
     havoc::pawn_table lazy_pt(lazy);
     havoc::material_table lazy_mt(lazy);
     havoc::HCEEvaluator lazy_eval(lazy_pt, lazy_mt, lazy);
