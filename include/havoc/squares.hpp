@@ -73,6 +73,31 @@ constexpr std::array<std::array<int, 64>, 6> kPieceSquareEndgame = {{
 }};
 
 /// Mirror a square vertically, mapping black's view onto white's tables.
+/// kPieceSquareEndgame with the pawn row replaced by the middlegame row.
+///
+/// The hand-written endgame pawn table rewards absolute advancement of every
+/// pawn -- up to +100 on the seventh rank -- because it was written as a
+/// standalone passed-pawn signal. This engine also runs a full
+/// eval_passed_pawns(), so switching the table on counted advancement twice,
+/// and it counted it for blocked and backward pawns too, which have no such
+/// claim. On 4k3/pppppppp/8/8/PPPPPPPP/8/8/4K3 the evaluation moved from -54 to
+/// +166: a 220cp swing that changed sign. Self-play agreed -- 143 games at
+/// -29.9 +/- 50.5 with the table enabled, against 179 games at +38 with it
+/// seeded from the middlegame values, both measured from the same base.
+///
+/// The tapering machinery in pawn_table.cpp is kept: it caches both phase
+/// endpoints and interpolates in the consumer, which is what the pawn hash
+/// requires and what lets these 64 numbers be tuned at all. Only the starting
+/// values are conservative. A tuner run over pst_eg is free to rediscover
+/// endgame pawn advancement to whatever extent it is not already paid for by
+/// eval_passed_pawns.
+[[nodiscard]] constexpr std::array<std::array<int, 64>, 6> endgame_tables_as_seeded() {
+    auto tables = kPieceSquareEndgame;
+    tables[static_cast<std::size_t>(Piece::pawn)] =
+        kPieceSquareMiddlegame[static_cast<std::size_t>(Piece::pawn)];
+    return tables;
+}
+
 [[nodiscard]] constexpr int mirror_square(Square s) {
     return 56 - 8 * sq_row(s) + sq_col(s);
 }

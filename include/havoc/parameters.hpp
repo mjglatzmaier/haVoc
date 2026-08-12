@@ -46,7 +46,7 @@ struct parameters {
     // (768 numbers) and were previously constexpr, which put them entirely
     // out of the tuner's reach.
     std::array<std::array<int, 64>, 6> pst_mg = kPieceSquareMiddlegame;
-    std::array<std::array<int, 64>, 6> pst_eg = kPieceSquareEndgame;
+    std::array<std::array<int, 64>, 6> pst_eg = endgame_tables_as_seeded();
 
     // Piece-square score scaling, indexed by the Piece enum, which runs
     // pawn..king -- six entries, not five. These were sized 5 while
