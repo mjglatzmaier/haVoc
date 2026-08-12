@@ -263,36 +263,41 @@ void SearchEngine::search_timer(position& p, SearchLimits& lims) {
     signals_.stop = true;
 }
 
-double SearchEngine::estimate_max_time(position& p, SearchLimits& lims) {
+double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     if (lims.infinite || lims.ponder || lims.depth > 0)
-        return -1.0;
+        return kNoTimeLimit;
     if (lims.movetime != 0)
         return static_cast<double>(lims.movetime);
 
-    double our_time = (p.to_move() == white ? lims.wtime : lims.btime);
-    double our_inc = (p.to_move() == white ? lims.winc : lims.binc);
+    double our_time = (white_to_move ? lims.wtime : lims.btime);
+    double our_inc = (white_to_move ? lims.winc : lims.binc);
 
+    // "go" with no clock at all means there is nothing to budget against, so
+    // search until the GUI stops us.
+    const bool has_clock = lims.wtime > 0 || lims.btime > 0 || lims.winc > 0 || lims.binc > 0 ||
+                           lims.movestogo > 0;
+    if (!has_clock)
+        return kNoTimeLimit;
+
+    // Our clock is spent, or the GUI reported a negative value that the UCI
+    // layer clamped to zero. Returning kNoTimeLimit here used to mean "no
+    // limit", so the engine answered a flag-fall by thinking forever and
+    // losing on time. Move as quickly as we can instead.
     if (our_time <= 0)
-        return -1.0;
+        return kMinSearchTime;
 
-    double moves_left;
-    if (lims.movestogo > 0) {
-        moves_left = static_cast<double>(lims.movestogo);
-    } else {
-        // Sudden death: estimate moves remaining
-        moves_left = 25.0;
-    }
+    // Sudden death: assume a fixed number of moves still to play.
+    const double moves_left = (lims.movestogo > 0 ? static_cast<double>(lims.movestogo) : 25.0);
 
-    // Base time allocation
-    double base_time = our_time / moves_left + our_inc * 0.9;
+    const double base_time = our_time / moves_left + our_inc * 0.9;
+    // Never commit more than a third of what is left to a single move.
+    const double max_time = our_time * 0.33;
 
-    // Don't use more than 1/3 of remaining time
-    double max_time = our_time * 0.33;
+    return std::max(kMinSearchTime, std::min(base_time, max_time));
+}
 
-    // Apply a minimum of 50ms to avoid flagging
-    double time_limit = std::max(50.0, std::min(base_time, max_time));
-
-    return time_limit;
+double SearchEngine::estimate_max_time(position& p, SearchLimits& lims) {
+    return estimate_move_time(lims, p.to_move() == white);
 }
 
 // ─── Iterative deepening ────────────────────────────────────────────────────

@@ -18,11 +18,25 @@ namespace havoc {
 
 // ─── Search limits (from UCI go command) ────────────────────────────────────
 
+/// All values are milliseconds or plain counts and are never negative: the UCI
+/// layer clamps whatever the GUI sends. They are signed so that a negative
+/// clock reported by a GUI cannot wrap into an enormous positive budget.
 struct SearchLimits {
-    unsigned wtime = 0, btime = 0, winc = 0, binc = 0;
-    unsigned movestogo = 0, nodes = 0, movetime = 0, mate = 0, depth = 0;
+    int wtime = 0, btime = 0, winc = 0, binc = 0;
+    int movestogo = 0, nodes = 0, movetime = 0, mate = 0, depth = 0;
     bool infinite = false, ponder = false;
 };
+
+/// Floor on any timed search: below this the move is effectively instant and
+/// the overhead of starting a search dominates.
+inline constexpr double kMinSearchTime = 50.0;
+
+/// Returned when the search should run until the GUI stops it.
+inline constexpr double kNoTimeLimit = -1.0;
+
+/// Milliseconds to spend on one move given the limits the GUI reported.
+/// Kept free of the position so the policy can be tested directly.
+double estimate_move_time(const SearchLimits& lims, bool white_to_move);
 
 // ─── Search signals ─────────────────────────────────────────────────────────
 

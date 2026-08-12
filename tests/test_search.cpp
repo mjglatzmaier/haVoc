@@ -242,5 +242,68 @@ TEST_F(SearchTest, MoveOrderYieldsEveryLegalMove) {
         EXPECT_TRUE(got.count(w)) << "missing move " << w.first << "->" << w.second;
 }
 
+
+// ─── Time management ────────────────────────────────────────────────────────
+
+TEST(TimeManagement, SpentClockStillReturnsABudget) {
+    // A GUI reporting a flag-fall must not be answered with an unlimited
+    // search: that loses the game on time. The engine should move as fast as
+    // it can instead.
+    SearchLimits lims{};
+    lims.wtime = 0;
+    lims.btime = 5000;
+    EXPECT_DOUBLE_EQ(estimate_move_time(lims, /*white_to_move=*/true), kMinSearchTime);
+}
+
+TEST(TimeManagement, NegativeClockIsNotAHugeBudget) {
+    // The UCI layer clamps a negative clock to zero. If the limits were
+    // unsigned the same value would wrap to roughly 4.29e9 ms and the engine
+    // would allocate itself days of thinking time.
+    SearchLimits lims{};
+    lims.wtime = -500;
+    lims.btime = 5000;
+    // Signedness is the whole point: an unsigned field would already read back
+    // as ~4.29e9 here rather than -500.
+    EXPECT_LT(lims.wtime, 0) << "SearchLimits time fields must be signed";
+
+    lims.wtime = std::max(0, lims.wtime);
+    const double t = estimate_move_time(lims, /*white_to_move=*/true);
+    EXPECT_GT(t, 0.0);
+    EXPECT_LE(t, kMinSearchTime);
+}
+
+TEST(TimeManagement, NoClockMeansSearchUntilStopped) {
+    SearchLimits lims{};
+    EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), kNoTimeLimit);
+}
+
+TEST(TimeManagement, BudgetNeverExceedsAThirdOfTheClock) {
+    // Whatever the increment, one move must not be able to consume the clock.
+    for (int clock : {60, 200, 1000, 10000, 300000}) {
+        for (int inc : {0, 100, 1000, 60000}) {
+            SearchLimits lims{};
+            lims.wtime = clock;
+            lims.winc = inc;
+            const double t = estimate_move_time(lims, true);
+            EXPECT_LE(t, std::max(kMinSearchTime, clock * 0.33))
+                << "clock=" << clock << " inc=" << inc;
+        }
+    }
+}
+
+TEST(TimeManagement, MoreTimeMeansMoreThinking) {
+    SearchLimits a{}, b{};
+    a.wtime = 10000;
+    b.wtime = 60000;
+    EXPECT_LT(estimate_move_time(a, true), estimate_move_time(b, true));
+}
+
+TEST(TimeManagement, MovetimeIsHonouredExactly) {
+    SearchLimits lims{};
+    lims.movetime = 1234;
+    lims.wtime = 60000;
+    EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), 1234.0);
+}
+
 } // namespace
 } // namespace havoc
