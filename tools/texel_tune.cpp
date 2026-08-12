@@ -73,6 +73,8 @@ public:
     double cached_K = 0.0;
     int num_threads = 1;
     bool quiet_filter = true;
+    double lr_override = 0.0;
+    int pert_override = 0;
 
     bool load_data(const std::string& filename) {
         auto t0 = std::chrono::steady_clock::now();
@@ -193,6 +195,13 @@ public:
         case TuneStage::shape:    lr=3; pert=1; lr_decay=0.85; mom=0.7; break;
         case TuneStage::fine:     lr=1.5; pert=1; lr_decay=0.9; mom=0.8; break;
         }
+        // Large-magnitude parameters (material values run into the hundreds)
+        // produce tiny gradients under a perturbation of 1, and the integer
+        // step can round to zero for every one of them -- which presents as
+        // instant convergence. Allow both to be overridden so that case can be
+        // driven out rather than guessed at.
+        if (lr_override > 0) lr = lr_override;
+        if (pert_override > 0) pert = pert_override;
         struct Bounds { int lo, hi; };
         auto bounds = [](const std::string& n) -> Bounds {
             if (n.find("category_scale") != std::string::npos) return {10, 200};
@@ -263,7 +272,7 @@ public:
 int main(int argc, char* argv[]) {
     std::string data = "training_data.epd", pfile, out = "tuned_params.txt";
     int iters = 5, stg = 2, thr = (int)std::thread::hardware_concurrency();
-    bool qfilter = true;
+    bool qfilter = true; double lr_ov = 0.0; int pert_ov = 0;
     double fK = 0;
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
@@ -275,15 +284,18 @@ int main(int argc, char* argv[]) {
         else if (k=="--K" && i+1<argc) fK = std::stod(argv[++i]);
         else if ((k=="--threads"||k=="-t") && i+1<argc) thr = std::stoi(argv[++i]);
         else if (k=="--no-quiet-filter") qfilter = false;
+        else if (k=="--lr" && i+1<argc) lr_ov = std::stod(argv[++i]);
+        else if (k=="--pert" && i+1<argc) pert_ov = std::stoi(argv[++i]);
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
                       << "[--iterations N] [--stage 1|2|3] [--K val] [--threads N] "
-                      << "[--no-quiet-filter]\n"; return 0;
+                      << "[--no-quiet-filter] [--lr F] [--pert N]\n"; return 0;
         }
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine : TuneStage::shape);
     bitboards::init(); magics::init(); zobrist::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
+    tuner.lr_override = lr_ov; tuner.pert_override = pert_ov;
     if (!pfile.empty() && tuner.params.load(pfile))
         std::cout << "Loaded params from " << pfile << std::endl;
     if (!tuner.load_data(data)) { std::cerr << "Failed to load " << data << std::endl; return 1; }

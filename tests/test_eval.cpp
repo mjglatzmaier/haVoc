@@ -317,4 +317,35 @@ TEST_F(EvalTest, PieceValuesAreLive) {
     EXPECT_GT(dear - cheap, 100);
 }
 
+// The scaling tables are indexed by the Piece enum, which runs pawn..king.
+// They were sized 5, so sq_score_scaling[king] read one past the end -- and
+// the value that happened to sit there was 0, which silently multiplied the
+// entire king piece-square table by zero.
+TEST_F(EvalTest, ScalingTablesCoverEveryPiece) {
+    havoc::parameters p;
+    EXPECT_GT(p.sq_score_scaling.size(), static_cast<size_t>(havoc::king));
+    EXPECT_GT(p.mobility_scaling.size(), static_cast<size_t>(havoc::king));
+    EXPECT_EQ(p.sq_score_scaling[havoc::king], 1);
+    EXPECT_EQ(p.mobility_scaling[havoc::king], 1);
+}
+
+TEST_F(EvalTest, KingPieceSquareTableIsLive) {
+    auto eval_with = [](int king_scaling) {
+        havoc::parameters params;
+        params.sq_score_scaling[havoc::king] = king_scaling;
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        // Material on the board, so the pawnless-endgame short circuit does
+        // not return a draw before the king table is consulted, and the kings
+        // are on *different* table entries -- a symmetric position would have
+        // the two sides' king scores cancel exactly.
+        auto pos = make_pos("r1bqkb1r/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/K1BQ1BNR w kq - 0 1");
+        return eval.evaluate(pos);
+    };
+
+    EXPECT_NE(eval_with(1), eval_with(4))
+        << "scaling the king piece-square table must change the evaluation";
+}
+
 } // namespace

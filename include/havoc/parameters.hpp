@@ -30,11 +30,15 @@ struct parameters {
     int king_danger_divisor = 256;
     int tempo = 5; // centipawns, fixed small side-to-move advantage. Not tuned.
 
-    // Piece-square score scaling (indexed by Piece enum)
-    std::vector<int> sq_score_scaling{1, 1, 1, 1, 1};
+    // Piece-square score scaling, indexed by the Piece enum, which runs
+    // pawn..king -- six entries, not five. These were sized 5 while
+    // hce.cpp indexed them with king (== 5), reading one past the end.
+    // std::array keeps the size tied to the enum and makes the mistake
+    // impossible to repeat silently.
+    std::array<int, 6> sq_score_scaling{1, 1, 1, 1, 1, 1};
 
     // Mobility scaling (indexed by Piece enum)
-    std::vector<int> mobility_scaling{1, 1, 1, 1, 1};
+    std::array<int, 6> mobility_scaling{1, 1, 1, 1, 1, 1};
 
     // Per-piece mobility curve scale factors (percentage: 100 = 1.0x)
     int knight_mobility_scale = 100;
