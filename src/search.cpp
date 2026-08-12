@@ -521,9 +521,6 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     int16_t static_eval_val;
     if (in_check) {
         static_eval_val = score::kNegInf;
-    } else if ((stack - 2)->static_eval != score::kNegInf &&
-               (stack - 2)->static_eval >= (stack - 1)->static_eval) {
-        static_eval_val = static_cast<int16_t>((stack - 2)->static_eval + 15);
     } else {
         auto* sthread = search_threads_[thread_id];
         float lm = lazy_eval_margin_search(depth, anyPawnsOn7th);
