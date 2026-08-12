@@ -90,25 +90,36 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
         } else if (cmd == "go") {
             engine.wait(); // ensure any prior search is done
             SearchLimits lims{};
+            // GUIs are not always well behaved: they can report a negative
+            // clock when an engine has overstepped, and a malformed token
+            // would otherwise escape as an uncaught std::stoi exception and
+            // take the process down. Clamp to zero and swallow bad input.
+            auto parse_limit = [](const std::string& s) -> int {
+                try {
+                    return std::max(0, std::stoi(s));
+                } catch (const std::exception&) {
+                    return 0;
+                }
+            };
             while (instream >> cmd) {
                 if (cmd == "wtime" && instream >> cmd)
-                    lims.wtime = static_cast<unsigned>(std::stoi(cmd));
+                    lims.wtime = parse_limit(cmd);
                 else if (cmd == "btime" && instream >> cmd)
-                    lims.btime = static_cast<unsigned>(std::stoi(cmd));
+                    lims.btime = parse_limit(cmd);
                 else if (cmd == "winc" && instream >> cmd)
-                    lims.winc = static_cast<unsigned>(std::stoi(cmd));
+                    lims.winc = parse_limit(cmd);
                 else if (cmd == "binc" && instream >> cmd)
-                    lims.binc = static_cast<unsigned>(std::stoi(cmd));
+                    lims.binc = parse_limit(cmd);
                 else if (cmd == "movestogo" && instream >> cmd)
-                    lims.movestogo = static_cast<unsigned>(std::stoi(cmd));
+                    lims.movestogo = parse_limit(cmd);
                 else if (cmd == "nodes" && instream >> cmd)
-                    lims.nodes = static_cast<unsigned>(std::stoi(cmd));
+                    lims.nodes = parse_limit(cmd);
                 else if (cmd == "movetime" && instream >> cmd)
-                    lims.movetime = static_cast<unsigned>(std::stoi(cmd));
+                    lims.movetime = parse_limit(cmd);
                 else if (cmd == "mate" && instream >> cmd)
-                    lims.mate = static_cast<unsigned>(std::stoi(cmd));
+                    lims.mate = parse_limit(cmd);
                 else if (cmd == "depth" && instream >> cmd)
-                    lims.depth = static_cast<unsigned>(std::stoi(cmd));
+                    lims.depth = parse_limit(cmd);
                 else if (cmd == "infinite")
                     lims.infinite = true;
                 else if (cmd == "ponder")
@@ -169,7 +180,7 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                 std::istringstream fen(fen_str);
                 position pos(fen);
                 SearchLimits lims{};
-                lims.depth = static_cast<unsigned>(bench_depth);
+                lims.depth = bench_depth;
                 engine.start(pos, lims, true);
                 engine.wait();
                 total_nodes += engine.total_nodes();

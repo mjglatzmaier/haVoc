@@ -100,6 +100,13 @@ int SearchEngine::futility_move_count(bool improving, U16 depth) {
     return (6 + depth * depth) / (2 - static_cast<int>(improving));
 }
 
+/// Full static evaluation with lazy cutoffs disabled. Used where a score is
+/// needed but the position cannot be searched any further.
+int SearchEngine::static_eval(position& p, int thread_id) {
+    auto* sthread = search_threads_[thread_id];
+    return static_cast<int>(std::lround(sthread->evaluator->evaluate(p, -1.0f)));
+}
+
 float SearchEngine::lazy_eval_margin_search(int depth, bool advanced_pawn) {
     return advanced_pawn ? -1.0f : 225.0f * (1.0f - std::exp((depth - 64.0f) / 20.0f));
 }
@@ -137,6 +144,7 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
     for (unsigned i = 0; i < search_threads_.size(); ++i) {
         positions_.emplace_back(std::make_unique<position>(p));
     }
+    completed_depth_.assign(search_threads_.size(), 0);
 
     U16 depth = (lims.depth > 0 ? static_cast<U16>(lims.depth) : static_cast<U16>(MAX_PLY));
     searching_ = true;
@@ -165,12 +173,35 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
         search_threads_.wait_finished();
         signals_.stop = true;
 
-        // Collect results
+        // Collect results. Helper threads all search to different depths, so
+        // their root scores are not directly comparable: a shallow thread can
+        // easily return a higher score than a deeper, more reliable one. Prefer
+        // the thread that finished the deepest iteration, breaking ties on
+        // score, and prefer a proven shorter mate over any of that.
         Rootmoves bestRoots;
-        int16_t max_score = score::kNegInf;
-        for (auto& t : positions_) {
-            if (!t->root_moves.empty() && t->root_moves[0].score > max_score) {
-                max_score = t->root_moves[0].score;
+        int best_depth = -1;
+        int best_score_val = score::kNegInf;
+        for (unsigned i = 0; i < positions_.size(); ++i) {
+            const auto& t = positions_[i];
+            if (t->root_moves.empty())
+                continue;
+            const int d = (i < completed_depth_.size() ? completed_depth_[i] : 0);
+            const int sc = t->root_moves[0].score;
+            if (d <= 0)
+                continue;
+
+            const bool mate = sc >= score::kMateMaxPly;
+            const bool best_mate = best_score_val >= score::kMateMaxPly;
+
+            bool better;
+            if (mate || best_mate)
+                better = sc > best_score_val;
+            else
+                better = (d != best_depth ? d > best_depth : sc > best_score_val);
+
+            if (bestRoots.empty() || better) {
+                best_depth = d;
+                best_score_val = sc;
                 bestRoots = t->root_moves;
             }
         }
@@ -232,36 +263,41 @@ void SearchEngine::search_timer(position& p, SearchLimits& lims) {
     signals_.stop = true;
 }
 
-double SearchEngine::estimate_max_time(position& p, SearchLimits& lims) {
+double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     if (lims.infinite || lims.ponder || lims.depth > 0)
-        return -1.0;
+        return kNoTimeLimit;
     if (lims.movetime != 0)
         return static_cast<double>(lims.movetime);
 
-    double our_time = (p.to_move() == white ? lims.wtime : lims.btime);
-    double our_inc = (p.to_move() == white ? lims.winc : lims.binc);
+    double our_time = (white_to_move ? lims.wtime : lims.btime);
+    double our_inc = (white_to_move ? lims.winc : lims.binc);
 
+    // "go" with no clock at all means there is nothing to budget against, so
+    // search until the GUI stops us.
+    const bool has_clock = lims.wtime > 0 || lims.btime > 0 || lims.winc > 0 || lims.binc > 0 ||
+                           lims.movestogo > 0;
+    if (!has_clock)
+        return kNoTimeLimit;
+
+    // Our clock is spent, or the GUI reported a negative value that the UCI
+    // layer clamped to zero. Returning kNoTimeLimit here used to mean "no
+    // limit", so the engine answered a flag-fall by thinking forever and
+    // losing on time. Move as quickly as we can instead.
     if (our_time <= 0)
-        return -1.0;
+        return kMinSearchTime;
 
-    double moves_left;
-    if (lims.movestogo > 0) {
-        moves_left = static_cast<double>(lims.movestogo);
-    } else {
-        // Sudden death: estimate moves remaining
-        moves_left = 25.0;
-    }
+    // Sudden death: assume a fixed number of moves still to play.
+    const double moves_left = (lims.movestogo > 0 ? static_cast<double>(lims.movestogo) : 25.0);
 
-    // Base time allocation
-    double base_time = our_time / moves_left + our_inc * 0.9;
+    const double base_time = our_time / moves_left + our_inc * 0.9;
+    // Never commit more than a third of what is left to a single move.
+    const double max_time = our_time * 0.33;
 
-    // Don't use more than 1/3 of remaining time
-    double max_time = our_time * 0.33;
+    return std::max(kMinSearchTime, std::min(base_time, max_time));
+}
 
-    // Apply a minimum of 50ms to avoid flagging
-    double time_limit = std::max(50.0, std::min(base_time, max_time));
-
-    return time_limit;
+double SearchEngine::estimate_max_time(position& p, SearchLimits& lims) {
+    return estimate_move_time(lims, p.to_move() == white);
 }
 
 // ─── Iterative deepening ────────────────────────────────────────────────────
@@ -277,6 +313,12 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
         depth = static_cast<U16>(params_.fixed_depth);
 
     constexpr unsigned stack_size = MAX_PLY + 4;
+    // search() and qsearch() bail out at ply >= MAX_PLY, and the deepest node
+    // they can still enter before that check fires sits at index MAX_PLY + 1
+    // (the root is placed at index 2 and holds ply 1). Anything smaller would
+    // let the recursion write past the end of this array.
+    static_assert(stack_size >= MAX_PLY + 2,
+                  "search stack must hold every ply the MAX_PLY guard admits");
     SearchNode stack[stack_size];
     Move pv_line[MAX_PLY + 4];
 
@@ -289,6 +331,14 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
             break;
 
         (stack + 0)->ply = (stack + 1)->ply = (stack + 2)->ply = 0;
+
+        // Carry the last iteration's scores forward. Every root move that fails
+        // low this iteration has its score reset to -inf, so without this they
+        // would all compare equal and the ordering the previous iteration
+        // established would survive only as an accident of stable_sort. The
+        // comparator has always read prevScore; nothing ever wrote it.
+        for (auto& rm : p.root_moves)
+            rm.prevScore = rm.score;
 
         bool failLow = false;
         bool failHigh = false;
@@ -329,6 +379,9 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
                 break;
             }
         }
+
+        if (!signals_.stop.load() && thread_id < static_cast<int>(completed_depth_.size()))
+            completed_depth_[thread_id] = static_cast<int>(id);
 
         // Print PV
         if (is_main && !signals_.stop.load()) {
@@ -379,6 +432,14 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
+
+    // The search stack is a fixed MAX_PLY + 4 array and every recursion steps
+    // one node forward, so the tree has to be cut off before it can run off the
+    // end. Nothing else bounds it: extensions can push the real ply past the
+    // nominal depth, and qsearch recurses on captures and check evasions with no
+    // depth counter at all. Return a static verdict rather than recursing.
+    if (stack->ply >= MAX_PLY)
+        return in_check ? score::kDraw : static_eval(pos, thread_id);
 
     if (!root_node && !in_check && pos.is_draw())
         return score::kDraw;
@@ -594,11 +655,16 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         (stack + 1)->pv = nullptr;
 
         int score_val = score::kNegInf;
-        // PVS full-window threshold: give first N moves a full window before
-        // switching to null-window searches. Textbook PVS uses < 1, but with
-        // weaker move ordering < 3 avoids costly re-searches.
-        // TODO: revisit after Texel tuning improves move ordering (try < 2 or < 1)
-        if (moves_searched < 3) {
+        // PVS full-window threshold: give the first N moves a full window
+        // before switching to null-window searches. Textbook PVS uses < 1. This
+        // was < 3 to absorb re-searches caused by weak move ordering; with the
+        // SEE rewrite, the capture-ordering scale fix and the dropped-quiets fix
+        // the first move is now good enough often enough that the extra
+        // full-window searches cost more than the re-searches they avoid.
+        // Measured over the bench suite at fixed depth: < 3 = 3,075,308 nodes,
+        // < 2 = 2,639,419, < 1 = 2,597,543. Kept at < 2, which captures nearly
+        // all of the gain while still hedging one move.
+        if (moves_searched < 2) {
             (stack + 1)->pv = pv_line;
             (stack + 1)->pv[0].set(A1, A1, no_type);
             score_val = (newdepth <= 0
@@ -746,6 +812,11 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
     bool in_check = p.in_check();
     stack->in_check = in_check;
+
+    // See the matching guard in search(): qsearch has no depth counter, so a
+    // long chain of captures and check evasions is bounded only by the stack.
+    if (stack->ply >= MAX_PLY)
+        return in_check ? score::kDraw : static_eval(p, thread_id);
 
     hash_data e;
     e.depth = 0;

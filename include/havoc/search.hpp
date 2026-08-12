@@ -18,11 +18,25 @@ namespace havoc {
 
 // ─── Search limits (from UCI go command) ────────────────────────────────────
 
+/// All values are milliseconds or plain counts and are never negative: the UCI
+/// layer clamps whatever the GUI sends. They are signed so that a negative
+/// clock reported by a GUI cannot wrap into an enormous positive budget.
 struct SearchLimits {
-    unsigned wtime = 0, btime = 0, winc = 0, binc = 0;
-    unsigned movestogo = 0, nodes = 0, movetime = 0, mate = 0, depth = 0;
+    int wtime = 0, btime = 0, winc = 0, binc = 0;
+    int movestogo = 0, nodes = 0, movetime = 0, mate = 0, depth = 0;
     bool infinite = false, ponder = false;
 };
+
+/// Floor on any timed search: below this the move is effectively instant and
+/// the overhead of starting a search dominates.
+inline constexpr double kMinSearchTime = 50.0;
+
+/// Returned when the search should run until the GUI stops it.
+inline constexpr double kNoTimeLimit = -1.0;
+
+/// Milliseconds to spend on one move given the limits the GUI reported.
+/// Kept free of the position so the policy can be tested directly.
+double estimate_move_time(const SearchLimits& lims, bool white_to_move);
 
 // ─── Search signals ─────────────────────────────────────────────────────────
 
@@ -70,6 +84,10 @@ class SearchEngine {
 
     // Per-search state
     std::vector<std::unique_ptr<position>> positions_;
+    /// Deepest iteration each helper thread finished without being aborted.
+    /// Used to pick which thread's result to play; a thread's raw score is not
+    /// comparable across different depths.
+    std::vector<int> completed_depth_;
     Movehistory history_;
 
     // Search methods
@@ -90,6 +108,7 @@ class SearchEngine {
     // Pruning helpers
     static unsigned reduction(bool pv_node, bool improving, int d, int mc);
     static int futility_move_count(bool improving, U16 depth);
+    int static_eval(position& p, int thread_id);
     static float lazy_eval_margin_search(int depth, bool advanced_pawn);
     static float lazy_eval_margin(int depth, bool advanced_pawn);
 };

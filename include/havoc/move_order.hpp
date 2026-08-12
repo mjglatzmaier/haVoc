@@ -69,6 +69,15 @@ constexpr int kOrderAll = std::numeric_limits<int>::min();
 
 /// Applies `bonus` to `h` with a decay proportional to the value already there,
 /// which keeps |h| <= kMaxHistory while still letting recent evidence dominate.
+/// Bonus applied to the move that previously refuted this exact predecessor
+/// move, and penalty applied to a move that simply undoes the predecessor.
+/// Quiet ordering is dominated by history, which saturates at +/-kMaxHistory,
+/// so the counter-move term has to live on the same scale to have any effect:
+/// it is set to an eighth of the history range, enough to lift a plausible
+/// refutation above quiets with no track record while still letting strong
+/// history evidence outrank it.
+constexpr int kCounterMoveBonus = kMaxHistory / 8;
+
 inline void apply_history_bonus(int& h, int bonus) {
     bonus = std::clamp(bonus, -kMaxHistory, kMaxHistory);
     h += bonus - h * std::abs(bonus) / kMaxHistory;
@@ -89,10 +98,8 @@ struct Movehistory {
 
   private:
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
-    std::array<std::array<Move, squares>, squares> counters_;
     // Countermove table: indexed by [color_of_previous_move][from][to] -> best response
     std::array<std::array<std::array<Move, 64>, 64>, 2> countermoves{};
-    float counter_move_bonus_ = 5.0f;
 };
 
 // ─── Scored move ────────────────────────────────────────────────────────────
@@ -108,30 +115,46 @@ struct ScoredMove {
 
 // ─── Scoring function types ─────────────────────────────────────────────────
 
-using ScoreFunc =
-    std::function<int(const position& p, const Move& m, const Move& prev, const Move& followup,
-                      const Move& threat, SearchNode* stack, const Movehistory* hist)>;
+/// A plain function pointer rather than std::function: every scorer has this
+/// exact signature and captures nothing, and this sits on the hot path.
+using ScoreFunc = int (*)(const position& p, const Move& m, const Move& prev,
+                          const Move& followup, const Move& threat, SearchNode* stack,
+                          const Movehistory* hist);
+
+/// Upper bound on the number of moves in a position (the true maximum is 218).
+constexpr unsigned kMaxMoves = 256;
+
+/// Number of moves filtered out before scoring: hash move plus four killers.
+constexpr unsigned kNumFilters = 5;
+
+using MoveFilters = std::array<Move, kNumFilters>;
 
 // ─── Scored moves array ─────────────────────────────────────────────────────
 
 class ScoredMoves {
-    std::vector<ScoredMove> m_moves;
+    std::array<ScoredMove, kMaxMoves> m_moves;
+    unsigned m_size = 0;
     unsigned m_start = 0;
     unsigned m_end = 0;
 
-    void load_and_score(const position& p, Movegen* moves, const std::vector<Move>& filters,
+    void load_and_score(const position& p, Movegen* moves, const MoveFilters& filters,
                         const Move& previous, const Move& followup, const Move& threat,
                         SearchNode* stack, const Movehistory* hist, ScoreFunc score_lambda);
     void sort(int cutoff);
 
   public:
     ScoredMoves() = default;
-    ScoredMoves(const position& p, Movegen* m, const std::vector<Move>& filters,
-                const Move& previous, const Move& followup, const Move& threat, SearchNode* stack,
-                const Movehistory* hist, ScoreFunc score_lambda, int cutoff);
+
+    /// Replaces the contents in place. Moveorder keeps its lists by value and
+    /// refills them as the phases advance, so nothing here allocates per node.
+    void reset(const position& p, Movegen* m, const MoveFilters& filters, const Move& previous,
+               const Move& followup, const Move& threat, SearchNode* stack,
+               const Movehistory* hist, ScoreFunc score_lambda, int cutoff);
+
+    void clear() { m_size = m_start = m_end = 0; }
 
     int operator++() { return m_start++; }
-    ScoredMove front() const { return m_moves[m_start]; }
+    const ScoredMove& front() const { return m_moves[m_start]; }
     bool end() const { return m_start >= m_end; }
     unsigned size() const { return m_end - m_start; }
     void skip_rest() { m_start = m_end; }
@@ -153,10 +176,10 @@ int score_quiets(const position& p, const Move& m, const Move& prev, const Move&
 
 class Moveorder {
   protected:
-    std::unique_ptr<ScoredMoves> m_captures;
-    std::unique_ptr<ScoredMoves> m_quiets;
-    std::unique_ptr<Movegen> m_movegen;
-    std::vector<Move> killer_moves_;
+    ScoredMoves m_captures;
+    ScoredMoves m_quiets;
+    Movegen m_movegen;
+    MoveFilters killer_moves_;
     SearchNode* m_stack = nullptr;
     const Movehistory* m_hist = nullptr;
 

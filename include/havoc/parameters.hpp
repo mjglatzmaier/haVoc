@@ -117,10 +117,6 @@ struct parameters {
     // Passed pawn rank bonuses
     std::array<int, 4> passed_pawn_rank_bonus = {0, 45, 90, 180};
 
-    // Move ordering
-    static constexpr int counter_move_bonus = 5;
-    static constexpr int threat_evasion_bonus = 2;
-
     // Search
     int fixed_depth = -1;
 

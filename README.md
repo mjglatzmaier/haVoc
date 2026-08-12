@@ -145,16 +145,29 @@ Windows: [ci.yml](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml
 Being honest about where things stand:
 
 - The evaluation terms are largely hand-set. Texel tuning infrastructure exists
-  but has not produced a well-tuned parameter set yet.
-- The static exchange evaluation has known correctness problems and is being
-  reworked.
-- The search is capped at 64 plies (`MAX_PLY`).
+  but has not produced a well-tuned parameter set yet. This is the weakest part
+  of the engine by a wide margin.
+- The search is capped at 64 plies (`MAX_PLY`). Search and quiescence now stop
+  cleanly at that bound rather than running past the end of the search stack,
+  but the cap itself is low: a ten-second search already reaches ply 29, and a
+  forty-second one reaches ply 40.
+- Several depth-indexed constants (reduction and futility formulas, null-move
+  reduction, razoring and reverse-futility margins) were tuned when a bug made
+  the depth counter run at roughly twice the real remaining depth. They are all
+  now operating at a different point than the one they were chosen for, and
+  none of them has been retuned since.
+- The transposition key deliberately mixes in the fifty-move and half-move
+  counters, which blocks transpositions between identical positions reached at
+  different plies. This looks wrong and was measured: removing it costs about
+  20% more nodes, so it stays until something better replaces it.
 - Syzygy tablebase probing and Polyglot opening books are stubs.
-- No Elo measurement has been done, so there is no baseline to regress against.
+- No rating against a rated opponent has been established. Strength has only
+  ever been measured as a self-play difference against previous versions of
+  haVoc, which says nothing about where the engine sits on any public list.
 
-Possible future work, in rough order of interest: finishing evaluation tuning,
-replacing the hand-written evaluation with a learned one, Syzygy probing, and
-Chess960 support.
+Possible future work, in rough order of interest: retuning the depth-indexed
+search constants, finishing evaluation tuning, replacing the hand-written
+evaluation with a learned one, Syzygy probing, and Chess960 support.
 
 ## License
 
