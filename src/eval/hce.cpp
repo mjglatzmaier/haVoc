@@ -274,6 +274,12 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score +=
             params_.sq_score_scaling[bishop] * square_score<c>(params_, bishop, s, ei.me->phase_interpolant);
 
+        // The colour of the square this bishop is on. light_sq / dark_sq below
+        // are running "have we seen one of these" flags for the bishop pair
+        // test at the end of the function, so they must not be used to ask
+        // about the bishop currently in hand.
+        const bool this_light = (sq_bb & bitboards::colored_sqs[white]) != 0ULL;
+
         // Bishop color tracking
         if (sq_bb & bitboards::colored_sqs[white]) {
             light_sq = true;
@@ -316,7 +322,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
             bits::count(mvs & bitboards::big_center_mask) * params_.center_influence_bonus[bishop];
 
         // Long diagonal bonus
-        if (sq_bb & (light_sq ? bitboards::battks[D5] : bitboards::battks[E5]))
+        if (sq_bb & (this_light ? bitboards::battks[D5] : bitboards::battks[E5]))
             score += parameters::bishop_open_center_bonus;
 
         // Outpost
@@ -334,7 +340,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
 
         // Penalty for bishops on same color as own pawns
         int same_color_penalty = (ei.me->is_endgame() ? 3 : 1);
-        U64 fcolored_pawns = (light_sq ? flight_sq_pawns : fdark_sq_pawns);
+        U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
         // Queen attacks
