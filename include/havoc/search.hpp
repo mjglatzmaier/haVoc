@@ -58,7 +58,7 @@ class SearchEngine {
     SearchEngine();
     ~SearchEngine();
 
-    void start(position& p, SearchLimits& lims, bool silent);
+    void start(position& p, const SearchLimits& lims, bool silent);
     void stop();
     void wait();
 
@@ -99,8 +99,17 @@ class SearchEngine {
     template <Nodetype type>
     int qsearch(position& pos, int alpha, int beta, U16 depth, SearchNode* stack, int thread_id);
 
-    void search_timer(position& p, SearchLimits& lims);
-    double estimate_max_time(position& p, SearchLimits& lims);
+    /// The limits the current search is running under.
+    ///
+    /// start() hands its work to a worker thread and returns immediately, so
+    /// the SearchLimits the UCI layer built is a block-scoped local that is
+    /// destroyed while the search is still running. Capturing it by reference
+    /// left the timer thread reading a dead stack frame and budgeting the move
+    /// from whatever the next command wrote there. Owned here instead.
+    SearchLimits limits_{};
+
+    void search_timer(position& p);
+    double estimate_max_time(position& p) const;
     static void update_pv(Move* root_pv, const Move& move, Move* child);
     void readout_pv(SearchNode* stack, const Rootmoves& roots, int eval, int alpha, int beta,
                     U16 depth);
