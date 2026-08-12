@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -48,6 +49,12 @@ struct SearchNode {
 /// History scores saturate at +/-kMaxHistory so that they cannot overflow the
 /// move ordering pipeline or grow without bound over a long search.
 constexpr int kMaxHistory = 16384;
+
+/// Sentinel meaning "no cutoff" when splitting a scored move list into chunks.
+/// It has to sit below every score a scoring function can produce, so it cannot
+/// be one of the score:: constants -- those are search scores on a completely
+/// different scale to ordering scores.
+constexpr int kOrderAll = std::numeric_limits<int>::min();
 
 /// Applies `bonus` to `h` with a decay proportional to the value already there,
 /// which keeps |h| <= kMaxHistory while still letting recent evidence dominate.

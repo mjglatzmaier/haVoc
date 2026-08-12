@@ -243,10 +243,10 @@ void Moveorder::next_phase() {
         m_phase == InitQuiets) {
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodCaptures || m_phase == BadCaptures) && m_captures->end()) {
-        m_captures->create_chunk(score::kNegInf);
+        m_captures->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodQuiets || m_phase == BadQuiets) && m_quiets->end()) {
-        m_quiets->create_chunk(score::kNegInf);
+        m_quiets->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     }
 }
@@ -329,10 +329,10 @@ void QMoveorder::next_phase() {
         m_phase == InitQuiets) {
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodCaptures || m_phase == BadCaptures) && m_captures->end()) {
-        m_captures->create_chunk(score::kNegInf);
+        m_captures->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodQuiets || m_phase == BadQuiets) && m_quiets->end()) {
-        m_quiets->create_chunk(score::kNegInf);
+        m_quiets->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     }
 }

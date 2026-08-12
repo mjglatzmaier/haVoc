@@ -8,6 +8,10 @@
 
 #include <sstream>
 
+#include <limits>
+#include <utility>
+#include <set>
+
 #include <gtest/gtest.h>
 
 namespace havoc {
@@ -165,6 +169,55 @@ TEST_F(SearchTest, HistoryScoresStayBounded) {
         hist.update(white, m, prev, 20, 0, quiets, killers);
 
     EXPECT_GE(hist.score(bad, white), -kMaxHistory);
+}
+
+// Moveorder splits its scored lists into chunks with create_chunk(cutoff), and
+// the "rest of the list" pass has to use a sentinel below every score a scoring
+// function can produce. It used score::kNegInf (-10000), which is a search
+// score, not an ordering score: quiet scores already reach about +/-33000 and
+// scaled capture scores reach a few million, so any move scoring below -10000
+// was silently never handed to the search.
+TEST_F(SearchTest, MoveOrderYieldsEveryLegalMove) {
+    // A position with plenty of captures, including badly losing ones.
+    std::istringstream fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    position pos(fen);
+
+    Movegen expected(pos);
+    expected.generate<pseudo_legal, pieces>();
+    std::set<std::pair<int, int>> want;
+    for (int i = 0; i < expected.size(); ++i) {
+        if (pos.is_legal(expected[i]))
+            want.insert({expected[i].f, expected[i].t});
+    }
+    ASSERT_FALSE(want.empty());
+
+    SearchNode stack[4];
+    for (auto& n : stack)
+        n.ply = 1;
+    Movehistory hist;
+
+    // Give a losing capture a strongly negative history and a good one a
+    // strongly positive history, so ordering scores span their full range.
+    for (int i = 0; i < 100000; ++i) {
+        apply_history_bonus(stack[1].best_move_history()[white][E5][D7], -kMaxHistory);
+        apply_history_bonus(stack[1].best_move_history()[white][F3][F6], kMaxHistory);
+    }
+
+    Move hashmove{};
+    Moveorder order(pos, hashmove, &stack[1], &hist);
+    Move m{};
+    Move none{};
+    std::set<std::pair<int, int>> got;
+    while (order.next_move(pos, m, none, none, none, false, false)) {
+        if (m.type == static_cast<U8>(no_type) || m.f == m.t)
+            continue;
+        if (pos.is_legal(m))
+            got.insert({m.f, m.t});
+    }
+
+    EXPECT_EQ(got.size(), want.size()) << "move ordering dropped legal moves";
+    for (const auto& w : want)
+        EXPECT_TRUE(got.count(w)) << "missing move " << w.first << "->" << w.second;
 }
 
 } // namespace
