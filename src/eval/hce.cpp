@@ -174,7 +174,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
         U64 sq_bb = bitboards::squares[s];
 
         score +=
-            params_.sq_score_scaling[knight] * square_score<c>(knight, s, ei.me->phase_interpolant);
+            params_.sq_score_scaling[knight] * square_score<c>(params_, knight, s, ei.me->phase_interpolant);
 
         // Mobility
         U64 mvs = bitboards::nmask[s];
@@ -254,7 +254,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         U64 sq_bb = bitboards::squares[s];
 
         score +=
-            params_.sq_score_scaling[bishop] * square_score<c>(bishop, s, ei.me->phase_interpolant);
+            params_.sq_score_scaling[bishop] * square_score<c>(params_, bishop, s, ei.me->phase_interpolant);
 
         // Bishop color tracking
         if (sq_bb & bitboards::colored_sqs[white]) {
@@ -358,7 +358,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         U64 sq_bb = bitboards::squares[s];
 
         score +=
-            params_.sq_score_scaling[rook] * square_score<c>(rook, s, ei.me->phase_interpolant);
+            params_.sq_score_scaling[rook] * square_score<c>(params_, rook, s, ei.me->phase_interpolant);
 
         rookSquares[rookIdx++] = s;
 
@@ -487,7 +487,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
         // Square eval (middlegame only)
         if (!is_endgame)
             score +=
-                params_.sq_score_scaling[king] * square_score<c>(king, s, ei.me->phase_interpolant);
+                params_.sq_score_scaling[king] * square_score<c>(params_, king, s, ei.me->phase_interpolant);
 
         // Mobility
         U64 mvs = ei.kmask[c] & ei.empty;

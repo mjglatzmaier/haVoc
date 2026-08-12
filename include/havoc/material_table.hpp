@@ -16,7 +16,10 @@ struct parameters;
 struct material_entry {
     U64 key = 0;
     int16_t score = 0;
-    int phase_interpolant = 0; // 0 = endgame, 24 = middlegame
+    // 0 = middlegame (full board), 24 = endgame (bare board). The counter
+    // starts at 24 and is decremented by the material still present, so the
+    // starting position scores 0, not 24.
+    int phase_interpolant = 0;
     EndgameType endgame = EndgameType::none;
     U8 number[5]{}; // indexed by Piece (knight..queen)
 

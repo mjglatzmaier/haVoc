@@ -65,7 +65,7 @@ int16_t evaluate_material(const position& p, material_entry& e, const parameters
     else if (total_eg <= 2)
         e.endgame = EndgameType::Unknown;
 
-    // Game phase: 24 = middlegame, 0 = endgame
+    // Game phase: 0 = middlegame (full board), 24 = endgame (bare board).
     int game_phase = 24;
     game_phase -= e.number[queen] * 4;
     game_phase -= e.number[rook] * 2;
