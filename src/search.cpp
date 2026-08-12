@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <thread>
 
 namespace havoc {
@@ -34,6 +35,22 @@ inline int score_from_tt(int score, int ply) {
     if (score <= score::kMatedMaxPly)
         return score + ply;
     return score;
+}
+
+// UCI wants forced mates reported as "score mate N", where N counts moves (not
+// plies) and is negative when the side to move is getting mated. The root node
+// sits at ply 1 rather than 0, so a score of kMate - d is a mate d - 1 plies
+// away.
+inline std::string uci_score_string(int score) {
+    if (score >= score::kMateMaxPly) {
+        int plies = score::kMate - score - 1;
+        return "mate " + std::to_string((plies + 1) / 2);
+    }
+    if (score <= score::kMatedMaxPly) {
+        int plies = score - score::kMated - 1;
+        return "mate " + std::to_string(-((plies + 1) / 2));
+    }
+    return "cp " + std::to_string(score);
 }
 } // namespace
 
@@ -895,10 +912,12 @@ void SearchEngine::readout_pv(SearchNode* stack, const Rootmoves& mRoots, int ev
 
         std::cout << "info"
                   << " depth " << depth
+                  << " seldepth " << mRoots[i].selDepth
+                  << " multipv " << (i + 1)
+                  << " score " << uci_score_string(eval)
                   << (eval >= beta    ? " lowerbound"
                       : eval <= alpha ? " upperbound"
                                       : "")
-                  << " seldepth " << mRoots[i].selDepth << " multipv " << i << " score cp " << eval
                   << " nodes " << nodes << " pv " << res << std::endl;
     }
 }
