@@ -108,7 +108,7 @@ public:
         std::vector<double> errs(T, 0.0);
         std::vector<std::thread> threads;
         auto work = [&](int tid) {
-            pawn_table pt(params); material_table mt;
+            pawn_table pt(params); material_table mt(params);
             HCEEvaluator ev(pt, mt, params);
             size_t a = (N * tid) / T, b = (N * (tid + 1)) / T;
             double e = 0.0;
@@ -160,7 +160,7 @@ public:
         size_t black_to_move = 0;
         double err_white_pov = 0.0, err_raw = 0.0, mean_label = 0.0;
 
-        pawn_table pt(params); material_table mt;
+        pawn_table pt(params); material_table mt(params);
         HCEEvaluator ev(pt, mt, params);
         for (size_t i = 0; i < N; ++i) {
             if (entries[i].pos.to_move() != white) ++black_to_move;

@@ -83,6 +83,12 @@ void SearchEngine::load_params(const std::string& filename) {
     params_.load(filename);
     for (unsigned i = 0; i < search_threads_.size(); ++i) {
         search_threads_[i]->params = params_;
+        // The pawn and material tables cache scores computed under the old
+        // parameters. They are keyed by pawn/material structure, not by the
+        // parameter set, so without an explicit clear the new values would be
+        // masked by stale hits for the rest of the session.
+        search_threads_[i]->pawn_tbl.clear();
+        search_threads_[i]->material_tbl.clear();
         search_threads_[i]->evaluator = std::make_unique<HCEEvaluator>(
             search_threads_[i]->pawn_tbl, search_threads_[i]->material_tbl,
             search_threads_[i]->params);

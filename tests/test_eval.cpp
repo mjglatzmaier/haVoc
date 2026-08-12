@@ -40,7 +40,7 @@ class EvalTest : public ::testing::Test {
 TEST_F(EvalTest, StartposIsApproximatelyZero) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -54,7 +54,7 @@ TEST_F(EvalTest, StartposIsApproximatelyZero) {
 TEST_F(EvalTest, ExtraQueenForWhite) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White has a queen, black doesn't (removed from d8)
@@ -68,7 +68,7 @@ TEST_F(EvalTest, ExtraQueenForWhite) {
 TEST_F(EvalTest, KingKnightVsKingIsDraw) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     auto pos = make_pos("8/8/8/8/4k3/8/8/K1N5 w - - 0 1");
@@ -81,7 +81,7 @@ TEST_F(EvalTest, KingKnightVsKingIsDraw) {
 TEST_F(EvalTest, EvalIsSymmetric) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // Symmetric position with white to move
@@ -191,7 +191,7 @@ TEST_F(EvalTest, TTHashfull) {    havoc::hash_table tt;
 TEST_F(EvalTest, KRK_WinningForRookSide) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White: Ke1, Ra1; Black: Ke8 — no pawns
@@ -205,7 +205,7 @@ TEST_F(EvalTest, KRK_WinningForRookSide) {
 TEST_F(EvalTest, KQK_WinningForQueenSide) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // White: Ke1, Qd1; Black: Ke8 — no pawns
@@ -219,7 +219,7 @@ TEST_F(EvalTest, KQK_WinningForQueenSide) {
 TEST_F(EvalTest, OppositeColorBishops_Scaled) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
-    havoc::material_table mt;
+    havoc::material_table mt(params);
     havoc::HCEEvaluator eval(pt, mt, params);
 
     // Position with opposite color bishops and equal pawns
@@ -292,6 +292,29 @@ TEST_F(EvalTest, ParameterFileRoundTripsEveryStage) {
 TEST_F(EvalTest, LoadingAMissingParameterFileFails) {
     havoc::parameters p;
     EXPECT_FALSE(p.load("this_file_does_not_exist_havoc.txt"));
+}
+
+// material_value used to be dead configuration: the real piece values were a
+// constexpr table inside material_table.cpp, so the tuner could move these
+// numbers all day without changing a single evaluation.
+TEST_F(EvalTest, PieceValuesAreLive) {
+    auto eval_with = [](int queen_value) {
+        havoc::parameters params;
+        params.material_value[havoc::queen] = queen_value;
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        // White is a queen up.
+        auto pos = make_pos("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+        return eval.evaluate(pos);
+    };
+
+    const int cheap = eval_with(400);
+    const int dear = eval_with(1200);
+
+    EXPECT_GT(dear, cheap) << "raising the queen's value must raise the score "
+                              "of a position that is a queen up";
+    EXPECT_GT(dear - cheap, 100);
 }
 
 } // namespace

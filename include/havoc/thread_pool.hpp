@@ -42,7 +42,7 @@ class Searchthread : public Workerthread {
   public:
     parameters params;
     pawn_table pawn_tbl{params};
-    material_table material_tbl;
+    material_table material_tbl{params};
     std::unique_ptr<IEvaluator> evaluator;
 
     Searchthread() { evaluator = std::make_unique<HCEEvaluator>(pawn_tbl, material_tbl, params); }
