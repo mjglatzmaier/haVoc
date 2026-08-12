@@ -157,15 +157,17 @@ struct parameters {
     int nmp_eval_div = 200;         // extra reduction of (eval-beta)/this
     int nmp_eval_max = 3;           // ...capped here
     int futility_base = 6;          // (base + depth^2) / (2 - improving)
-    int history_prune_depth = 3;    // history pruning only below this depth
+    int history_prune_depth = 0;    // history pruning: 0 disables it
     int history_prune_margin = 4096; // ...and only below -margin*depth
     int see_prune_depth = 1;        // negative-SEE capture pruning depth
     int singular_min_depth = 8;     // singular extension minimum depth
     int singular_margin = 2;        // singular beta = ttvalue - margin*depth
     int lmr_min_depth = 3;          // late move reductions minimum depth
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
-    int lmr_hist_good = 4000;       // reduce one less ply above this
+    int lmr_hist_good = 1000;       // reduce one less ply above this
     int best_move_bonus = 2;        // best-move history bonus, times depth
+    int history_bonus_scale = 1;    // history bonus is scale * depth^2
+    int history_malus_pct = 100;    // fail-low penalty, as a percent of that
     int lazy_margin = 225;          // lazy evaluation cutoff margin
 
     static constexpr int pawn_lever_score[64] = {

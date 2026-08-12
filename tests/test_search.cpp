@@ -436,7 +436,7 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
         for (const auto& fen : fens) {
             auto pos = make_pos(fen);
             SearchLimits lims{};
-            lims.depth = 8;
+            lims.depth = 10;
             engine.start(pos, lims, /*silent=*/true);
             engine.wait();
             total += engine.total_nodes();
@@ -454,18 +454,23 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
         const int original = *slot;
         bool moved = false;
 
-        // Try both directions and a couple of magnitudes: some of these are
-        // small integers where a large step saturates a clamp, and some are
-        // margins in centipawns where a small step is swallowed entirely.
-        for (int delta : {1, -1, 4, -4, 64, -64, 1024, -1024}) {
-            const int value = original + delta;
-            if (value < 0)
+        // These span three orders of magnitude -- depths of 1 to 8 alongside
+        // margins of 4096 -- so a fixed additive step is meaningless for at
+        // least one end of the range. Probe by scale as well as by increment,
+        // and accept any perturbation at all: the question is whether the
+        // search can be made to notice this knob, not whether a particular
+        // step size does it.
+        std::vector<int> probes = {original + 1, original - 1, original * 2,
+                                   original / 2,  original * 8, original / 8,
+                                   1,             0};
+        for (int value : probes) {
+            if (value < 0 || value == original)
                 continue;
             const std::string key = name;
             if (nodes_with([&](parameters& p) {
-                    for (auto& [n, s] : p.all_params(TuneStage::search))
+                    for (auto& [n, sl] : p.all_params(TuneStage::search))
                         if (n == key)
-                            *s = value;
+                            *sl = value;
                 }) != baseline) {
                 moved = true;
                 break;
@@ -477,26 +482,22 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
             dead.push_back(name);
     }
 
-    // Parameters that no perturbation can make the search notice. Measured, not
-    // assumed: instrumenting a bench shows the raw history table spans only
-    // [-191, +7208] over an entire run, because history is a reward-dominated
-    // signal here -- 32095 bonuses against 8128 penalties, since a cutoff node
-    // has tried a mean of 0.34 quiet moves before it cuts. The negative tail
-    // therefore never approaches the thresholds these three read:
-    //
-    //   history_prune_margin  fired 0 times in 106498 opportunities
-    //   history_prune_depth   guards that same dead branch
-    //   lmr_hist_bad          fired 0 times in 79068 opportunities
-    //
-    // They are registered so the tuner can reach them once the scale mismatch
-    // between the history bonus and kMaxHistory is corrected. The assertion is
-    // that `dead` is a SUBSET of this list, so bringing one to life does not
-    // break the test but introducing a new dead knob does.
-    const std::set<std::string> known_dead = {
-        "history_prune_depth",
-        "history_prune_margin",
-        "lmr_hist_bad",
-    };
+    // Every search parameter must be live. Two of them were not: over a
+    // depth-15 bench the raw history table spanned only [-1769, +14903], so
+    // history pruning fired 0 times in 4240374 opportunities and LMR's
+    // bad-history reduction never triggered either. That was fixed by adding
+    // the missing malus on fail-low nodes, which flips the table's range to
+    // [-10184, +1797] and brings both to life. Keep this assertion strict:
+    // a knob wired to nothing costs a full SPSA arm per iteration and produces
+    // a confident-looking tuned value that means nothing.
+    // history_prune_margin is wired to live code, but that code is gated off:
+    // history_prune_depth defaults to 0. Enabling the pruning costs 8% more
+    // nodes at fixed depth (bench 694556 -> 756105), because its threshold
+    // scales with depth while history values do not, so it only ever fires at
+    // depth 1 and there it prunes moves the search needed. The knob stays
+    // registered so SPSA can revisit that judgement against game results
+    // rather than against a twelve-position node count.
+    const std::set<std::string> known_dead = {"history_prune_margin"};
 
     std::vector<std::string> unexpected;
     for (const auto& d : dead)
@@ -512,6 +513,7 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
                                            return s;
                                        }();
 }
+
 
 } // namespace
 } // namespace havoc

@@ -116,6 +116,14 @@ unsigned SearchEngine::reduction(bool pv_node, bool improving, int d, int mc) {
                                 [std::max(0, std::min(d, 63))][std::max(0, std::min(mc, 63))];
 }
 
+/// Magnitude of a history update at this depth. The table saturates at
+/// +/-kMaxHistory, and `apply_history_bonus` decays by h*|bonus|/kMaxHistory,
+/// so the bonus has to be a real fraction of that range for the mechanism to
+/// behave as designed rather than degenerate into a slow accumulator.
+int SearchEngine::history_bonus(int depth) const {
+    return params_.history_bonus_scale * depth * depth;
+}
+
 int SearchEngine::futility_move_count(bool improving, U16 depth) {
     return (params_.futility_base + depth * depth) / (2 - static_cast<int>(improving));
 }
@@ -545,8 +553,18 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             if (!pvNode && e.depth >= depth) {
                 if ((e.bound == bound_exact) || (e.bound == bound_low && ttvalue >= beta) ||
                     (e.bound == bound_high && ttvalue <= alpha)) {
-                    history_.update(pos.to_move(), ttm, (stack - 1)->curr_move, depth,
-                                    static_cast<int16_t>(ttvalue), quiets, stack->killers);
+                    // Note: this deliberately also fires on an upper-bound
+                    // entry, where every move failed low and e.move refuted
+                    // nothing. That looks wrong and was tried as a fix;
+                    // restricting the update to genuine fail-highs costs 40%
+                    // more nodes at fixed depth (bench 770124 -> 1080883).
+                    // e.move is still the best move known for this position,
+                    // and in TT-heavy regions this is the only thing that
+                    // populates killers and countermoves at all -- nodes that
+                    // return here never reach a move loop. Leave it.
+                    history_.update(pos.to_move(), ttm, (stack - 1)->curr_move,
+                                    history_bonus(depth), static_cast<int16_t>(ttvalue), quiets,
+                                    stack->killers);
                     return ttvalue;
                 }
             }
@@ -887,8 +905,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             stack->best_move = move;
 
             if (score_val >= beta) {
-                history_.update(pos.to_move(), best_move, (stack - 1)->curr_move, depth,
-                                static_cast<int16_t>(bestScore), quiets, stack->killers);
+                history_.update(pos.to_move(), best_move, (stack - 1)->curr_move,
+                                history_bonus(depth), static_cast<int16_t>(bestScore), quiets,
+                                stack->killers);
                 break;
             }
 
@@ -900,6 +919,15 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             }
         }
     }
+
+    // Every quiet tried at a node that failed low is evidence against that
+    // move. Without this the table only learns from beta cutoffs, and since a
+    // cutoff node has tried a mean of 0.34 quiets before it cuts, the negative
+    // side of the table never develops: over a depth-15 bench it bottoms out
+    // at -1769 against a history pruning threshold of -12288, so that pruning
+    // fired 0 times in 4240374 opportunities.
+    if (bestScore <= alpha_orig && !quiets.empty())
+        history_.malus(to_mv, history_bonus(depth) * params_.history_malus_pct / 100, quiets);
 
     // Best move bonus
     if (bestScore >= alpha && bestScore < beta && best_move.f != best_move.t) {

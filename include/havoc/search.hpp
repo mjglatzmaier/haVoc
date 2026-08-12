@@ -77,6 +77,11 @@ class SearchEngine {
     /// to perturb them in-process.
     parameters& params() { return params_; }
 
+    /// Read-only view of the history heuristic. Exposed so that tests can
+    /// assert which moves the search rewarded, which is otherwise only
+    /// observable as a change in move ordering several plies away.
+    const Movehistory& history() const { return history_; }
+
   private:
     hash_table tt_;
     Threadpool<Searchthread> search_threads_;
@@ -123,6 +128,7 @@ class SearchEngine {
     // Pruning helpers
     static unsigned reduction(bool pv_node, bool improving, int d, int mc);
     int futility_move_count(bool improving, U16 depth);
+    int history_bonus(int depth) const;
     int static_eval(position& p, int thread_id);
     float lazy_eval_margin_search(int depth, bool advanced_pawn);
     float lazy_eval_margin(int depth, bool advanced_pawn);

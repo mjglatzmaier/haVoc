@@ -87,8 +87,19 @@ struct Movehistory {
     Movehistory() { clear(); }
     Movehistory& operator=(const Movehistory& mh);
 
-    void update(const Color& c, const Move& m, const Move& previous, int depth, int16_t eval,
+    /// `bonus` is the magnitude applied to the cutoff move, and subtracted
+    /// from every quiet that was tried and failed. The caller computes it so
+    /// that its scale is tunable: it has to be a meaningful fraction of
+    /// kMaxHistory or the table never leaves the neighbourhood of zero and
+    /// every threshold read against it is dead.
+    void update(const Color& c, const Move& m, const Move& previous, int bonus, int16_t eval,
                 const std::vector<Move>& quiets, Move* killers);
+
+    /// Penalty applied to every quiet move that was tried at a node which
+    /// failed low. Without it the table only ever learns from beta cutoffs,
+    /// where a mean of 0.34 quiets have been tried, so the negative side never
+    /// develops and any threshold read against it is unreachable.
+    void malus(const Color& c, int bonus, const std::vector<Move>& quiets);
 
     void clear();
 

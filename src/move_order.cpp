@@ -14,9 +14,8 @@ Movehistory& Movehistory::operator=(const Movehistory& mh) {
     return *this;
 }
 
-void Movehistory::update(const Color& c, const Move& m, const Move& previous, int depth,
+void Movehistory::update(const Color& c, const Move& m, const Move& previous, int bonus,
                          int16_t eval, const std::vector<Move>& quiets, Move* killers) {
-    int bonus = depth * depth;
     if (m.type == static_cast<U8>(Movetype::quiet)) {
         apply_history_bonus(history_[c][m.f][m.t], bonus);
         if (previous.type != static_cast<U8>(no_type)) {
@@ -43,6 +42,11 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
         killers[3] = killers[2];
         killers[2] = m;
     }
+}
+
+void Movehistory::malus(const Color& c, int bonus, const std::vector<Move>& quiets) {
+    for (auto& q : quiets)
+        apply_history_bonus(history_[c][q.f][q.t], -bonus);
 }
 
 void Movehistory::clear() {
