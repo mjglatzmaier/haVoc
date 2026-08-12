@@ -69,6 +69,15 @@ constexpr int kOrderAll = std::numeric_limits<int>::min();
 
 /// Applies `bonus` to `h` with a decay proportional to the value already there,
 /// which keeps |h| <= kMaxHistory while still letting recent evidence dominate.
+/// Bonus applied to the move that previously refuted this exact predecessor
+/// move, and penalty applied to a move that simply undoes the predecessor.
+/// Quiet ordering is dominated by history, which saturates at +/-kMaxHistory,
+/// so the counter-move term has to live on the same scale to have any effect:
+/// it is set to an eighth of the history range, enough to lift a plausible
+/// refutation above quiets with no track record while still letting strong
+/// history evidence outrank it.
+constexpr int kCounterMoveBonus = kMaxHistory / 8;
+
 inline void apply_history_bonus(int& h, int bonus) {
     bonus = std::clamp(bonus, -kMaxHistory, kMaxHistory);
     h += bonus - h * std::abs(bonus) / kMaxHistory;
@@ -89,10 +98,8 @@ struct Movehistory {
 
   private:
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
-    std::array<std::array<Move, squares>, squares> counters_;
     // Countermove table: indexed by [color_of_previous_move][from][to] -> best response
     std::array<std::array<std::array<Move, 64>, 64>, 2> countermoves{};
-    float counter_move_bonus_ = 5.0f;
 };
 
 // ─── Scored move ────────────────────────────────────────────────────────────

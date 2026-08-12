@@ -10,7 +10,6 @@ namespace havoc {
 
 Movehistory& Movehistory::operator=(const Movehistory& mh) {
     std::copy(std::begin(mh.history_), std::end(mh.history_), std::begin(history_));
-    std::copy(std::begin(mh.counters_), std::end(mh.counters_), std::begin(counters_));
     countermoves = mh.countermoves;
     return *this;
 }
@@ -20,7 +19,6 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
     int bonus = depth * depth;
     if (m.type == static_cast<U8>(Movetype::quiet)) {
         apply_history_bonus(history_[c][m.f][m.t], bonus);
-        counters_[previous.f][previous.t] = m;
         if (previous.type != static_cast<U8>(no_type)) {
             int opp = 1 - static_cast<int>(c);
             countermoves[opp][previous.f][previous.t] = m;
@@ -54,9 +52,6 @@ void Movehistory::clear() {
 
     Move empty;
     empty.set(0, 0, no_type);
-    for (auto& v : counters_)
-        std::fill(v.begin(), v.end(), empty);
-
     for (auto& color : countermoves)
         for (auto& from : color)
             std::fill(from.begin(), from.end(), empty);
@@ -69,13 +64,11 @@ int Movehistory::score(const Move& m, const Color& c) const {
 int Movehistory::score(const Move& m, const Color& c, const Move& previous, const Move& followup,
                        const Move& threat) const {
     int s = history_[c][m.f][m.t];
-    if (counters_[previous.f][previous.t] == m)
-        s += static_cast<int>(counter_move_bonus_);
     int opp = 1 - static_cast<int>(c);
     if (previous.type != static_cast<U8>(no_type) && countermoves[opp][previous.f][previous.t] == m)
-        s += static_cast<int>(counter_move_bonus_);
+        s += kCounterMoveBonus;
     if (followup.type != static_cast<U8>(no_type) && followup.f == m.t && followup.t == m.f)
-        s -= static_cast<int>(counter_move_bonus_);
+        s -= kCounterMoveBonus;
     return s;
 }
 
