@@ -260,6 +260,15 @@ void position::do_move(const Move& m) {
     }
 
     // move50
+    //
+    // Note that move50 and hmvs below are folded into the main key and not into
+    // repkey, so the transposition key is deliberately path-dependent: the same
+    // position reached at a different ply, or with a different number of
+    // reversible moves behind it, hashes differently. That looks like a bug
+    // because it blocks cross-ply transpositions, but removing both terms was
+    // measured over the bench suite at fixed depth and cost 20% more nodes
+    // (2,639,419 -> 3,161,654). repkey, which repetition detection uses, is the
+    // path-independent key and must stay that way.
     if (p == pawn || t == capture)
         ifo.move50 = 0;
     else

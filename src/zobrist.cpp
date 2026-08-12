@@ -386,10 +386,14 @@ U64 stm(Color c) {
     return stm_rands[c];
 }
 U64 mv50(int move50) {
-    return move50_rands[move50];
+    return move50_rands[static_cast<unsigned>(move50) & 511u];
 }
 U64 hmvs(int halfmoves) {
-    return hmv_rands[halfmoves];
+    // The half-move counter grows without bound over a long game while the
+    // table holds 512 entries, so a game past 256 moves indexed off the end of
+    // it. Wrapping keeps every reachable game identical to before and only
+    // changes behaviour where the old code read out of bounds.
+    return hmv_rands[static_cast<unsigned>(halfmoves) & 511u];
 }
 
 } // namespace havoc::zobrist
