@@ -257,4 +257,41 @@ TEST_F(EvalTest, BookStubNotLoaded) {
     EXPECT_FALSE(havoc::book::is_loaded());
 }
 
+// Every parameter that save() writes must survive a load(). These two used
+// different parameter sets, so category scales and material values were
+// written to disk and then silently ignored on the way back in -- which made
+// tuned parameter files unusable even when the tuning itself was sound.
+TEST_F(EvalTest, ParameterFileRoundTripsEveryStage) {
+    havoc::parameters original;
+
+    original.sq_score_category_scale = 79;
+    original.king_safety_category_scale = 108;
+    original.passed_pawn_category_scale = 146;
+    original.king_danger_divisor = 254;
+    original.material_value[havoc::knight] = 321;
+    original.material_value[havoc::rook] = 497;
+    original.knight_mobility_scale = 117;
+
+    const std::string path = "havoc_param_roundtrip_test.txt";
+    ASSERT_TRUE(original.save(path));
+
+    havoc::parameters loaded;
+    ASSERT_TRUE(loaded.load(path));
+
+    EXPECT_EQ(loaded.sq_score_category_scale, 79);
+    EXPECT_EQ(loaded.king_safety_category_scale, 108);
+    EXPECT_EQ(loaded.passed_pawn_category_scale, 146);
+    EXPECT_EQ(loaded.king_danger_divisor, 254);
+    EXPECT_EQ(loaded.material_value[havoc::knight], 321);
+    EXPECT_EQ(loaded.material_value[havoc::rook], 497);
+    EXPECT_EQ(loaded.knight_mobility_scale, 117);
+
+    std::remove(path.c_str());
+}
+
+TEST_F(EvalTest, LoadingAMissingParameterFileFails) {
+    havoc::parameters p;
+    EXPECT_FALSE(p.load("this_file_does_not_exist_havoc.txt"));
+}
+
 } // namespace

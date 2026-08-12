@@ -26,5 +26,6 @@ log/*
 packages/*
 .vs/*
 build/*
+build-*/
 haVoc/*
 .vscode/*

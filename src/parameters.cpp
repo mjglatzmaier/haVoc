@@ -1,6 +1,7 @@
 #include "havoc/parameters.hpp"
 
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -12,8 +13,16 @@ bool parameters::load(const std::string& filename) {
         return false;
 
     std::string line;
-    auto params = all_params();
+    // save() writes category + fine; load() must accept exactly the same set.
+    // Using the default argument here silently restricted matching to the
+    // shape stage, so every category scale and every material value in the
+    // file was dropped without complaint -- including when a tuned file was
+    // loaded back into the engine via the UCI 'load_params' path.
+    auto params = all_params(TuneStage::category);
+    auto fine = all_params(TuneStage::fine);
+    params.insert(params.end(), fine.begin(), fine.end());
 
+    std::size_t applied = 0, unknown = 0;
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#')
             continue;
@@ -34,14 +43,27 @@ bool parameters::load(const std::string& filename) {
         trim(key);
         trim(val);
 
+        bool matched = false;
         for (auto& [name, ptr] : params) {
             if (name == key) {
-                *ptr = std::stoi(val);
+                try {
+                    *ptr = std::stoi(val);
+                    matched = true;
+                } catch (const std::exception&) {
+                    // Leave the parameter at its current value rather than
+                    // aborting: a single malformed line should not discard an
+                    // otherwise usable file.
+                }
                 break;
             }
         }
+        matched ? ++applied : ++unknown;
     }
-    return true;
+
+    if (unknown > 0)
+        std::cerr << "info string load_params: " << applied << " applied, " << unknown
+                  << " unrecognised key(s) ignored" << std::endl;
+    return applied > 0;
 }
 
 bool parameters::save(const std::string& filename) const {
