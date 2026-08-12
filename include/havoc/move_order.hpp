@@ -50,6 +50,17 @@ struct SearchNode {
 /// move ordering pipeline or grow without bound over a long search.
 constexpr int kMaxHistory = 16384;
 
+/// Capture scores combine the exchange value with a history term. The two live
+/// on very different scales -- SEE spans roughly +/-910 while history saturates
+/// at +/-kMaxHistory -- so the exchange value is scaled up before they are
+/// added. This keeps the sign of the capture score equal to the sign of the SEE
+/// value, which is what separates the good-capture phase from the bad-capture
+/// phase, and leaves history to break ties between captures of equal value.
+/// 4096 is the smallest power of two for which the narrowest gap between two
+/// distinct exchange values (15, a bishop for a knight) outweighs the full
+/// history range.
+constexpr int kCaptureSeeScale = 4096;
+
 /// Sentinel meaning "no cutoff" when splitting a scored move list into chunks.
 /// It has to sit below every score a scoring function can produce, so it cannot
 /// be one of the score:: constants -- those are search scores on a completely

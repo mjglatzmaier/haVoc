@@ -83,7 +83,7 @@ int Movehistory::score(const Move& m, const Color& c, const Move& previous, cons
 
 int score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
                    const Move& threat, SearchNode* stack, const Movehistory* hist) {
-    return p.see(m) + stack->best_move_history()[p.to_move()][m.f][m.t];
+    return p.see(m) * kCaptureSeeScale + stack->best_move_history()[p.to_move()][m.f][m.t];
 }
 
 int score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,

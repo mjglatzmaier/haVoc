@@ -171,6 +171,28 @@ TEST_F(SearchTest, HistoryScoresStayBounded) {
     EXPECT_GE(hist.score(bad, white), -kMaxHistory);
 }
 
+// The good/bad capture split is create_chunk(score::kDraw), i.e. the sign of the
+// capture score. Capture scores are see * kCaptureSeeScale + history, so the
+// scale factor has to be large enough that a saturated history score can never
+// flip that sign, or a losing capture with a good history is searched in the
+// good-capture phase and a winning capture with a poor history is deferred.
+TEST_F(SearchTest, CaptureOrderingIsDominatedBySee) {
+    // The narrowest gap between two distinct exchange values: a bishop (315)
+    // taken for a knight (300).
+    constexpr int smallest_see = 15;
+
+    EXPECT_GT(smallest_see * kCaptureSeeScale, kMaxHistory)
+        << "a saturated history score can flip the sign of a winning capture";
+
+    EXPECT_GT(smallest_see * kCaptureSeeScale, 2 * kMaxHistory)
+        << "history can reorder two captures of different exchange value";
+
+    // No overflow for the largest value see() can return.
+    constexpr int max_see = 2000;
+    EXPECT_LT(static_cast<long long>(max_see) * kCaptureSeeScale + kMaxHistory,
+              static_cast<long long>(std::numeric_limits<int>::max()));
+}
+
 // Moveorder splits its scored lists into chunks with create_chunk(cutoff), and
 // the "rest of the list" pass has to use a sentinel below every score a scoring
 // function can produce. It used score::kNegInf (-10000), which is a search
