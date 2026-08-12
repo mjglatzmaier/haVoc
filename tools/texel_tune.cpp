@@ -103,8 +103,11 @@ public:
         }
         std::cout << "Finding optimal K..." << std::flush;
         auto t0 = std::chrono::steady_clock::now();
-        double lo = 50, hi = 800;
-        for (int i = 0; i < 15; ++i) {
+        // Range deliberately wide: a K pinned against the top of the search
+        // interval silently flattens the sigmoid and shrinks every gradient,
+        // which looks like "tuning converged" rather than "K was clamped".
+        double lo = 10, hi = 4000;
+        for (int i = 0; i < 30; ++i) {
             double m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
             if (compute_error(m1) < compute_error(m2)) hi = m2; else lo = m1;
         }
