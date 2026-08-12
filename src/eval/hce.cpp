@@ -20,6 +20,59 @@ inline bool is_pawnless_endgame(const position& p) {
     return (p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>()) == 0ULL;
 }
 
+/// Evaluation for a pawnless ending in which one side is down to a lone king.
+///
+/// The ordinary evaluation is completely flat here. Every strong-side move
+/// leaves the same material, the same (empty) pawn structure and the same
+/// undefended enemy king, so the search looks out over a plateau, finds nothing
+/// to climb, and shuffles until the repetition or fifty-move rule rescues the
+/// defender. That is not a subtle weakness: haVoc could not win king and two
+/// bishops against a bare king, nor king, bishop and knight, from a standard
+/// starting position at any depth. Giving the score a gradient -- drive the
+/// defending king to the edge, and walk the attacking king in behind it --
+/// turns the plateau into a hill, which is all the search needs to find mate.
+inline int eval_bare_king(const position& p, Color strong, const parameters& params) {
+    const int sk = static_cast<int>(p.king_square(strong));
+    const int wk = static_cast<int>(p.king_square(strong == white ? black : white));
+
+    // Read the tuned piece values rather than a private table, so this path
+    // stays on the same scale as the rest of the evaluation and the tuner keeps
+    // its grip on material_value in these positions.
+    int score = 0;
+    for (int pc = pawn; pc < king; ++pc)
+        score += params.material_value[pc] * static_cast<int>(p.number_of(strong, Piece(pc)));
+
+    // 90 in a corner, falling to -90 in the centre. The distance is squared so
+    // that the last step out to the edge is worth much more than the first,
+    // which is what stops the defending king drifting back to safety.
+    const int cf = std::min(sq_col(wk), 7 - sq_col(wk));
+    const int cr = std::min(sq_row(wk), 7 - sq_row(wk));
+    score += 90 - 10 * (cf * cf + cr * cr);
+
+    // Mate needs the attacking king in opposition, and the defender has nothing
+    // better to do than run, so closing the gap is always progress.
+    score += 70 - 10 * std::max(row_dist(sk, wk), col_dist(sk, wk));
+
+    // Bishop and knight mate only in the two corners the bishop can reach, so
+    // aim at those specifically -- the generic edge term above is happy to herd
+    // the king into a corner where no mate exists, and the fifty-move rule then
+    // runs out while the engine tries to start again.
+    if (p.number_of(strong, bishop) == 1 && p.number_of(strong, knight) == 1 &&
+        p.number_of(strong, rook) == 0 && p.number_of(strong, queen) == 0) {
+        const U64 bishops =
+            strong == white ? p.get_pieces<white, bishop>() : p.get_pieces<black, bishop>();
+        const int bs = bits::lsb(bishops);
+        const bool dark = ((sq_col(bs) + sq_row(bs)) & 1) == 0;
+        const int c1 = dark ? A1 : H1;
+        const int c2 = dark ? H8 : A8;
+        const int d1 = std::max(row_dist(wk, c1), col_dist(wk, c1));
+        const int d2 = std::max(row_dist(wk, c2), col_dist(wk, c2));
+        score += 100 - 20 * std::min(d1, d2);
+    }
+
+    return score;
+}
+
 } // namespace
 
 // ─── Constructor ────────────────────────────────────────────────────────────
@@ -44,6 +97,17 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     // reverse futility and null move pruning all read this number.
     if (p.is_material_draw())
         return score::kDraw;
+
+    // A lone king with no pawns left on the board needs the dedicated gradient
+    // above, and it has to be answered here rather than at the end of the
+    // function: the material imbalance is enormous, so both lazy-evaluation
+    // exits fire long before the positional terms are ever reached.
+    if (is_pawnless_endgame(p)) {
+        if (p.get_pieces<black>() == p.get_pieces<black, king>())
+            return to_stm(p, eval_bare_king(p, white, params_), 0);
+        if (p.get_pieces<white>() == p.get_pieces<white, king>())
+            return to_stm(p, -eval_bare_king(p, black, params_), 0);
+    }
 
     int score = 0;
     einfo ei{};
