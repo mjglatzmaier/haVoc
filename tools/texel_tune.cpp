@@ -27,6 +27,19 @@ static inline double sigmoid(double eval, double K) {
     return 1.0 / (1.0 + std::pow(10.0, -eval / K));
 }
 
+/// Convert an evaluation to white's point of view.
+///
+/// HCEEvaluator::evaluate() returns a *side-to-move* relative score (positive
+/// means "good for whoever is to move"), but the training labels are the game
+/// result from *white's* point of view (1.0 = white won), constant for every
+/// position taken from that game. Comparing the two directly inverts the sign
+/// of every black-to-move position, which is roughly half the data set. The
+/// optimiser cannot represent such a target, so it drives the weights toward
+/// the degenerate "always predict 0.5" solution instead of fitting anything.
+static inline double to_white_pov(double stm_relative_eval, const position& p) {
+    return p.to_move() == white ? stm_relative_eval : -stm_relative_eval;
+}
+
 class TexelTuner {
 public:
     std::vector<TuningEntry> entries;
@@ -70,7 +83,8 @@ public:
             size_t a = (N * tid) / T, b = (N * (tid + 1)) / T;
             double e = 0.0;
             for (size_t i = a; i < b; ++i) {
-                double p = sigmoid((double)ev.evaluate(entries[i].pos, -1), K);
+                double raw = (double)ev.evaluate(entries[i].pos, -1);
+                double p = sigmoid(to_white_pov(raw, entries[i].pos), K);
                 double d = entries[i].result - p;
                 e += d * d;
             }
@@ -101,8 +115,43 @@ public:
         return cached_K;
     }
 
+    /// Report the error under both sign conventions.
+    ///
+    /// This exists to make the perspective bug visible rather than theoretical.
+    /// If the labels and the evaluation disagree about point of view, the
+    /// "white POV" and "raw stm" errors will straddle 0.25 -- the error you get
+    /// from predicting 0.5 for every position, i.e. from having learned
+    /// nothing.
+    void diagnose(double K) {
+        const size_t N = entries.size();
+        size_t black_to_move = 0;
+        double err_white_pov = 0.0, err_raw = 0.0, mean_label = 0.0;
+
+        pawn_table pt(params); material_table mt;
+        HCEEvaluator ev(pt, mt, params);
+        for (size_t i = 0; i < N; ++i) {
+            if (entries[i].pos.to_move() != white) ++black_to_move;
+            mean_label += entries[i].result;
+            double raw = (double)ev.evaluate(entries[i].pos, -1);
+            double dw = entries[i].result - sigmoid(to_white_pov(raw, entries[i].pos), K);
+            double dr = entries[i].result - sigmoid(raw, K);
+            err_white_pov += dw * dw;
+            err_raw += dr * dr;
+        }
+        std::cout << "\n--- data diagnostics (K=" << K << ") ---\n"
+                  << "  positions          : " << N << "\n"
+                  << "  black to move      : " << black_to_move << " ("
+                  << (100.0 * (double)black_to_move / (double)N) << "%)\n"
+                  << "  mean label         : " << (mean_label / (double)N) << "\n"
+                  << "  error (white POV)  : " << (err_white_pov / (double)N) << "\n"
+                  << "  error (raw stm)    : " << (err_raw / (double)N) << "\n"
+                  << "  error (predict 0.5): 0.25\n"
+                  << "-------------------------------" << std::endl;
+    }
+
     void optimize(int iters, TuneStage stage, const std::string& ckpt) {
         double K = find_optimal_K();
+        diagnose(K);
         auto tunable = params.all_params(stage);
         const size_t NP = tunable.size();
         double lr, lr_decay, mom; int pert;
