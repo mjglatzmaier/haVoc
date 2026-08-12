@@ -25,6 +25,14 @@ void loop(SearchEngine& engine) {
         if (!parse_command(input, engine, uci_pos))
             break;
     }
+
+    // getline fails on EOF as well as on "quit", and a GUI that dies or simply
+    // closes the pipe never sends "quit". The search runs on worker threads
+    // that hold a reference to uci_pos, so returning here while one is still
+    // in flight destroys the position underneath them. The quit branch of
+    // parse_command already does this; do it on every exit from the loop.
+    engine.stop();
+    engine.wait();
 }
 
 bool parse_command(const std::string& input, SearchEngine& engine, position& uci_pos) {
