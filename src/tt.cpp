@@ -47,33 +47,56 @@ bool hash_table::fetch(U64 key, hash_data& e) {
 
 void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
                       bool /*pv_node*/) {
-    const U8 age = generation_;
-    entry* e = first_entry(key);
-    entry* replace = e;
+    entry* const first = first_entry(key);
+    entry* replace = nullptr;
+    bool same_key = false;
 
-    for (unsigned i = 0; i < cluster_size; ++i, ++e) {
+    for (unsigned i = 0; i < cluster_size; ++i) {
+        entry* e = first + i;
         if (e->empty()) {
             replace = e;
             break;
         }
-
         if ((e->pkey ^ e->dkey) == key) {
-            if (relative_age(e->age()) > 1 && depth > e->depth() - 4) {
-                replace = e;
-                break;
-            }
-            if (e->depth() < depth) {
-                replace = e;
-                break;
-            }
-            if (e->bound() != Bound::bound_low && bound == Bound::bound_low) {
-                replace = e;
-                continue;
+            replace = e;
+            same_key = true;
+            break;
+        }
+    }
+
+    // The cluster is full and holds nothing for this key, so something has to
+    // go. Evict whichever entry we are least likely to want again: shallow
+    // entries first, and entries left over from earlier searches before those
+    // written by the current one.
+    if (replace == nullptr) {
+        replace = first;
+        int worst = entry_value(first);
+        for (unsigned i = 1; i < cluster_size; ++i) {
+            const int value = entry_value(first + i);
+            if (value < worst) {
+                worst = value;
+                replace = first + i;
             }
         }
     }
 
-    replace->encode(depth, bound, age, m, score);
+    Move best = m;
+    if (same_key) {
+        hash_data existing;
+        existing.decode(replace->dkey);
+
+        // Keep a much deeper result from this same search unless the new one is
+        // exact, which is always worth having.
+        if (bound != Bound::bound_exact && relative_age(existing.age) == 0 &&
+            static_cast<int>(depth) + 4 < static_cast<int>(existing.depth))
+            return;
+
+        // Never trade a usable move for no move at all.
+        if (best.is_null())
+            best = existing.move;
+    }
+
+    replace->encode(depth, bound, generation_, best, score);
     replace->pkey = key ^ replace->dkey;
 }
 

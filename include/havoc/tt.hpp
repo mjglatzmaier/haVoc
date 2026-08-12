@@ -112,6 +112,11 @@ class hash_table {
         return static_cast<int>(static_cast<U8>(generation_ - age));
     }
 
+    /// Eviction priority: deep, recently written entries are worth keeping.
+    [[nodiscard]] int entry_value(const entry* e) const {
+        return static_cast<int>(e->depth()) - 8 * relative_age(e->age());
+    }
+
   public:
     hash_table();
     hash_table(const hash_table&) = delete;
