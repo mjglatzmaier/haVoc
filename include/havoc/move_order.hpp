@@ -30,6 +30,10 @@ struct SearchNode {
     bool in_check = false;
     bool null_search = false;
     Move curr_move, best_move, threat_move;
+    /// Set while verifying whether `excluded_move` is singular: the node is
+    /// re-searched with this move skipped, so its result is not a true value
+    /// for the position and must not be probed from or stored in the TT.
+    Move excluded_move;
     Move* pv = nullptr;
     int sel_depth = 0;
     std::unique_ptr<BestMoveHistory> bmh;

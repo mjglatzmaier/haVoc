@@ -357,6 +357,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     const bool pvNode = (root_node || type == Nodetype::pv);
     bool is_main = (thread_id == 0);
 
+    const Move excluded_move = stack->excluded_move;
+    const bool singular_search = !excluded_move.is_null();
+
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
 
@@ -375,9 +378,10 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             return mated_score;
     }
 
-    // TT lookup
+    // TT lookup. Skipped during a singular verification search: the stored
+    // entry describes the position including the move we are excluding.
     bool hashHit = false;
-    {
+    if (!singular_search) {
         hash_data e;
         hashHit = tt_.fetch(pos.key(), e);
         if (hashHit) {
@@ -420,14 +424,14 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     bool hasStaticValue = static_eval_val != score::kNegInf;
 
     // IIR: If we have no hash move at a PV or cut node, reduce depth.
-    if (depth >= 4 && ttm.type == static_cast<U8>(no_type) &&
+    if (!singular_search && depth >= 4 && ttm.type == static_cast<U8>(no_type) &&
         (pvNode || (!pvNode && static_eval_val + 200 >= beta))) {
         depth -= 1;
     }
 
     // Reverse futility pruning: if our static eval is so good that even after
     // subtracting a margin we still beat beta, just return the static eval.
-    if (!in_check && !pvNode && depth <= 6 && !stack->null_search &&
+    if (!in_check && !pvNode && depth <= 6 && !stack->null_search && !singular_search &&
         static_eval_val - 80 * depth >= beta && static_eval_val < score::kMate - 100) {
         return static_eval_val;
     }
@@ -435,7 +439,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // Forward pruning conditions
     const bool forward_prune =
         (!in_check && !pvNode && (stack - 1)->curr_move.type == static_cast<U8>(quiet) &&
-         !stack->null_search && std::abs(alpha - beta) == 1 && hasStaticValue);
+         !stack->null_search && !singular_search && std::abs(alpha - beta) == 1 && hasStaticValue);
 
     // Null move pruning
     bool null_move_allowed =
@@ -486,6 +490,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         if (move.type == static_cast<U8>(no_type) || !pos.is_legal(move))
             continue;
 
+        if (move == excluded_move)
+            continue;
+
         // Move classification
         auto hashOrKiller = (move == ttm) || (move == stack->killers[0]) ||
                             (move == stack->killers[1]) || (move == stack->killers[2]) ||
@@ -516,18 +523,21 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             continue;
 
         // Singular extension: if the hash move is significantly better than
-        // all alternatives, extend it by 1 ply.
+        // all alternatives, extend it by 1 ply. The alternatives are measured
+        // by re-searching this node with the hash move excluded.
         int singular_ext = 0;
-        if (!root_node && depth >= 8 && move == ttm && !stack->null_search &&
+        if (!root_node && !singular_search && depth >= 8 && move == ttm && !stack->null_search &&
             ttvalue != score::kNegInf && (tt_bound == bound_low || tt_bound == bound_exact) &&
             tt_depth >= depth - 3) {
             int singular_beta = ttvalue - 2 * depth;
             int singular_depth = (depth - 1) / 2;
 
-            stack->null_search = true;
+            const int16_t saved_static_eval = stack->static_eval;
+            stack->excluded_move = ttm;
             int singular_score = search<non_pv>(pos, singular_beta - 1, singular_beta,
                                                 static_cast<U16>(singular_depth), stack, thread_id);
-            stack->null_search = false;
+            stack->excluded_move = Move{};
+            stack->static_eval = saved_static_eval;
 
             if (singular_score < singular_beta) {
                 singular_ext = 1;
@@ -677,14 +687,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     }
 
     if (moves_searched == 0) {
+        // During a singular search the excluded move was skipped, so "no moves"
+        // means "no alternatives", not stalemate or mate.
+        if (singular_search)
+            return alpha;
         return (in_check ? score::kMated + root_dist : score::kDraw);
     }
 
     Bound bound = (bestScore >= beta                                        ? bound_low
                    : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                             : bound_high);
-    tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
-             score_to_tt(bestScore, stack->ply), pvNode);
+    if (!singular_search)
+        tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
+                 score_to_tt(bestScore, stack->ply), pvNode);
 
     return bestScore;
 }
