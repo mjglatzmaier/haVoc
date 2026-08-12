@@ -684,7 +684,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // Best move bonus
     if (bestScore >= alpha && bestScore < beta && best_move.f != best_move.t) {
         auto bonus = 2 * depth;
-        stack->best_move_history()[to_mv][best_move.f][best_move.t] += bonus;
+        apply_history_bonus(stack->best_move_history()[to_mv][best_move.f][best_move.t], bonus);
     }
 
     if (moves_searched == 0) {

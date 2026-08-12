@@ -45,6 +45,17 @@ struct SearchNode {
 
 // ─── Move history heuristic ─────────────────────────────────────────────────
 
+/// History scores saturate at +/-kMaxHistory so that they cannot overflow the
+/// move ordering pipeline or grow without bound over a long search.
+constexpr int kMaxHistory = 16384;
+
+/// Applies `bonus` to `h` with a decay proportional to the value already there,
+/// which keeps |h| <= kMaxHistory while still letting recent evidence dominate.
+inline void apply_history_bonus(int& h, int bonus) {
+    bonus = std::clamp(bonus, -kMaxHistory, kMaxHistory);
+    h += bonus - h * std::abs(bonus) / kMaxHistory;
+}
+
 struct Movehistory {
     Movehistory() { clear(); }
     Movehistory& operator=(const Movehistory& mh);
@@ -70,9 +81,9 @@ struct Movehistory {
 
 struct ScoredMove {
     ScoredMove() = default;
-    ScoredMove(const Move& mv, int16_t sc) : m(mv), s(sc) {}
+    ScoredMove(const Move& mv, int sc) : m(mv), s(sc) {}
     Move m;
-    int16_t s = score::kNegInf;
+    int s = score::kNegInf;
     bool operator>(const ScoredMove& o) const { return s > o.s; }
     bool operator<(const ScoredMove& o) const { return s < o.s; }
 };
@@ -80,8 +91,8 @@ struct ScoredMove {
 // ─── Scoring function types ─────────────────────────────────────────────────
 
 using ScoreFunc =
-    std::function<int16_t(const position& p, const Move& m, const Move& prev, const Move& followup,
-                          const Move& threat, SearchNode* stack, const Movehistory* hist)>;
+    std::function<int(const position& p, const Move& m, const Move& prev, const Move& followup,
+                      const Move& threat, SearchNode* stack, const Movehistory* hist)>;
 
 // ─── Scored moves array ─────────────────────────────────────────────────────
 
@@ -93,32 +104,32 @@ class ScoredMoves {
     void load_and_score(const position& p, Movegen* moves, const std::vector<Move>& filters,
                         const Move& previous, const Move& followup, const Move& threat,
                         SearchNode* stack, const Movehistory* hist, ScoreFunc score_lambda);
-    void sort(int16_t cutoff);
+    void sort(int cutoff);
 
   public:
     ScoredMoves() = default;
     ScoredMoves(const position& p, Movegen* m, const std::vector<Move>& filters,
                 const Move& previous, const Move& followup, const Move& threat, SearchNode* stack,
-                const Movehistory* hist, ScoreFunc score_lambda, int16_t cutoff);
+                const Movehistory* hist, ScoreFunc score_lambda, int cutoff);
 
     int operator++() { return m_start++; }
     ScoredMove front() const { return m_moves[m_start]; }
     bool end() const { return m_start >= m_end; }
     unsigned size() const { return m_end - m_start; }
     void skip_rest() { m_start = m_end; }
-    void create_chunk(int16_t cutoff);
+    void create_chunk(int cutoff);
 };
 
 // ─── Scoring lambdas ────────────────────────────────────────────────────────
 
-int16_t score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                       const Move& threat, SearchNode* stack, const Movehistory* hist);
+int score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
+                   const Move& threat, SearchNode* stack, const Movehistory* hist);
 
-int16_t score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                        const Move& threat, SearchNode* stack, const Movehistory* hist);
+int score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,
+                    const Move& threat, SearchNode* stack, const Movehistory* hist);
 
-int16_t score_quiets(const position& p, const Move& m, const Move& prev, const Move& followup,
-                     const Move& threat, SearchNode* stack, const Movehistory* hist);
+int score_quiets(const position& p, const Move& m, const Move& prev, const Move& followup,
+                 const Move& threat, SearchNode* stack, const Movehistory* hist);
 
 // ─── Move order classes ─────────────────────────────────────────────────────
 

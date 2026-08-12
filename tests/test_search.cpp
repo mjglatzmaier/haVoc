@@ -141,5 +141,31 @@ TEST_F(SearchTest, StartposDepth4) {
     EXPECT_GE(ms.size(), 4u) << "Move string should be at least 4 characters";
 }
 
+TEST_F(SearchTest, HistoryScoresStayBounded) {
+    Movehistory hist;
+    Move m(E2, E4, quiet);
+    Move prev(G1, F3, quiet);
+    Move killers[4];
+    std::vector<Move> quiets;
+
+    // A long search updates the same move many times; without a bounded update
+    // the score grew without limit and wrapped when the move ordering pipeline
+    // truncated it.
+    for (int i = 0; i < 100000; ++i)
+        hist.update(white, m, prev, 20, 0, quiets, killers);
+
+    const int s = hist.score(m, white);
+    EXPECT_GT(s, 0) << "a repeatedly good move should keep a positive score";
+    EXPECT_LE(s, kMaxHistory);
+
+    const int penalised_from = A2, penalised_to = A3;
+    Move bad(static_cast<U8>(penalised_from), static_cast<U8>(penalised_to), quiet);
+    quiets.push_back(bad);
+    for (int i = 0; i < 100000; ++i)
+        hist.update(white, m, prev, 20, 0, quiets, killers);
+
+    EXPECT_GE(hist.score(bad, white), -kMaxHistory);
+}
+
 } // namespace
 } // namespace havoc
