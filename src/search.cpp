@@ -16,6 +16,25 @@ namespace havoc {
 
 namespace {
 const std::vector<float> kMaterialVals{100.0f, 300.0f, 315.0f, 480.0f, 910.0f};
+
+// Mate scores are relative to the root, but a transposition may be reached at a
+// different distance from the root than where it was stored. Convert to a
+// node-relative value on store and back to a root-relative value on probe.
+inline int16_t score_to_tt(int score, int ply) {
+    if (score >= score::kMateMaxPly)
+        return static_cast<int16_t>(score + ply);
+    if (score <= score::kMatedMaxPly)
+        return static_cast<int16_t>(score - ply);
+    return static_cast<int16_t>(score);
+}
+
+inline int score_from_tt(int score, int ply) {
+    if (score >= score::kMateMaxPly)
+        return score - ply;
+    if (score <= score::kMatedMaxPly)
+        return score + ply;
+    return score;
+}
 } // namespace
 
 // ─── Construction / configuration ───────────────────────────────────────────
@@ -362,14 +381,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         hashHit = tt_.fetch(pos.key(), e);
         if (hashHit) {
             ttm = e.move;
-            ttvalue = e.score;
+            ttvalue = score_from_tt(e.score, root_dist);
             tt_depth = e.depth;
             tt_bound = e.bound;
-
-            if (ttvalue > score::kMate - 1000)
-                ttvalue = ttvalue - depth;
-            if (ttvalue < -(score::kMate - 1000))
-                ttvalue = ttvalue + depth;
 
             if (!pvNode && e.depth >= depth) {
                 if ((e.bound == bound_exact) || (e.bound == bound_low && ttvalue >= beta) ||
@@ -669,7 +683,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                    : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                             : bound_high);
     tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), stack->ply, best_move,
-             static_cast<int16_t>(bestScore), pvNode);
+             score_to_tt(bestScore, stack->ply), pvNode);
 
     return bestScore;
 }
@@ -704,12 +718,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     {
         if (tt_.fetch(p.key(), e)) {
             ttm = e.move;
-            ttvalue = e.score;
-
-            if (ttvalue > score::kMate - 1000)
-                ttvalue = ttvalue - depth;
-            if (ttvalue < -(score::kMate - 1000))
-                ttvalue = ttvalue + depth;
+            ttvalue = score_from_tt(e.score, root_dist);
 
             if (!pv_type) {
                 if ((e.bound == bound_exact) || (e.bound == bound_low && ttvalue >= beta) ||
@@ -823,7 +832,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
                    : pv_type && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                              : bound_high);
     tt_.save(p.key(), qsdepth, static_cast<U8>(bound), stack->ply, best_move,
-             static_cast<int16_t>(best_score), pv_type);
+             score_to_tt(best_score, stack->ply), pv_type);
 
     return best_score;
 }
