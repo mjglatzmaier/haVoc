@@ -179,4 +179,75 @@ TEST_F(PositionTest, KingSquare_Startpos) {
     EXPECT_EQ(pos.king_square(black), E8);
 }
 
+
+// ── Static exchange evaluation ──────────────────────────────────────────────
+
+namespace {
+
+// Generate the position's moves and return the one matching from/to. Using the
+// generator rather than a hand-built Move keeps the movetype (ep, capture,
+// capture-promotion) consistent with what the search actually passes to see().
+Move find_move(position& pos, Square from, Square to) {
+    Movegen mvs(pos);
+    mvs.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mvs.size(); ++i) {
+        if (mvs[i].f == static_cast<U8>(from) && mvs[i].t == static_cast<U8>(to))
+            return mvs[i];
+    }
+    return Move{};
+}
+
+int see_of(const std::string& fen_str, Square from, Square to) {
+    std::istringstream fen(fen_str);
+    position pos(fen);
+    const Move m = find_move(pos, from, to);
+    EXPECT_NE(m.type, static_cast<U8>(no_type)) << "move not generated for " << fen_str;
+    return pos.see(m);
+}
+
+} // namespace
+
+TEST_F(PositionTest, SeeWinsAnUndefendedPawn) {
+    // exd5 with nothing defending d5.
+    EXPECT_EQ(see_of("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", E4, D5), 100);
+}
+
+TEST_F(PositionTest, SeeEqualPawnTradeIsZero) {
+    // exd5 cxd5.
+    EXPECT_EQ(see_of("4k3/8/2p5/3p4/4P3/8/8/4K3 w - - 0 1", E4, D5), 0);
+}
+
+TEST_F(PositionTest, SeeQueenTakesDefendedPawn) {
+    // Qxd5 cxd5 loses a queen for a pawn.
+    EXPECT_EQ(see_of("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1", D1, D5), 100 - 910);
+}
+
+// The two standard exchange positions from the Chess Programming Wiki.
+
+TEST_F(PositionTest, SeeCpwRookTakesUndefendedPawn) {
+    EXPECT_EQ(see_of("1k1r4/1pp4p/p7/4p3/8/P5P1/1PP4P/2K1R3 w - - 0 1", E1, E5), 100);
+}
+
+TEST_F(PositionTest, SeeCpwKnightTakesDefendedPawn) {
+    // Nxe5 Nxe5 Rxe5 Bxe5 Qxe5 Qxe5, with the queen on h8 x-raying through the
+    // bishop on f6.
+    EXPECT_EQ(see_of("1k1r3q/1ppn3p/p4b2/4p3/8/P2N2P1/1PP1R1BP/2K1Q3 w - - 0 1", D3, E5),
+              100 - 300);
+}
+
+TEST_F(PositionTest, SeeEvaluatesEnPassant) {
+    // exd6 e.p. removes the pawn on d5; nothing recaptures.
+    EXPECT_EQ(see_of("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2", E5, D6), 100);
+}
+
+TEST_F(PositionTest, SeeWorksWhileInCheck) {
+    // White is in check from the queen on e2 and simply wins it with the rook.
+    EXPECT_EQ(see_of("4k3/8/8/8/8/4R3/4q3/4K3 w - - 0 1", E3, E2), 910);
+}
+
+TEST_F(PositionTest, SeeRefusesKingCaptureOfADefendedPiece) {
+    // Kxe2 is not actually available: the rook on e8 recaptures.
+    EXPECT_LT(see_of("4r3/8/8/8/8/8/4r3/4K3 w - - 0 1", E1, E2), 0);
+}
+
 } // namespace havoc
