@@ -29,12 +29,13 @@ template <Color c> bool backward_pawn(int row, int col, U64 pawns) {
         if (left != -1) {
             int sq = -1;
             U64 left_pawns = bitboards::col[left] & pawns;
+            bool no_left_pawns = (left_pawns == 0ULL);
             while (left_pawns) {
                 int tmp = bits::pop_lsb(left_pawns);
                 if (tmp > sq)
                     sq = tmp;
             }
-            left_greater = sq > 0 && util::row(sq) > row;
+            left_greater = (sq > 0 && util::row(sq) > row) || no_left_pawns;
         }
         if (right != -1) {
             int sq = -1;
