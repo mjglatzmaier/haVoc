@@ -430,7 +430,25 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     U16 root_dist = stack->ply;
     const bool root_node = (type == Nodetype::root && stack->ply == 1);
-    const bool pvNode = (root_node || type == Nodetype::pv);
+    // A node is a PV node only if it is actually searched with a window wider
+    // than one, not merely because it was reached through the Nodetype::pv
+    // template argument.
+    //
+    // The move loop hands Nodetype::pv to its first two moves (the PVS
+    // full-window threshold below). At a genuine PV node that is right: the
+    // window really is full. At a node that is itself being searched with a
+    // null window, -beta and -alpha are still a null window, so the child gets
+    // the PV type and a null window at the same time. Counting the bench tree:
+    //
+    //     PV type, full window     20,857
+    //     PV type, null window    146,330
+    //     non-PV                  343,243
+    //
+    // 87% of the nodes calling themselves PV nodes were null-window searches.
+    // They were denied the TT cutoff below, which is gated on !pvNode, and were
+    // given PV reductions by reduction(pvNode, ...). Neither is defensible for
+    // a search that can only ever return a bound.
+    const bool pvNode = (root_node || (type == Nodetype::pv && beta - alpha > 1));
     bool is_main = (thread_id == 0);
 
     const Move excluded_move = stack->excluded_move;
@@ -869,7 +887,11 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     Move ttm{};
     ttm.type = static_cast<U8>(no_type);
     int ttvalue = score::kNegInf;
-    bool pv_type = type == Nodetype::pv;
+    // As in search(): the PV type is inherited from the caller's first two
+    // moves, but the window may still be null, and a null-window qsearch can
+    // only return a bound. Gating the TT cutoff and the bound classification on
+    // the type alone treats those nodes as if they had produced a true score.
+    bool pv_type = (type == Nodetype::pv && beta - alpha > 1);
 
     stack->ply = (stack - 1)->ply + 1;
     if (pv_type && sel_depth_.load() < stack->ply + 1)
