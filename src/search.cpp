@@ -462,6 +462,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             return mated_score;
     }
 
+    // The window this node is actually searched with, captured after mate
+    // distance pruning has narrowed it. alpha is raised in the move loop as
+    // the PV improves, so by the time the bound is classified it no longer
+    // says what the node was asked to beat; that is what this is for.
+    const int alpha_orig = alpha;
+
     // TT lookup. Skipped during a singular verification search: the stored
     // entry describes the position including the move we are excluding.
     bool hashHit = false;
@@ -811,9 +817,17 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         return (in_check ? score::kMated + root_dist : score::kDraw);
     }
 
-    Bound bound = (bestScore >= beta                                        ? bound_low
-                   : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
-                                                                            : bound_high);
+    // A score is exact only if it sits strictly inside the window the node was
+    // searched with. best_move is not evidence of that here: it is assigned on
+    // score_val > bestScore, and bestScore starts at -inf, so the first legal
+    // move always sets it whether or not it beat alpha. (Stockfish tests the
+    // equivalent of this flag, but only because it assigns bestMove inside its
+    // value > alpha branch.) Testing it at a PV node therefore marked every
+    // fail-low as bound_exact, storing an upper bound as though it were the
+    // true score and letting later probes cut on it.
+    Bound bound = (bestScore >= beta            ? bound_low
+                   : pvNode && bestScore > alpha_orig ? bound_exact
+                                                     : bound_high);
     if (!singular_search)
         tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
                  score_to_tt(bestScore, stack->ply), pvNode);
@@ -832,6 +846,10 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     int best_score = score::kNegInf;
     Move best_move{};
     best_move.type = static_cast<U8>(no_type);
+
+    // See search(): alpha is raised by the stand pat and again in the move
+    // loop, so the bound classification needs the window we were called with.
+    const int alpha_orig = alpha;
 
     Move ttm{};
     ttm.type = static_cast<U8>(no_type);
@@ -973,9 +991,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     if (legal_moves == 0 && in_check)
         return score::kMated + root_dist;
 
-    Bound bound = (best_score >= beta                                        ? bound_low
-                   : pv_type && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
-                                                                             : bound_high);
+    Bound bound = (best_score >= beta              ? bound_low
+                   : pv_type && best_score > alpha_orig ? bound_exact
+                                                       : bound_high);
     tt_.save(p.key(), qsdepth, static_cast<U8>(bound), best_move,
              score_to_tt(best_score, stack->ply), pv_type);
 
