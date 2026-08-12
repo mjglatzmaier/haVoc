@@ -430,7 +430,25 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     U16 root_dist = stack->ply;
     const bool root_node = (type == Nodetype::root && stack->ply == 1);
-    const bool pvNode = (root_node || type == Nodetype::pv);
+    // A node is a PV node only if it is actually searched with a window wider
+    // than one, not merely because it was reached through the Nodetype::pv
+    // template argument.
+    //
+    // The move loop hands Nodetype::pv to its first two moves (the PVS
+    // full-window threshold below). At a genuine PV node that is right: the
+    // window really is full. At a node that is itself being searched with a
+    // null window, -beta and -alpha are still a null window, so the child gets
+    // the PV type and a null window at the same time. Counting the bench tree:
+    //
+    //     PV type, full window     20,857
+    //     PV type, null window    146,330
+    //     non-PV                  343,243
+    //
+    // 87% of the nodes calling themselves PV nodes were null-window searches.
+    // They were denied the TT cutoff below, which is gated on !pvNode, and were
+    // given PV reductions by reduction(pvNode, ...). Neither is defensible for
+    // a search that can only ever return a bound.
+    const bool pvNode = (root_node || (type == Nodetype::pv && beta - alpha > 1));
     bool is_main = (thread_id == 0);
 
     const Move excluded_move = stack->excluded_move;
@@ -462,6 +480,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             return mated_score;
     }
 
+    // The window this node is actually searched with, captured after mate
+    // distance pruning has narrowed it. alpha is raised in the move loop as
+    // the PV improves, so by the time the bound is classified it no longer
+    // says what the node was asked to beat; that is what this is for.
+    const int alpha_orig = alpha;
+
     // TT lookup. Skipped during a singular verification search: the stored
     // entry describes the position including the move we are excluding.
     bool hashHit = false;
@@ -491,17 +515,32 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     (void)weHavePawnsOn7th;
 
     int16_t static_eval_val;
-    if (ttvalue != score::kNegInf) {
-        static_eval_val = static_cast<int16_t>(ttvalue);
-    } else if ((stack - 2)->static_eval != score::kNegInf && !in_check &&
+    if (in_check) {
+        static_eval_val = score::kNegInf;
+    } else if ((stack - 2)->static_eval != score::kNegInf &&
                (stack - 2)->static_eval >= (stack - 1)->static_eval) {
         static_eval_val = static_cast<int16_t>((stack - 2)->static_eval + 15);
-    } else if (!in_check) {
+    } else {
         auto* sthread = search_threads_[thread_id];
         float lm = lazy_eval_margin_search(depth, anyPawnsOn7th);
         static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos, lm)));
-    } else {
-        static_eval_val = score::kNegInf;
+    }
+
+    // A TT score is a better estimate of the position than a static evaluation
+    // -- it has a search behind it -- but only in the direction its bound
+    // supports. bound_low says the truth is at least ttvalue, so it may raise
+    // the estimate and must not lower it; bound_high says the truth is at most
+    // ttvalue, so the reverse. Only bound_exact may do both.
+    //
+    // This used to be an unconditional `if (ttvalue != kNegInf) static_eval =
+    // ttvalue`, which let an upper bound stand in for the evaluation and then
+    // fed it to reverse futility pruning and null move pruning, both of which
+    // cut on static_eval >= beta and neither of which can tell that the number
+    // is only a ceiling.
+    if (static_eval_val != score::kNegInf && ttvalue != score::kNegInf &&
+        (tt_bound == bound_exact || (tt_bound == bound_low && ttvalue > static_eval_val) ||
+         (tt_bound == bound_high && ttvalue < static_eval_val))) {
+        static_eval_val = static_cast<int16_t>(ttvalue);
     }
 
     stack->static_eval = static_eval_val;
@@ -653,8 +692,34 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             (dangerousQuietCheck || advancedPawnPush || threatResponse))
             extensions += 1;
 
-        // Movecount pruning
-        skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
+        // Movecount (late move) pruning. The guards matter as much as the rule:
+        //
+        //   !root_node -- futility_move_count(improving = false, depth = 1) is
+        //               (6 + 1) / 2 = 3, so the depth-1 iteration from the
+        //               start position searched three of twenty legal moves and
+        //               discarded the rest. Every early iteration of iterative
+        //               deepening was choosing from a truncated move list, and
+        //               at short time controls those are sometimes the only
+        //               iterations that finish.
+        //   !in_check -- when in check every legal move is an evasion. The
+        //               quiescence move picker already knows this and only
+        //               generates quiets when in check, but the main move
+        //               picker has no such special case: its quiet stage is
+        //               where evasions arrive, and skipping it can discard the
+        //               only escape.
+        //   bestScore > kMatedMaxPly -- do not start discarding moves while the
+        //               best score so far is still a forced mate against us.
+        //               There may be nothing else to find and everything to
+        //               lose.
+        //
+        // Not guarded on pvNode, matching Stockfish, which guards move count
+        // pruning on rootNode only. (An earlier version of this comment argued
+        // that !pvNode was unusable because Nodetype::pv leaked across most of
+        // the tree. That leak is fixed -- pvNode is now derived from the window
+        // -- so the argument no longer applies, but the conclusion is unchanged
+        // and !pvNode remains untested here.)
+        if (!root_node && !in_check && bestScore > score::kMatedMaxPly)
+            skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
 
         // Depth for the child node: one ply is always consumed here.
         int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
@@ -787,9 +852,17 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         return (in_check ? score::kMated + root_dist : score::kDraw);
     }
 
-    Bound bound = (bestScore >= beta                                        ? bound_low
-                   : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
-                                                                            : bound_high);
+    // A score is exact only if it sits strictly inside the window the node was
+    // searched with. best_move is not evidence of that here: it is assigned on
+    // score_val > bestScore, and bestScore starts at -inf, so the first legal
+    // move always sets it whether or not it beat alpha. (Stockfish tests the
+    // equivalent of this flag, but only because it assigns bestMove inside its
+    // value > alpha branch.) Testing it at a PV node therefore marked every
+    // fail-low as bound_exact, storing an upper bound as though it were the
+    // true score and letting later probes cut on it.
+    Bound bound = (bestScore >= beta            ? bound_low
+                   : pvNode && bestScore > alpha_orig ? bound_exact
+                                                     : bound_high);
     if (!singular_search)
         tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
                  score_to_tt(bestScore, stack->ply), pvNode);
@@ -809,10 +882,18 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     Move best_move{};
     best_move.type = static_cast<U8>(no_type);
 
+    // See search(): alpha is raised by the stand pat and again in the move
+    // loop, so the bound classification needs the window we were called with.
+    const int alpha_orig = alpha;
+
     Move ttm{};
     ttm.type = static_cast<U8>(no_type);
     int ttvalue = score::kNegInf;
-    bool pv_type = type == Nodetype::pv;
+    // As in search(): the PV type is inherited from the caller's first two
+    // moves, but the window may still be null, and a null-window qsearch can
+    // only return a bound. Gating the TT cutoff and the bound classification on
+    // the type alone treats those nodes as if they had produced a true score.
+    bool pv_type = (type == Nodetype::pv && beta - alpha > 1);
 
     stack->ply = (stack - 1)->ply + 1;
     if (pv_type && sel_depth_.load() < stack->ply + 1)
@@ -949,9 +1030,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     if (legal_moves == 0 && in_check)
         return score::kMated + root_dist;
 
-    Bound bound = (best_score >= beta                                        ? bound_low
-                   : pv_type && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
-                                                                             : bound_high);
+    Bound bound = (best_score >= beta              ? bound_low
+                   : pv_type && best_score > alpha_orig ? bound_exact
+                                                       : bound_high);
     tt_.save(p.key(), qsdepth, static_cast<U8>(bound), best_move,
              score_to_tt(best_score, stack->ply), pv_type);
 
