@@ -137,6 +137,7 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
     for (unsigned i = 0; i < search_threads_.size(); ++i) {
         positions_.emplace_back(std::make_unique<position>(p));
     }
+    completed_depth_.assign(search_threads_.size(), 0);
 
     U16 depth = (lims.depth > 0 ? static_cast<U16>(lims.depth) : static_cast<U16>(MAX_PLY));
     searching_ = true;
@@ -165,12 +166,35 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
         search_threads_.wait_finished();
         signals_.stop = true;
 
-        // Collect results
+        // Collect results. Helper threads all search to different depths, so
+        // their root scores are not directly comparable: a shallow thread can
+        // easily return a higher score than a deeper, more reliable one. Prefer
+        // the thread that finished the deepest iteration, breaking ties on
+        // score, and prefer a proven shorter mate over any of that.
         Rootmoves bestRoots;
-        int16_t max_score = score::kNegInf;
-        for (auto& t : positions_) {
-            if (!t->root_moves.empty() && t->root_moves[0].score > max_score) {
-                max_score = t->root_moves[0].score;
+        int best_depth = -1;
+        int best_score_val = score::kNegInf;
+        for (unsigned i = 0; i < positions_.size(); ++i) {
+            const auto& t = positions_[i];
+            if (t->root_moves.empty())
+                continue;
+            const int d = (i < completed_depth_.size() ? completed_depth_[i] : 0);
+            const int sc = t->root_moves[0].score;
+            if (d <= 0)
+                continue;
+
+            const bool mate = sc >= score::kMateMaxPly;
+            const bool best_mate = best_score_val >= score::kMateMaxPly;
+
+            bool better;
+            if (mate || best_mate)
+                better = sc > best_score_val;
+            else
+                better = (d != best_depth ? d > best_depth : sc > best_score_val);
+
+            if (bestRoots.empty() || better) {
+                best_depth = d;
+                best_score_val = sc;
                 bestRoots = t->root_moves;
             }
         }
@@ -329,6 +353,9 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
                 break;
             }
         }
+
+        if (!signals_.stop.load() && thread_id < static_cast<int>(completed_depth_.size()))
+            completed_depth_[thread_id] = static_cast<int>(id);
 
         // Print PV
         if (is_main && !signals_.stop.load()) {

@@ -70,6 +70,10 @@ class SearchEngine {
 
     // Per-search state
     std::vector<std::unique_ptr<position>> positions_;
+    /// Deepest iteration each helper thread finished without being aborted.
+    /// Used to pick which thread's result to play; a thread's raw score is not
+    /// comparable across different depths.
+    std::vector<int> completed_depth_;
     Movehistory history_;
 
     // Search methods
