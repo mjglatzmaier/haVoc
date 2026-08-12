@@ -34,7 +34,6 @@ struct pawn_entry {
     U64 passed[2]{};
     U64 dark[2]{};
     U64 light[2]{};
-    U64 king[2]{};
     U64 attacks[2]{};
     U64 undefended[2]{};
     U64 weak_squares[2]{};

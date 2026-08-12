@@ -555,7 +555,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
 
         // Pawn shelter (middlegame)
         if (!is_endgame) {
-            U64 pawn_shelter = ei.pe->king[c] & ei.kmask[c];
+            // Computed live rather than read from the pawn hash. The hash is
+            // keyed on pawn structure alone, so a mask built from the king
+            // square does not belong in it: castling leaves the pawns
+            // untouched, hits the same entry, and would score the shelter
+            // against wherever the king stood when that entry was filled.
+            U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
             score += params_.king_shelter[n] / 2;
 

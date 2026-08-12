@@ -104,7 +104,6 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
     U64 epawns = p.get_pieces<them, pawn>();
 
     Square* sqs = p.squares_of<c, pawn>();
-    Square ksq = p.king_square(c);
 
     pawn_score score;
     U64 locked_bb = 0ULL;
@@ -134,10 +133,6 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
             score -= 1;
             e.undefended[c] |= fbb;
         }
-
-        // King shelter
-        if (bitboards::kmask[ksq] & fbb)
-            e.king[c] |= fbb;
 
         // Passed pawns
         U64 mask = bitboards::passpawn_mask[c][s] & epawns;
