@@ -230,6 +230,42 @@ TEST_F(EvalTest, OppositeColorBishops_Scaled) {
     EXPECT_LT(std::abs(score), 100) << "OCB endgame should be close to drawn, got: " << score;
 }
 
+// Opposite-colored bishops are only drawish once the bishops are the last
+// pieces. The scale factor used to be keyed on bishop colors alone, so any
+// middlegame in which each side happened to hold one bishop on opposite colors
+// had its whole evaluation multiplied by 24/128 = 0.19 -- a clean extra pawn
+// read as +0.26 instead of +1.42.
+//
+// Assert it by differencing against a run with the scale neutralized: with
+// other pieces on the board the knob must make no difference at all.
+TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
+    havoc::parameters params;
+    havoc::parameters neutral;
+    neutral.opposite_bishop_scale = 128;
+
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    havoc::pawn_table npt(neutral);
+    havoc::material_table nmt(neutral);
+    havoc::HCEEvaluator neval(npt, nmt, neutral);
+
+    // Both queens, all four rooks and all four knights still on the board.
+    // White has Be2 (light), black Be7 (dark), and white is a clean pawn up.
+    auto middlegame = make_pos("r2q1rk1/1p2bppp/2n2n2/3p4/3P4/2N2N2/PP2BPPP/R2Q1RK1 w - - 0 1");
+    EXPECT_EQ(eval.evaluate(middlegame), neval.evaluate(middlegame))
+        << "opposite_bishop_scale must not touch a position that still has "
+           "queens, rooks and knights on it";
+
+    // Positive control: in a genuine opposite-colored bishop ending the knob
+    // must still bite, otherwise the test above could pass by the feature
+    // having been removed outright.
+    auto ending = make_pos("8/pp3p2/2b1k3/8/1P6/2B1K3/P4P2/8 w - - 0 1");
+    EXPECT_NE(eval.evaluate(ending), neval.evaluate(ending))
+        << "opposite_bishop_scale must still apply to a pure OCB ending";
+}
+
 // ─── Parameter round-trip ──────────────────────────────────────────────────
 
 TEST_F(EvalTest, ParameterSaveLoad) {

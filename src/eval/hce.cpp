@@ -204,12 +204,32 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     // Endgame scaling
     int scale = 128;
 
-    // Opposite-color bishops → drawish
-    bool ocb = ei.bishop_colors[white][0] && ei.bishop_colors[black][1] &&
-               !ei.bishop_colors[white][1] && !ei.bishop_colors[black][0];
-    bool ocb2 = ei.bishop_colors[white][1] && ei.bishop_colors[black][0] &&
-                !ei.bishop_colors[white][0] && !ei.bishop_colors[black][1];
-    if (ocb || ocb2)
+    // Opposite-color bishops → drawish, but only in a *pure* opposite-colored
+    // bishop ending: one bishop each, on opposite colors, and no other pieces.
+    //
+    // The old test looked at bishop colors alone. Any position in which each
+    // side happened to hold a single bishop on opposite colors -- an extremely
+    // common middlegame shape -- had its entire evaluation multiplied by
+    // opposite_bishop_scale/128 = 24/128 = 0.19. On a middlegame with both
+    // queens, all four rooks and all four knights still on, white a clean pawn
+    // up, that reported +0.26 instead of +1.42.
+    //
+    // The drawishness of opposite bishops comes from the defender's bishop
+    // guarding a color complex the attacker can never contest, which only holds
+    // once the bishops are the last pieces. With a rook or queen still on, the
+    // extra piece covers the missing color and opposite bishops make the
+    // position *sharper*, since the attacker effectively plays a piece up on
+    // the squares the defending bishop cannot see.
+    const U64 white_bishops = p.get_pieces<white, bishop>();
+    const U64 black_bishops = p.get_pieces<black, bishop>();
+    const bool bishops_only =
+        (p.get_pieces<white, knight>() | p.get_pieces<black, knight>() |
+         p.get_pieces<white, rook>() | p.get_pieces<black, rook>() | p.get_pieces<white, queen>() |
+         p.get_pieces<black, queen>()) == 0ULL;
+    const bool one_bishop_each = bits::count(white_bishops) == 1 && bits::count(black_bishops) == 1;
+    const bool opposite_colors = ((white_bishops & bitboards::colored_sqs[white]) != 0ULL) !=
+                                 ((black_bishops & bitboards::colored_sqs[white]) != 0ULL);
+    if (bishops_only && one_bishop_each && opposite_colors)
         scale = std::min(scale, params_.opposite_bishop_scale);
 
     // No pawns with small material advantage → likely drawn
