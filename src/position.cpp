@@ -354,165 +354,113 @@ void position::undo_null_move() {
 
 static const std::vector<int> mvals{100, 300, 315, 480, 910, 2000};
 
-struct SeePiece {
-    SeePiece(Piece pc, int16_t v) : p(pc), score(v) {}
-    Piece p;
-    int16_t score;
-    bool operator<(const SeePiece& o) const { return score < o.score; }
-    bool operator>(const SeePiece& o) const { return score > o.score; }
-};
-
 int position::see(const Move& m) const {
-    if (m.type == ep)
-        return 0;
-
-    if (m.type == capture && mvals[piece_on(Square(m.f))] <= mvals[piece_on(Square(m.t))]) {
-        return mvals[piece_on(Square(m.t))] - mvals[piece_on(Square(m.f))];
-    }
-
-    if (m.type == capture_promotion_q || m.type == capture_promotion_r ||
-        m.type == capture_promotion_b || m.type == capture_promotion_n) {
-        int fval = (m.type == capture_promotion_q   ? mvals[queen]
-                    : m.type == capture_promotion_r ? mvals[rook]
-                    : m.type == capture_promotion_b ? mvals[bishop]
-                                                    : mvals[knight]) -
-                   mvals[0];
-        int tval = mvals[piece_on(Square(m.t))];
-        if (fval <= tval)
-            return fval - tval;
-    }
-
     return see_move(m);
 }
 
+// Static exchange evaluation: play out the capture sequence on the destination
+// square, always recapturing with the least valuable attacker, and return the
+// material the mover ends up with assuming either side may stop when continuing
+// would lose material.
+//
+// Pins are deliberately ignored. A pinned piece can still be a legal recapture
+// when it stays on the pin ray, and treating every pinned piece as absent
+// distorts the result far more often than including it does.
 int position::see_move(const Move& m) const {
-    Square bksq = king_square(black);
-    Square wksq = king_square(white);
-    Square to = Square(m.t);
-    Square from = Square(m.f);
-    U64 pcs_bb = all_pieces();
-    U64 attackers = 0ULL;
+    const Square from = Square(m.f);
+    const Square to = Square(m.t);
+    const Movetype mt = Movetype(m.type);
+    const Color us = to_move();
 
-    U64 white_bb = get_pieces<white>() ^ pinned<white>();
-    U64 black_bb = get_pieces<black>() ^ pinned<black>();
+    Piece on_target = piece_on(from);
+    if (on_target == no_piece)
+        return 0;
 
-    std::vector<SeePiece> black_list;
-    std::vector<SeePiece> white_list;
-    Piece atkr = no_piece;
+    U64 occ = all_pieces();
+    int gain = 0;
 
-    while (true) {
-        U64 a = attackers_of(to, pcs_bb) & pcs_bb;
-        if (a) {
-            pcs_bb ^= a;
-            if (is_attacked(wksq, white, black, pcs_bb) ||
-                is_attacked(bksq, black, white, pcs_bb)) {
-                return 0;
-            }
-            attackers |= a;
-        } else
-            break;
-
-        U64 white_attackers = a & white_bb;
-        if (white_attackers) {
-            while (white_attackers) {
-                Square s = Square(bits::pop_lsb(white_attackers));
-                if (s == from) {
-                    atkr = piece_on(s);
-                    continue;
-                }
-                white_list.emplace_back(piece_on(s), static_cast<int16_t>(mvals[piece_on(s)]));
-            }
-        }
-
-        U64 black_attackers = a & black_bb;
-        if (black_attackers) {
-            while (black_attackers) {
-                Square s = Square(bits::pop_lsb(black_attackers));
-                if (s == from) {
-                    atkr = piece_on(s);
-                    continue;
-                }
-                black_list.emplace_back(piece_on(s), static_cast<int16_t>(mvals[piece_on(s)]));
-            }
-        }
-
-        if (white_list.empty() && black_list.empty() && atkr == no_piece)
-            return 0;
-    }
-
-    std::sort(white_list.begin(), white_list.end());
-    std::sort(black_list.begin(), black_list.end());
-
-    int i = 0;
-    unsigned w = 0;
-    unsigned b = 0;
-    Color color = to_move();
-
-    if (color == black) {
-        black_list.insert(black_list.begin(), SeePiece(atkr, 0));
+    if (mt == ep) {
+        const Square capsq = Square(us == white ? to - 8 : to + 8);
+        gain = mvals[pawn];
+        occ ^= bitboards::squares[capsq];
     } else {
-        white_list.insert(white_list.begin(), SeePiece(atkr, 0));
+        const Piece victim = piece_on(to);
+        if (victim == king)
+            return mvals[king];
+        if (victim != no_piece)
+            gain = mvals[victim];
     }
 
-    int score = 0;
-    int prev = score;
-
-    while (true) {
-        Piece victim = no_piece;
-        if (i == 0) {
-            Piece v = piece_on(to);
-            if (v == king)
-                return 0;
-            score += (v == no_piece ? 0 : mvals[v]);
-            color = Color(color ^ 1);
-            prev = score;
-            ++i;
-            continue;
-        }
-
-        if (w >= white_list.size() || b >= black_list.size())
-            break;
-
-        victim = (color == white ? black_list[b++].p : white_list[w++].p);
-
-        int av = -1;
-        Piece attacker = no_piece;
-        if (color == white && w < white_list.size()) {
-            attacker = white_list[w].p;
-            av = mvals[attacker];
-        } else if (color == black && b < black_list.size()) {
-            attacker = black_list[b].p;
-            av = mvals[attacker];
-        }
-
-        if (attacker == no_piece)
-            break;
-
-        color = Color(color ^ 1);
-        int vv = mvals[victim];
-
-        if (vv < av || victim == king) {
-            if (attacker == king) {
-                if ((color == black && b < black_list.size()) ||
-                    (color == white && w < white_list.size())) {
-                    return score;
-                }
-            }
-
-            if ((victim == king && ((color == black && w < white_list.size()) ||
-                                    (color == white && b < black_list.size()))) ||
-                (victim != king && ((color == black && (black_list.size() > white_list.size())) ||
-                                    (color == white && (white_list.size() > black_list.size()))))) {
-                score = prev;
-                return score;
-            }
-        }
-        score += ((i & 1) == 1 ? -vv : vv);
-        ++i;
-        prev = score;
+    // A capture-promotion also trades the pawn for the promoted piece, and it is
+    // the promoted piece that stands on the target for the rest of the sequence.
+    if (mt >= capture_promotion_q && mt <= capture_promotion_n) {
+        const Piece promoted = (mt == capture_promotion_q   ? queen
+                                : mt == capture_promotion_r ? rook
+                                : mt == capture_promotion_b ? bishop
+                                                            : knight);
+        gain += mvals[promoted] - mvals[pawn];
+        on_target = promoted;
     }
 
-    return score;
+    occ ^= bitboards::squares[from];
+
+    const U64 diagonal = pcs.bitmap[white][bishop] | pcs.bitmap[black][bishop] |
+                         pcs.bitmap[white][queen] | pcs.bitmap[black][queen];
+    const U64 straight = pcs.bitmap[white][rook] | pcs.bitmap[black][rook] |
+                         pcs.bitmap[white][queen] | pcs.bitmap[black][queen];
+
+    int swap[32];
+    swap[0] = gain;
+    int d = 0;
+
+    Color stm = Color(us ^ 1);
+    U64 attackers = attackers_of(to, occ) & occ;
+
+    while (d < 31) {
+        const U64 stm_attackers = attackers & pcs.bycolor[stm];
+        if (!stm_attackers)
+            break;
+
+        // Recapture with the least valuable attacker.
+        Piece next = no_piece;
+        U64 from_bb = 0ULL;
+        for (int pt = pawn; pt <= king; ++pt) {
+            const U64 b = stm_attackers & pcs.bitmap[stm][pt];
+            if (b) {
+                next = Piece(pt);
+                from_bb = b & (~b + 1ULL);
+                break;
+            }
+        }
+
+        // Capturing with the king is only legal once the square is undefended.
+        if (next == king && (attackers & pcs.bycolor[stm ^ 1]))
+            break;
+
+        ++d;
+        swap[d] = mvals[on_target] - swap[d - 1];
+
+        occ ^= from_bb;
+        // Removing the recapturing piece can uncover a slider behind it. A pawn,
+        // bishop or queen can only have been shielding a diagonal slider, and a
+        // rook or queen an orthogonal one. A knight never blocks a ray to the
+        // target square, and a king capture always ends the sequence.
+        if (next == pawn || next == bishop || next == queen)
+            attackers |= magics::attacks<bishop>(occ, to) & diagonal;
+        if (next == rook || next == queen)
+            attackers |= magics::attacks<rook>(occ, to) & straight;
+        attackers &= occ;
+
+        on_target = next;
+        stm = Color(stm ^ 1);
+    }
+
+    // Walk the sequence back, letting either side decline to continue.
+    while (d > 0) {
+        swap[d - 1] = std::min(-swap[d], swap[d - 1]);
+        --d;
+    }
+    return swap[0];
 }
 
 // ─── Promotions ─────────────────────────────────────────────────────────────

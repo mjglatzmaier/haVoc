@@ -8,6 +8,10 @@
 
 #include <sstream>
 
+#include <limits>
+#include <utility>
+#include <set>
+
 #include <gtest/gtest.h>
 
 namespace havoc {
@@ -139,6 +143,103 @@ TEST_F(SearchTest, StartposDepth4) {
     std::string ms = move_str(bestmove);
     EXPECT_FALSE(ms.empty()) << "Search should return a move from startpos";
     EXPECT_GE(ms.size(), 4u) << "Move string should be at least 4 characters";
+}
+
+TEST_F(SearchTest, HistoryScoresStayBounded) {
+    Movehistory hist;
+    Move m(E2, E4, quiet);
+    Move prev(G1, F3, quiet);
+    Move killers[4];
+    std::vector<Move> quiets;
+
+    // A long search updates the same move many times; without a bounded update
+    // the score grew without limit and wrapped when the move ordering pipeline
+    // truncated it.
+    for (int i = 0; i < 100000; ++i)
+        hist.update(white, m, prev, 20, 0, quiets, killers);
+
+    const int s = hist.score(m, white);
+    EXPECT_GT(s, 0) << "a repeatedly good move should keep a positive score";
+    EXPECT_LE(s, kMaxHistory);
+
+    const int penalised_from = A2, penalised_to = A3;
+    Move bad(static_cast<U8>(penalised_from), static_cast<U8>(penalised_to), quiet);
+    quiets.push_back(bad);
+    for (int i = 0; i < 100000; ++i)
+        hist.update(white, m, prev, 20, 0, quiets, killers);
+
+    EXPECT_GE(hist.score(bad, white), -kMaxHistory);
+}
+
+// The good/bad capture split is create_chunk(score::kDraw), i.e. the sign of the
+// capture score. Capture scores are see * kCaptureSeeScale + history, so the
+// scale factor has to be large enough that a saturated history score can never
+// flip that sign, or a losing capture with a good history is searched in the
+// good-capture phase and a winning capture with a poor history is deferred.
+TEST_F(SearchTest, CaptureOrderingIsDominatedBySee) {
+    // The narrowest gap between two distinct exchange values: a bishop (315)
+    // taken for a knight (300).
+    constexpr int smallest_see = 15;
+
+    EXPECT_GT(smallest_see * kCaptureSeeScale, kMaxHistory)
+        << "a saturated history score can flip the sign of a winning capture";
+
+    EXPECT_GT(smallest_see * kCaptureSeeScale, 2 * kMaxHistory)
+        << "history can reorder two captures of different exchange value";
+
+    // No overflow for the largest value see() can return.
+    constexpr int max_see = 2000;
+    EXPECT_LT(static_cast<long long>(max_see) * kCaptureSeeScale + kMaxHistory,
+              static_cast<long long>(std::numeric_limits<int>::max()));
+}
+
+// Moveorder splits its scored lists into chunks with create_chunk(cutoff), and
+// the "rest of the list" pass has to use a sentinel below every score a scoring
+// function can produce. It used score::kNegInf (-10000), which is a search
+// score, not an ordering score: quiet scores already reach about +/-33000 and
+// scaled capture scores reach a few million, so any move scoring below -10000
+// was silently never handed to the search.
+TEST_F(SearchTest, MoveOrderYieldsEveryLegalMove) {
+    // A position with plenty of captures, including badly losing ones.
+    std::istringstream fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    position pos(fen);
+
+    Movegen expected(pos);
+    expected.generate<pseudo_legal, pieces>();
+    std::set<std::pair<int, int>> want;
+    for (int i = 0; i < expected.size(); ++i) {
+        if (pos.is_legal(expected[i]))
+            want.insert({expected[i].f, expected[i].t});
+    }
+    ASSERT_FALSE(want.empty());
+
+    SearchNode stack[4];
+    for (auto& n : stack)
+        n.ply = 1;
+    Movehistory hist;
+
+    // Give a losing capture a strongly negative history and a good one a
+    // strongly positive history, so ordering scores span their full range.
+    for (int i = 0; i < 100000; ++i) {
+        apply_history_bonus(stack[1].best_move_history()[white][E5][D7], -kMaxHistory);
+        apply_history_bonus(stack[1].best_move_history()[white][F3][F6], kMaxHistory);
+    }
+
+    Move hashmove{};
+    Moveorder order(pos, hashmove, &stack[1], &hist);
+    Move m{};
+    Move none{};
+    std::set<std::pair<int, int>> got;
+    while (order.next_move(pos, m, none, none, none, false, false)) {
+        if (m.type == static_cast<U8>(no_type) || m.f == m.t)
+            continue;
+        if (pos.is_legal(m))
+            got.insert({m.f, m.t});
+    }
+
+    EXPECT_EQ(got.size(), want.size()) << "move ordering dropped legal moves";
+    for (const auto& w : want)
+        EXPECT_TRUE(got.count(w)) << "missing move " << w.first << "->" << w.second;
 }
 
 } // namespace

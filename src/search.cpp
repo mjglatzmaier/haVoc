@@ -10,12 +10,48 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <thread>
 
 namespace havoc {
 
 namespace {
 const std::vector<float> kMaterialVals{100.0f, 300.0f, 315.0f, 480.0f, 910.0f};
+
+// Mate scores are relative to the root, but a transposition may be reached at a
+// different distance from the root than where it was stored. Convert to a
+// node-relative value on store and back to a root-relative value on probe.
+inline int16_t score_to_tt(int score, int ply) {
+    if (score >= score::kMateMaxPly)
+        return static_cast<int16_t>(score + ply);
+    if (score <= score::kMatedMaxPly)
+        return static_cast<int16_t>(score - ply);
+    return static_cast<int16_t>(score);
+}
+
+inline int score_from_tt(int score, int ply) {
+    if (score >= score::kMateMaxPly)
+        return score - ply;
+    if (score <= score::kMatedMaxPly)
+        return score + ply;
+    return score;
+}
+
+// UCI wants forced mates reported as "score mate N", where N counts moves (not
+// plies) and is negative when the side to move is getting mated. The root node
+// sits at ply 1 rather than 0, so a score of kMate - d is a mate d - 1 plies
+// away.
+inline std::string uci_score_string(int score) {
+    if (score >= score::kMateMaxPly) {
+        int plies = score::kMate - score - 1;
+        return "mate " + std::to_string((plies + 1) / 2);
+    }
+    if (score <= score::kMatedMaxPly) {
+        int plies = score - score::kMated - 1;
+        return "mate " + std::to_string(-((plies + 1) / 2));
+    }
+    return "cp " + std::to_string(score);
+}
 } // namespace
 
 // ─── Construction / configuration ───────────────────────────────────────────
@@ -82,6 +118,7 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
     history_.clear();
 
     signals_.stop = false;
+    tt_.new_search();
 
     p.set_nodes_searched(0);
     p.set_qnodes_searched(0);
@@ -279,7 +316,7 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
             if (signals_.stop.load())
                 break;
 
-            if (!silent && (eval <= alpha || eval >= beta))
+            if (is_main && !silent && (eval <= alpha || eval >= beta))
                 readout_pv(stack, p.root_moves, eval, alpha, beta, static_cast<U16>(id));
 
             if (eval <= alpha) {
@@ -337,6 +374,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     const bool pvNode = (root_node || type == Nodetype::pv);
     bool is_main = (thread_id == 0);
 
+    const Move excluded_move = stack->excluded_move;
+    const bool singular_search = !excluded_move.is_null();
+
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
 
@@ -355,21 +395,17 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             return mated_score;
     }
 
-    // TT lookup
+    // TT lookup. Skipped during a singular verification search: the stored
+    // entry describes the position including the move we are excluding.
     bool hashHit = false;
-    {
+    if (!singular_search) {
         hash_data e;
         hashHit = tt_.fetch(pos.key(), e);
         if (hashHit) {
             ttm = e.move;
-            ttvalue = e.score;
+            ttvalue = score_from_tt(e.score, root_dist);
             tt_depth = e.depth;
             tt_bound = e.bound;
-
-            if (ttvalue > score::kMate - 1000)
-                ttvalue = ttvalue - depth;
-            if (ttvalue < -(score::kMate - 1000))
-                ttvalue = ttvalue + depth;
 
             if (!pvNode && e.depth >= depth) {
                 if ((e.bound == bound_exact) || (e.bound == bound_low && ttvalue >= beta) ||
@@ -405,45 +441,46 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     bool hasStaticValue = static_eval_val != score::kNegInf;
 
     // IIR: If we have no hash move at a PV or cut node, reduce depth.
-    if (depth >= 4 && ttm.type == static_cast<U8>(no_type) &&
+    if (!singular_search && depth >= 4 && ttm.type == static_cast<U8>(no_type) &&
         (pvNode || (!pvNode && static_eval_val + 200 >= beta))) {
         depth -= 1;
     }
 
     // Reverse futility pruning: if our static eval is so good that even after
     // subtracting a margin we still beat beta, just return the static eval.
-    if (!in_check && !pvNode && depth <= 6 && !stack->null_search &&
+    if (!in_check && !pvNode && depth <= 6 && !stack->null_search && !singular_search &&
         static_eval_val - 80 * depth >= beta && static_eval_val < score::kMate - 100) {
         return static_eval_val;
     }
 
-    // Forward pruning conditions
-    const bool forward_prune =
-        (!in_check && !pvNode && (stack - 1)->curr_move.type == static_cast<U8>(quiet) &&
-         !stack->null_search && std::abs(alpha - beta) == 1 && hasStaticValue);
+    // Forward pruning conditions. `null_search` already prevents two null moves
+    // in a row, which is the only ordering restriction null-move pruning needs.
+    const bool forward_prune = (!in_check && !pvNode && !stack->null_search && !singular_search &&
+                                std::abs(alpha - beta) == 1 && hasStaticValue);
 
     // Null move pruning
     bool null_move_allowed =
         (pos.to_move() == white ? pos.non_pawn_material<white>() : pos.non_pawn_material<black>());
-    int null_penalty = (depth >= 30) ? 4 : (depth >= 20) ? 6 : 8;
 
-    if (forward_prune && null_move_allowed && depth >= 6 &&
-        static_eval_val - null_penalty * (64 - depth) >= beta) {
+    if (forward_prune && null_move_allowed && depth >= 3 && static_eval_val >= beta) {
 
-        int R = (depth >= 6 ? std::max(3, static_cast<int>(depth) / 2) : 2);
-        int ndepth = depth - R;
+        // Reduce more when the static eval is far above beta, since the null
+        // move is then more likely to hold.
+        int R = 3 + static_cast<int>(depth) / 6 + std::min(3, (static_eval_val - beta) / 200);
+        int ndepth = std::max(0, static_cast<int>(depth) - R);
 
         (stack + 1)->null_search = true;
         pos.do_null_move();
         int null_eval =
-            (ndepth <= 1 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
+            (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
                          : -search<non_pv>(pos, -beta, -beta + 1, static_cast<U16>(ndepth),
                                            stack + 1, thread_id));
         pos.undo_null_move();
         (stack + 1)->null_search = false;
 
         if (null_eval >= beta) {
-            return null_eval;
+            // A null move never proves a mate, so do not propagate mate scores.
+            return null_eval >= score::kMateMaxPly ? beta : null_eval;
         } else {
             Move tm = (stack + 1)->best_move;
             if (tm.type == static_cast<U8>(capture) && beta - null_eval >= 500)
@@ -469,6 +506,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             return score::kDraw;
 
         if (move.type == static_cast<U8>(no_type) || !pos.is_legal(move))
+            continue;
+
+        if (move == excluded_move)
             continue;
 
         // Move classification
@@ -501,18 +541,21 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             continue;
 
         // Singular extension: if the hash move is significantly better than
-        // all alternatives, extend it by 1 ply.
+        // all alternatives, extend it by 1 ply. The alternatives are measured
+        // by re-searching this node with the hash move excluded.
         int singular_ext = 0;
-        if (!root_node && depth >= 8 && move == ttm && !stack->null_search &&
+        if (!root_node && !singular_search && depth >= 8 && move == ttm && !stack->null_search &&
             ttvalue != score::kNegInf && (tt_bound == bound_low || tt_bound == bound_exact) &&
             tt_depth >= depth - 3) {
             int singular_beta = ttvalue - 2 * depth;
             int singular_depth = (depth - 1) / 2;
 
-            stack->null_search = true;
+            const int16_t saved_static_eval = stack->static_eval;
+            stack->excluded_move = ttm;
             int singular_score = search<non_pv>(pos, singular_beta - 1, singular_beta,
                                                 static_cast<U16>(singular_depth), stack, thread_id);
-            stack->null_search = false;
+            stack->excluded_move = Move{};
+            stack->static_eval = saved_static_eval;
 
             if (singular_score < singular_beta) {
                 singular_ext = 1;
@@ -526,7 +569,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
         bool givesCheck = pos.in_check();
         int extensions = std::max(givesCheck ? 1 : 0, singular_ext);
-        int reductions_val = 1;
+        // Extra reductions beyond the one ply every move already consumes.
+        int reductions_val = 0;
 
         // Reduce uninteresting quiet moves
         if (!pvNode && !improving && !hashOrKiller && !isCapture && !isEvasion && !givesCheck &&
@@ -545,7 +589,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // Movecount pruning
         skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
 
-        int newdepth = depth + extensions - reductions_val;
+        // Depth for the child node: one ply is always consumed here.
+        int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
         (stack + 1)->pv = nullptr;
 
         int score_val = score::kNegInf;
@@ -556,11 +601,11 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         if (moves_searched < 3) {
             (stack + 1)->pv = pv_line;
             (stack + 1)->pv[0].set(A1, A1, no_type);
-            score_val =
-                (newdepth <= 1
-                     ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
-                     : -search<Nodetype::pv>(pos, -beta, -alpha, static_cast<U16>(newdepth - 1),
-                                             stack + 1, thread_id));
+            score_val = (newdepth <= 0
+                             ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
+                             : -search<Nodetype::pv>(pos, -beta, -alpha,
+                                                     static_cast<U16>(newdepth), stack + 1,
+                                                     thread_id));
         } else {
             int LMR = newdepth;
             auto captureFollowup =
@@ -588,19 +633,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             }
 
             score_val =
-                (LMR <= 1 ? -qsearch<non_pv>(pos, -alpha - 1, -alpha, 0, stack + 1, thread_id)
-                          : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR - 1),
+                (LMR <= 0 ? -qsearch<non_pv>(pos, -alpha - 1, -alpha, 0, stack + 1, thread_id)
+                          : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR),
                                             stack + 1, thread_id));
 
             if (score_val > alpha) {
                 (stack + 1)->pv = pv_line;
                 (stack + 1)->pv[0].set(A1, A1, no_type);
 
-                score_val =
-                    (newdepth <= 1
-                         ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
-                         : -search<Nodetype::pv>(pos, -beta, -alpha, static_cast<U16>(newdepth - 1),
-                                                 stack + 1, thread_id));
+                score_val = (newdepth <= 0 ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0,
+                                                                    stack + 1, thread_id)
+                                           : -search<Nodetype::pv>(pos, -beta, -alpha,
+                                                                   static_cast<U16>(newdepth),
+                                                                   stack + 1, thread_id));
             }
         }
         ++moves_searched;
@@ -656,18 +701,23 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // Best move bonus
     if (bestScore >= alpha && bestScore < beta && best_move.f != best_move.t) {
         auto bonus = 2 * depth;
-        stack->best_move_history()[to_mv][best_move.f][best_move.t] += bonus;
+        apply_history_bonus(stack->best_move_history()[to_mv][best_move.f][best_move.t], bonus);
     }
 
     if (moves_searched == 0) {
+        // During a singular search the excluded move was skipped, so "no moves"
+        // means "no alternatives", not stalemate or mate.
+        if (singular_search)
+            return alpha;
         return (in_check ? score::kMated + root_dist : score::kDraw);
     }
 
     Bound bound = (bestScore >= beta                                        ? bound_low
                    : pvNode && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                             : bound_high);
-    tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), stack->ply, best_move,
-             static_cast<int16_t>(bestScore), pvNode);
+    if (!singular_search)
+        tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
+                 score_to_tt(bestScore, stack->ply), pvNode);
 
     return bestScore;
 }
@@ -702,12 +752,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     {
         if (tt_.fetch(p.key(), e)) {
             ttm = e.move;
-            ttvalue = e.score;
-
-            if (ttvalue > score::kMate - 1000)
-                ttvalue = ttvalue - depth;
-            if (ttvalue < -(score::kMate - 1000))
-                ttvalue = ttvalue + depth;
+            ttvalue = score_from_tt(e.score, root_dist);
 
             if (!pv_type) {
                 if ((e.bound == bound_exact) || (e.bound == bound_low && ttvalue >= beta) ||
@@ -746,6 +791,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     }
 
     U16 moves_searched = 0;
+    // Counted separately from moves_searched so that a pruning rule can never
+    // make a position with legal evasions look like checkmate.
+    U16 legal_moves = 0;
     QMoveorder mvs(p, ttm, stack, &history_);
     Move move;
     Move pre_move = (stack - 1)->curr_move;
@@ -758,6 +806,8 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
         if (move.type == static_cast<U8>(no_type) || !p.is_legal(move))
             continue;
+
+        ++legal_moves;
 
         auto hashOrKiller = (move == ttm) || (move == stack->killers[0]) ||
                             (move == stack->killers[1]) || (move == stack->killers[2]) ||
@@ -790,7 +840,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
                 continue;
         }
 
-        if (p.see(move) < 0)
+        // Losing captures are not worth searching, but an evasion has to be
+        // played whatever it costs, so never prune one.
+        if (!in_check && p.see(move) < 0)
             continue;
 
         p.do_move(move);
@@ -814,14 +866,14 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
         }
     }
 
-    if (moves_searched == 0 && in_check)
+    if (legal_moves == 0 && in_check)
         return score::kMated + root_dist;
 
     Bound bound = (best_score >= beta                                        ? bound_low
                    : pv_type && (best_move.type != static_cast<U8>(no_type)) ? bound_exact
                                                                              : bound_high);
-    tt_.save(p.key(), qsdepth, static_cast<U8>(bound), stack->ply, best_move,
-             static_cast<int16_t>(best_score), pv_type);
+    tt_.save(p.key(), qsdepth, static_cast<U8>(bound), best_move,
+             score_to_tt(best_score, stack->ply), pv_type);
 
     return best_score;
 }
@@ -860,10 +912,12 @@ void SearchEngine::readout_pv(SearchNode* stack, const Rootmoves& mRoots, int ev
 
         std::cout << "info"
                   << " depth " << depth
+                  << " seldepth " << mRoots[i].selDepth
+                  << " multipv " << (i + 1)
+                  << " score " << uci_score_string(eval)
                   << (eval >= beta    ? " lowerbound"
                       : eval <= alpha ? " upperbound"
                                       : "")
-                  << " seldepth " << mRoots[i].selDepth << " multipv " << i << " score cp " << eval
                   << " nodes " << nodes << " pv " << res << std::endl;
     }
 }

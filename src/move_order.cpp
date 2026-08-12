@@ -19,7 +19,7 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
                          int16_t eval, const std::vector<Move>& quiets, Move* killers) {
     int bonus = depth * depth;
     if (m.type == static_cast<U8>(Movetype::quiet)) {
-        history_[c][m.f][m.t] += bonus;
+        apply_history_bonus(history_[c][m.f][m.t], bonus);
         counters_[previous.f][previous.t] = m;
         if (previous.type != static_cast<U8>(no_type)) {
             int opp = 1 - static_cast<int>(c);
@@ -29,10 +29,14 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
             killers[1] = killers[0];
             killers[0] = m;
         }
+        // Penalise the quiet moves that were tried and failed, skipping the one
+        // that caused the cutoff. Comparing only the from-square let a single
+        // piece's other destinations escape the penalty while penalising moves
+        // that merely started on the same square.
         for (auto& q : quiets) {
-            if (m.f == q.f)
+            if (m == q)
                 continue;
-            history_[c][q.f][q.t] -= bonus;
+            apply_history_bonus(history_[c][q.f][q.t], -bonus);
         }
     }
 
@@ -77,26 +81,23 @@ int Movehistory::score(const Move& m, const Color& c, const Move& previous, cons
 
 // ─── Scoring lambdas ────────────────────────────────────────────────────────
 
-int16_t score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                       const Move& threat, SearchNode* stack, const Movehistory* hist) {
-    int16_t s = static_cast<int16_t>(p.see(m));
-    s = static_cast<int16_t>(s + stack->best_move_history()[p.to_move()][m.f][m.t]);
-    return s;
+int score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
+                   const Move& threat, SearchNode* stack, const Movehistory* hist) {
+    return p.see(m) * kCaptureSeeScale + stack->best_move_history()[p.to_move()][m.f][m.t];
 }
 
-int16_t score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                        const Move& threat, SearchNode* stack, const Movehistory* hist) {
-    return static_cast<int16_t>(p.see(m));
+int score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,
+                    const Move& threat, SearchNode* stack, const Movehistory* hist) {
+    return p.see(m);
 }
 
-int16_t score_quiets(const position& p, const Move& m, const Move& prev, const Move& followup,
-                     const Move& threat, SearchNode* stack, const Movehistory* hist) {
+int score_quiets(const position& p, const Move& m, const Move& prev, const Move& followup,
+                 const Move& threat, SearchNode* stack, const Movehistory* hist) {
     auto tomove = p.to_move();
-    int16_t s = 0;
+    int s = 0;
     if (hist)
-        s = static_cast<int16_t>(hist->score(m, tomove, prev, followup, threat));
-    s = static_cast<int16_t>(s + stack->best_move_history()[tomove][m.f][m.t]);
-    return s;
+        s = hist->score(m, tomove, prev, followup, threat);
+    return s + stack->best_move_history()[tomove][m.f][m.t];
 }
 
 // ─── ScoredMoves ────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ int16_t score_quiets(const position& p, const Move& m, const Move& prev, const M
 ScoredMoves::ScoredMoves(const position& p, Movegen* m, const std::vector<Move>& filters,
                          const Move& previous, const Move& followup, const Move& threat,
                          SearchNode* stack, const Movehistory* hist, ScoreFunc score_lambda,
-                         int16_t cutoff) {
+                         int cutoff) {
     m_moves.clear();
     load_and_score(p, m, filters, previous, followup, threat, stack, hist, score_lambda);
     sort(cutoff);
@@ -123,12 +124,12 @@ void ScoredMoves::load_and_score(const position& p, Movegen* moves,
             m == filters[4])
             continue;
 
-        int16_t sc = score_lambda(p, m, previous, followup, threat, stack, hist);
+        int sc = score_lambda(p, m, previous, followup, threat, stack, hist);
         m_moves.emplace_back(ScoredMove(m, sc));
     }
 }
 
-void ScoredMoves::sort(int16_t cutoff) {
+void ScoredMoves::sort(int cutoff) {
     unsigned N = static_cast<unsigned>(m_moves.size());
     ScoredMove key;
     int j;
@@ -144,7 +145,7 @@ void ScoredMoves::sort(int16_t cutoff) {
     create_chunk(cutoff);
 }
 
-void ScoredMoves::create_chunk(int16_t cutoff) {
+void ScoredMoves::create_chunk(int cutoff) {
     m_start = m_end;
     for (unsigned i = m_start; i < m_moves.size(); ++i) {
         if (m_moves[i].s >= cutoff)
@@ -242,10 +243,10 @@ void Moveorder::next_phase() {
         m_phase == InitQuiets) {
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodCaptures || m_phase == BadCaptures) && m_captures->end()) {
-        m_captures->create_chunk(score::kNegInf);
+        m_captures->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodQuiets || m_phase == BadQuiets) && m_quiets->end()) {
-        m_quiets->create_chunk(score::kNegInf);
+        m_quiets->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     }
 }
@@ -328,10 +329,10 @@ void QMoveorder::next_phase() {
         m_phase == InitQuiets) {
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodCaptures || m_phase == BadCaptures) && m_captures->end()) {
-        m_captures->create_chunk(score::kNegInf);
+        m_captures->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     } else if ((m_phase == GoodQuiets || m_phase == BadQuiets) && m_quiets->end()) {
-        m_quiets->create_chunk(score::kNegInf);
+        m_quiets->create_chunk(kOrderAll);
         m_phase = static_cast<Phase>(m_phase + 1);
     }
 }

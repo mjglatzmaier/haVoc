@@ -104,7 +104,7 @@ TEST_F(EvalTest, TTStoreAndFetch) {
     tt.resize(1); // 1 MB
 
     havoc::Move m(havoc::E2, havoc::E4, havoc::quiet);
-    tt.save(0x123456789ABCDEF0ULL, 10, havoc::bound_exact, 1, m, 150, true);
+    tt.save(0x123456789ABCDEF0ULL, 10, havoc::bound_exact, m, 150, true);
 
     havoc::hash_data hd;
     bool found = tt.fetch(0x123456789ABCDEF0ULL, hd);
@@ -121,7 +121,7 @@ TEST_F(EvalTest, TTNegativeScore) {
     tt.resize(1);
 
     havoc::Move m(havoc::D7, havoc::D5, havoc::quiet);
-    tt.save(0xFEDCBA9876543210ULL, 5, havoc::bound_low, 2, m, -300, false);
+    tt.save(0xFEDCBA9876543210ULL, 5, havoc::bound_low, m, -300, false);
 
     havoc::hash_data hd;
     bool found = tt.fetch(0xFEDCBA9876543210ULL, hd);
@@ -129,8 +129,58 @@ TEST_F(EvalTest, TTNegativeScore) {
     EXPECT_EQ(hd.score, -300);
 }
 
-TEST_F(EvalTest, TTHashfull) {
+TEST_F(EvalTest, TTEvictsShallowestOnFullCluster) {
     havoc::hash_table tt;
+    tt.resize(1);
+    tt.clear();
+
+    // Keys that differ only in their high bits land in the same cluster, since
+    // the cluster index is taken from the low bits of the key.
+    auto key_for = [](havoc::U64 i) { return (i << 40) | 0x1234ULL; };
+    havoc::Move m(havoc::E2, havoc::E4, havoc::quiet);
+
+    const havoc::U8 depths[4] = {20, 15, 3, 18};
+    for (havoc::U64 i = 0; i < 4; ++i)
+        tt.save(key_for(i + 1), depths[i], havoc::bound_exact, m, 100, false);
+
+    havoc::hash_data hd;
+    for (havoc::U64 i = 0; i < 4; ++i)
+        EXPECT_TRUE(tt.fetch(key_for(i + 1), hd)) << "entry " << i << " should be stored";
+
+    // A fifth key must evict something; the depth-3 entry is the cheapest loss.
+    tt.save(key_for(5), 10, havoc::bound_exact, m, 200, false);
+
+    EXPECT_TRUE(tt.fetch(key_for(5), hd));
+    EXPECT_EQ(hd.depth, 10);
+    EXPECT_FALSE(tt.fetch(key_for(3), hd)) << "the depth-3 entry should be the victim";
+    EXPECT_TRUE(tt.fetch(key_for(1), hd));
+    EXPECT_TRUE(tt.fetch(key_for(2), hd));
+    EXPECT_TRUE(tt.fetch(key_for(4), hd));
+}
+
+TEST_F(EvalTest, TTPrefersEvictingOlderGenerations) {
+    havoc::hash_table tt;
+    tt.resize(1);
+    tt.clear();
+
+    auto key_for = [](havoc::U64 i) { return (i << 40) | 0x5678ULL; };
+    havoc::Move m(havoc::E2, havoc::E4, havoc::quiet);
+
+    // A slightly deeper entry from an old search, then shallow ones from a new
+    // one. At comparable depths the stale entry should be the one to go.
+    tt.save(key_for(1), 8, havoc::bound_exact, m, 100, false);
+    tt.new_search();
+    for (havoc::U64 i = 2; i <= 4; ++i)
+        tt.save(key_for(i), 6, havoc::bound_exact, m, 100, false);
+
+    tt.save(key_for(5), 6, havoc::bound_exact, m, 200, false);
+
+    havoc::hash_data hd;
+    EXPECT_TRUE(tt.fetch(key_for(5), hd));
+    EXPECT_FALSE(tt.fetch(key_for(1), hd)) << "the stale entry should be the victim";
+}
+
+TEST_F(EvalTest, TTHashfull) {    havoc::hash_table tt;
     tt.resize(1);
     tt.clear();
     EXPECT_EQ(tt.hashfull(), 0);

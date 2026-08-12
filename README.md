@@ -1,122 +1,161 @@
-<p align="center">
-  <img src="resources/havoc.png" alt="haVoc Chess Engine" width="450">
-</p>
+# haVoc
 
-<p align="center">
-  <strong>A modern, multi-threaded UCI chess engine written in C++20</strong>
-</p>
+A UCI chess engine written in C++20.
 
-<p align="center">
-  <a href="https://github.com/mjglatzmaier/chess/actions/workflows/ci.yml">
-    <img src="https://github.com/mjglatzmaier/chess/actions/workflows/ci.yml/badge.svg" alt="CI">
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
-  </a>
-  <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=c%2B%2B" alt="C++20">
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg" alt="Platform">
-</p>
+haVoc is a hobby project that has been worked on on and off over several years.
+It uses bitboard move generation with magic bitboards, an alpha-beta search, and
+a hand-written evaluation function. It has not been rated against other engines,
+so no strength claims are made here.
 
----
+## Building
 
-## Overview
+Requirements:
 
-**haVoc** is a UCI-compliant chess engine as a hobby project on and off over the years. It features bitboard-based move generation with magic bitboards, an alpha-beta search with modern pruning techniques, and a hand-crafted evaluation function — all designed with extensibility toward NNUE and GPU-accelerated MCTS in mind.
+- A C++20 compiler (GCC 12+, Clang 15+, AppleClang 16+, or MSVC 2022+)
+- CMake 3.20 or newer
 
-## Features
-
-### Search
-- Alpha-beta with iterative deepening and aspiration windows
-- Late move reductions (LMR) with history-aware tuning
-- Null move pruning with verification
-- Reverse futility pruning (static null move pruning)
-- Singular extensions with multi-cut
-- Internal iterative reductions (IIR)
-- Countermove and history heuristics
-- Quiescence search with delta pruning and SEE
-
-### Evaluation
-- Hand-crafted evaluation (HCE) with `IEvaluator` interface for future NNUE drop-in
-- Material and piece-square tables with tapered middlegame/endgame interpolation
-- Pawn structure: doubled, isolated, backward, and passed pawn detection
-- King safety: attack counting, pawn shelter, piece coordination
-- Mobility, threats, space, and specialized endgame knowledge
-- Per-thread pawn and material hash tables
-
-### Infrastructure
-- Multi-threaded search via Lazy SMP thread pool
-- Transposition table with 4-entry clustering and XOR verification
-- Modern C++20: `std::popcount`, `std::countr_zero`, `constexpr`, `[[nodiscard]]`
-- Cross-platform: Linux (GCC/Clang), macOS (AppleClang), Windows (MSVC)
-- 40+ unit tests including perft validation across 5 standard positions
-- Built-in `bench` command for regression testing
-
-## Build
-
-### Prerequisites
-- **C++20 compiler**: GCC 12+, Clang 15+, AppleClang 16+, or MSVC 2022+
-- **CMake**: 3.20+
-
-### Quick Start
 ```sh
-git clone https://github.com/mjglatzmaier/chess.git
-cd chess
+git clone https://github.com/mjglatzmaier/haVoc.git
+cd haVoc
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-### Run Tests
-```sh
-ctest --test-dir build --output-on-failure
-```
+The engine binary is written to `build/havoc`.
 
-### CMake Options
+### CMake options
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `HAVOC_ENABLE_TESTS` | `ON` | Build unit tests (requires Google Test, fetched automatically) |
-| `HAVOC_ENABLE_BENCH` | `OFF` | Build benchmark targets |
+| `HAVOC_ENABLE_TESTS` | `ON` | Build the unit tests (GoogleTest is fetched automatically) |
+| `HAVOC_ENABLE_BENCH` | `OFF` | Build the microbenchmark targets |
 | `HAVOC_ENABLE_SANITIZERS` | `OFF` | Enable ASan/UBSan in Debug builds |
-| `HAVOC_NATIVE` | `ON` | Enable `-march=native` for SIMD/popcnt |
+| `HAVOC_NATIVE` | `ON` | Compile with `-march=native` |
+| `HAVOC_BUILD_TOOLS` | `OFF` | Build the tuning tools (`havoc_datagen`, `havoc_texel`, `havoc_pgn2epd`) |
 
-## Usage
+`HAVOC_NATIVE` produces a binary tuned for the machine it was built on. Turn it
+off if you intend to copy the binary to another machine.
 
-haVoc communicates via the [Universal Chess Interface (UCI)](https://www.chessprogramming.org/UCI) protocol. Connect it to any UCI-compatible GUI (Arena, Cute Chess, Banksia, etc.) or run it directly:
+## Running
+
+haVoc speaks the [UCI protocol](https://www.chessprogramming.org/UCI) and can be
+used with any UCI-compatible GUI (Arena, Cute Chess, Banksia, and others). It can
+also be driven directly from a terminal:
 
 ```
 $ ./build/havoc
 haVoc v2.0.0
 by M.Glatzmaier
+uci
+position startpos moves e2e4
+go depth 12
 ```
 
-### UCI Commands
+Commonly used commands:
+
 ```
-uci                          # Engine identification and options
-isready                      # Synchronization check
-position startpos moves e2e4 # Set up position
-go depth 15                  # Search to depth 15
-go wtime 60000 btime 60000   # Search with time control
-go infinite                  # Search until 'stop'
-stop                         # Stop searching
-bench 10                     # Run benchmark (depth 10)
-quit                         # Exit
+uci                            Print engine name and options
+isready                        Synchronisation check
+position startpos moves e2e4   Set up a position
+position fen <fen> moves ...   Set up a position from FEN
+go depth 15                    Search to a fixed depth
+go movetime 5000               Search for a fixed number of milliseconds
+go wtime 60000 btime 60000     Search under a time control
+go infinite                    Search until 'stop'
+stop                           Stop the current search
+d                              Print the board, hash key, and FEN
+bench [depth]                  Search a fixed set of 12 positions (default depth 10)
+quit                           Exit
 ```
 
-### Engine Options
-```
-setoption name Threads value 4     # Number of search threads (default: 1)
-setoption name Hash value 256      # Transposition table size in MB (default: 1024)
+`bench` is useful as a quick regression check: it reports total nodes and nodes
+per second over the same positions every time, so two builds can be compared
+directly.
+
+### Options
+
+| Option | Type | Default | Notes |
+|--------|------|---------|-------|
+| `Threads` | spin, 1–1024 | 1 | Number of search threads (Lazy SMP) |
+| `Hash` | spin, 1–33554432 | 1024 | Transposition table size in MB |
+| `ParamFile` | string | empty | Load evaluation parameters from a file |
+| `SyzygyPath` | string | empty | Accepted but currently inert (see below) |
+| `BookFile` | string | empty | Accepted but currently inert (see below) |
+
+`SyzygyPath` and `BookFile` are advertised and parsed, but `src/tablebase.cpp`
+and `src/book.cpp` are placeholders that always report "not available". Setting
+them has no effect on play.
+
+## How it works
+
+### Search
+
+Iterative deepening with aspiration windows around a principal-variation search.
+The main heuristics in use are:
+
+- Transposition table with 4-entry clusters, XOR key verification, and
+  depth/age-based replacement
+- Late move reductions, adjusted by history score and node type
+- Null move pruning
+- Reverse futility pruning
+- Singular extensions
+- Internal iterative reductions
+- Killer moves, butterfly history, and countermoves for move ordering
+- Quiescence search with delta pruning and static exchange evaluation
+
+Multi-threaded search is Lazy SMP: each thread runs an independent search over a
+shared transposition table, and the main thread reports the result.
+
+### Evaluation
+
+Evaluation is hand-written and goes through an `IEvaluator` interface, so an
+alternative evaluator can be substituted without touching the search. The current
+implementation covers:
+
+- Material and piece-square tables, interpolated between middlegame and endgame
+- Pawn structure (doubled, isolated, backward, and passed pawns)
+- King safety from attacker counts, pawn shelter, and piece coordination
+- Mobility, threats, and space
+- Some specific endgame knowledge
+- Per-thread pawn and material hash tables
+
+## Development
+
+Run the test suite (49 tests, including perft against the five standard
+positions from the Chess Programming Wiki):
+
+```sh
+ctest --test-dir build --output-on-failure
 ```
 
-## Roadmap
+Tuning tools live in `tools/` and are built with `-DHAVOC_BUILD_TOOLS=ON`:
 
-- [ ] Texel/SPSA parameter tuning for HCE
-- [ ] NNUE evaluation (self-play training pipeline)
-- [ ] Syzygy endgame tablebase probing
-- [ ] Opening book support (Polyglot format)
-- [ ] GPU inference hooks for NNUE
-- [ ] MCTS search strategy (AlphaZero-style)
-- [ ] Chess960 / Fischer Random support
+- `havoc_datagen` — generate self-play training positions
+- `havoc_texel` — Texel-style evaluation tuning over labelled positions
+- `havoc_pgn2epd` — convert PGN games to EPD
+
+`scripts/tune.sh` wraps the datagen/tune loop, and `scripts/bake_params.py`
+writes a tuned parameter set back into the source.
+
+Continuous integration runs the build and test suite on Linux, macOS, and
+Windows: [ci.yml](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml).
+
+## Current state and known gaps
+
+Being honest about where things stand:
+
+- The evaluation terms are largely hand-set. Texel tuning infrastructure exists
+  but has not produced a well-tuned parameter set yet.
+- The static exchange evaluation has known correctness problems and is being
+  reworked.
+- The search is capped at 64 plies (`MAX_PLY`).
+- Syzygy tablebase probing and Polyglot opening books are stubs.
+- No Elo measurement has been done, so there is no baseline to regress against.
+
+Possible future work, in rough order of interest: finishing evaluation tuning,
+replacing the hand-written evaluation with a learned one, Syzygy probing, and
+Chess960 support.
 
 ## License
 
-[MIT License](LICENSE)
+[MIT](LICENSE)
