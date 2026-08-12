@@ -941,13 +941,18 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     const bool anyPawnsOn7th = p.pawns_near_promotion();
 
     if (!in_check) {
-        if (!pv_type && ttvalue != score::kNegInf && e.depth >= depth)
+        auto* sthread = search_threads_[thread_id];
+        float lm = lazy_eval_margin(qsdepth, anyPawnsOn7th);
+        best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p, lm)));
+
+        // As in search(): a TT score has a search behind it and is the better
+        // estimate, but only in the direction its bound supports. This was an
+        // unconditional `best_score = ttvalue`, which let an upper bound become
+        // the stand pat and then fail high against beta.
+        if (ttvalue != score::kNegInf &&
+            (e.bound == bound_exact || (e.bound == bound_low && ttvalue > best_score) ||
+             (e.bound == bound_high && ttvalue < best_score)))
             best_score = ttvalue;
-        else {
-            auto* sthread = search_threads_[thread_id];
-            float lm = lazy_eval_margin(qsdepth, anyPawnsOn7th);
-            best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p, lm)));
-        }
 
         // Stand pat
         if (best_score >= beta)
