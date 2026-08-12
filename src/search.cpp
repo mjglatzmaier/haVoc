@@ -497,17 +497,32 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     (void)weHavePawnsOn7th;
 
     int16_t static_eval_val;
-    if (ttvalue != score::kNegInf) {
-        static_eval_val = static_cast<int16_t>(ttvalue);
-    } else if ((stack - 2)->static_eval != score::kNegInf && !in_check &&
+    if (in_check) {
+        static_eval_val = score::kNegInf;
+    } else if ((stack - 2)->static_eval != score::kNegInf &&
                (stack - 2)->static_eval >= (stack - 1)->static_eval) {
         static_eval_val = static_cast<int16_t>((stack - 2)->static_eval + 15);
-    } else if (!in_check) {
+    } else {
         auto* sthread = search_threads_[thread_id];
         float lm = lazy_eval_margin_search(depth, anyPawnsOn7th);
         static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos, lm)));
-    } else {
-        static_eval_val = score::kNegInf;
+    }
+
+    // A TT score is a better estimate of the position than a static evaluation
+    // -- it has a search behind it -- but only in the direction its bound
+    // supports. bound_low says the truth is at least ttvalue, so it may raise
+    // the estimate and must not lower it; bound_high says the truth is at most
+    // ttvalue, so the reverse. Only bound_exact may do both.
+    //
+    // This used to be an unconditional `if (ttvalue != kNegInf) static_eval =
+    // ttvalue`, which let an upper bound stand in for the evaluation and then
+    // fed it to reverse futility pruning and null move pruning, both of which
+    // cut on static_eval >= beta and neither of which can tell that the number
+    // is only a ceiling.
+    if (static_eval_val != score::kNegInf && ttvalue != score::kNegInf &&
+        (tt_bound == bound_exact || (tt_bound == bound_low && ttvalue > static_eval_val) ||
+         (tt_bound == bound_high && ttvalue < static_eval_val))) {
+        static_eval_val = static_cast<int16_t>(ttvalue);
     }
 
     stack->static_eval = static_eval_val;
