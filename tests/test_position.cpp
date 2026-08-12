@@ -203,8 +203,10 @@ TEST_F(PositionTest, IsDraw_Repetition) {
 // ── is_draw: 50-move rule ───────────────────────────────────────────────────
 
 TEST_F(PositionTest, IsDraw_50MoveRule) {
-    // FEN with move50 = 99
-    std::istringstream fen("8/8/8/4k3/8/8/8/4K3 w - - 99 100");
+    // Both sides keep a rook. A bare king-versus-king position would now be
+    // drawn on insufficient material regardless of the counter, which would stop
+    // this test from saying anything about the fifty move rule.
+    std::istringstream fen("r7/8/8/4k3/8/8/8/R3K3 w - - 99 100");
     position pos(fen);
     EXPECT_FALSE(pos.is_draw());
 
@@ -324,6 +326,30 @@ TEST_F(PositionTest, SeeWorksWhileInCheck) {
 TEST_F(PositionTest, SeeRefusesKingCaptureOfADefendedPiece) {
     // Kxe2 is not actually available: the rook on e8 recaptures.
     EXPECT_LT(see_of("4r3/8/8/8/8/8/4r3/4K3 w - - 0 1", E1, E2), 0);
+}
+
+TEST_F(PositionTest, RecognisesDeadDrawnMaterial) {
+    auto material_draw = [](const std::string& fen) {
+        std::istringstream ss(fen);
+        position p(ss);
+        return p.is_material_draw();
+    };
+
+    // No sequence of legal moves mates in any of these.
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/4K3/8/8 w - - 0 1"));    // K vs K
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/3BK3/8/8 w - - 0 1"));   // KB vs K
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/3NK3/8/8 w - - 0 1"));   // KN vs K
+    EXPECT_TRUE(material_draw("8/8/2b1k3/8/8/3NK3/8/8 w - - 0 1")); // KN vs KB
+    // Two knights cannot force mate, and no arbiter will ever award it.
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/2NNK3/8/8 w - - 0 1")); // KNN vs K
+
+    // These are genuinely winnable and must not be written off.
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3BK3/4P3/8 w - - 0 1")); // KBP vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3BKB2/8/8 w - - 0 1"));  // KBB vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3NKB2/8/8 w - - 0 1"));  // KBN vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3RK3/8/8 w - - 0 1"));   // KR vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3QK3/8/8 w - - 0 1"));   // KQ vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/4K3/4P3/8 w - - 0 1"));  // KP vs K
 }
 
 } // namespace havoc

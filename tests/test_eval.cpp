@@ -319,6 +319,39 @@ TEST_F(EvalTest, PieceValuesAreLive) {
     EXPECT_GT(dear - cheap, 100);
 }
 
+// The evaluation used to be flat across every move once the defender was down
+// to a bare king: same material, no pawns, nothing positional to say. The
+// search saw a plateau, had nothing to climb, and shuffled. Over a four-
+// position suite the engine failed to mate with two bishops in two of them and
+// needed a mean of 69 plies in the others; with a gradient it mates all four in
+// a mean of 32.5. These assertions pin the gradient itself.
+TEST_F(EvalTest, DrivesTheBareKingTowardsMate) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+    auto score = [&](const char* fen) {
+        auto pos = make_pos(fen);
+        return eval.evaluate(pos);
+    };
+
+    // Identical material either way, so the only thing separating these is
+    // where the defending king stands.
+    EXPECT_GT(score("k7/8/8/8/8/8/8/3RK3 w - - 0 1"), score("8/8/8/3k4/8/8/8/3RK3 w - - 0 1"))
+        << "driving the bare king to the edge has to score better than leaving "
+           "it in the centre";
+
+    // Mate needs the attacking king in opposition, so closing the gap counts.
+    EXPECT_GT(score("k7/8/1K6/8/8/8/8/3R4 w - - 0 1"), score("k7/8/8/8/8/8/8/3RK3 w - - 0 1"))
+        << "walking the attacking king in has to score better than leaving it home";
+
+    // Bishop and knight only mate in the two corners the bishop can attack.
+    // A dark-squared bishop wants h8, not a8, and both corners are otherwise
+    // identical -- same edge distance, same distance to the white king.
+    EXPECT_GT(score("7k/8/8/8/8/8/8/2BNK3 w - - 0 1"), score("k7/8/8/8/8/8/8/2BNK3 w - - 0 1"))
+        << "bishop and knight must aim at the corner the bishop covers";
+}
+
 // The scaling tables are indexed by the Piece enum, which runs pawn..king.
 // They were sized 5, so sq_score_scaling[king] read one past the end -- and
 // the value that happened to sit there was 0, which silently multiplied the
@@ -508,6 +541,14 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "6k1/6pp/8/3B4/8/8/6PP/3R2K1 w - - 0 1",
         "8/8/4k3/8/3QB3/8/4K3/8 w - - 0 1",
         "3rr1k1/5ppp/8/3B1B2/3RR3/8/5PPP/6K1 w - - 0 1",
+        // The same wide-open boards, but with a defending minor so the side to
+        // move is not facing a bare king. Pawnless king-versus-lone-king
+        // positions take the mating shortcut in evaluate() and never reach the
+        // mobility tables, so without these the top rook and bishop buckets
+        // lose their only coverage.
+        "4k2n/8/8/8/8/8/8/R3K3 w Q - 0 1",
+        "7n/8/4k3/8/3QB3/8/4K3/8 w - - 0 1",
+        "k6n/8/8/8/3R4/8/8/4K3 w - - 0 1",
         // Cramped, to reach the bottom of the mobility tables
         "rnbqkbnr/pppppppp/8/8/8/PPPPPPPP/RNBQKBNR/8 w kq - 0 1",
         "1nb1kb2/1ppppp2/8/8/8/8/PPPPPP2/1NB1KB2 w - - 0 1",
