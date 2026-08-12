@@ -194,6 +194,7 @@ public:
         case TuneStage::category: lr=8; pert=2; lr_decay=0.7; mom=0.5; break;
         case TuneStage::shape:    lr=3; pert=1; lr_decay=0.85; mom=0.7; break;
         case TuneStage::fine:     lr=1.5; pert=1; lr_decay=0.9; mom=0.8; break;
+        case TuneStage::pst:      lr=3; pert=2; lr_decay=0.92; mom=0.7; break;
         }
         // Large-magnitude parameters (material values run into the hundreds)
         // produce tiny gradients under a perturbation of 1, and the integer
@@ -288,11 +289,12 @@ int main(int argc, char* argv[]) {
         else if (k=="--pert" && i+1<argc) pert_ov = std::stoi(argv[++i]);
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
-                      << "[--iterations N] [--stage 1|2|3] [--K val] [--threads N] "
+                      << "[--iterations N] [--stage 1|2|3|4] [--K val] [--threads N] "
                       << "[--no-quiet-filter] [--lr F] [--pert N]\n"; return 0;
         }
     }
-    auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine : TuneStage::shape);
+    auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine
+                : stg==4 ? TuneStage::pst : TuneStage::shape);
     bitboards::init(); magics::init(); zobrist::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
     tuner.lr_override = lr_ov; tuner.pert_override = pert_ov;
