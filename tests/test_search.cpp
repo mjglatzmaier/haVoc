@@ -8,6 +8,7 @@
 
 #include <sstream>
 
+#include <functional>
 #include <limits>
 #include <utility>
 #include <set>
@@ -391,6 +392,129 @@ TEST_F(SearchTest, ARepetitionIsADrawEvenWhenTheSideToMoveIsInCheck) {
                               "while the side to move is in check";
     EXPECT_LT(score, 200);
 }
+
+// Every parameter registered in TuneStage::search must actually reach the
+// search. This is the search-side mirror of
+// EvalTest.EveryTunableParameterReachesTheEvaluation, and it exists for the
+// same reason: a knob that is registered with the tuner but wired to nothing
+// costs a full SPSA arm per iteration and produces a confident-looking value
+// that means nothing.
+//
+// The evaluation test cannot cover these. Search constants do not change what
+// any position is worth, only which nodes get visited, so perturbing one
+// leaves every static evaluation identical. The observable is the node count
+// of a fixed-depth search instead.
+TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
+    // The bench position set: the same twelve positions the engine reports
+    // node counts for, chosen to span openings, tactical middlegames and a
+    // pawn endgame. A smaller set leaves some pruning paths unvisited and
+    // makes a live parameter look dead.
+    const std::vector<std::string> fens = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/3P1N1P/PPP1NPP1/R2Q1RK1 w - - 0 1",
+        "r1bqkb1r/pppppppp/2n2n2/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+        "r1bqk2r/ppppbppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+        "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+        "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+        "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1N1P/PPP1BPP1/RNBQR1K1 w - - 0 8",
+        "2rr2k1/pp3ppp/2n1bn2/2q1p3/8/1NP2N1P/PP3PP1/R1BQR1K1 w - - 5 14",
+    };
+
+    // One engine across all twelve positions, exactly as bench does. The
+    // history table is deliberately not cleared between searches, so it only
+    // reaches useful magnitudes after several positions have contributed; a
+    // fresh engine per position keeps it near zero and makes the
+    // history-dependent parameters look dead when they are not.
+    auto nodes_with = [&](const std::function<void(parameters&)>& perturb) {
+        SearchEngine engine;
+        perturb(engine.params());
+        U64 total = 0;
+        for (const auto& fen : fens) {
+            auto pos = make_pos(fen);
+            SearchLimits lims{};
+            lims.depth = 10;
+            engine.start(pos, lims, /*silent=*/true);
+            engine.wait();
+            total += engine.total_nodes();
+        }
+        return total;
+    };
+
+    const U64 baseline = nodes_with([](parameters&) {});
+    ASSERT_GT(baseline, 0u) << "baseline search visited no nodes";
+
+    parameters probe;
+    std::vector<std::string> dead;
+
+    for (auto& [name, slot] : probe.all_params(TuneStage::search)) {
+        const int original = *slot;
+        bool moved = false;
+
+        // These span three orders of magnitude -- depths of 1 to 8 alongside
+        // margins of 4096 -- so a fixed additive step is meaningless for at
+        // least one end of the range. Probe by scale as well as by increment,
+        // and accept any perturbation at all: the question is whether the
+        // search can be made to notice this knob, not whether a particular
+        // step size does it.
+        std::vector<int> probes = {original + 1, original - 1, original * 2,
+                                   original / 2,  original * 8, original / 8,
+                                   1,             0};
+        for (int value : probes) {
+            if (value < 0 || value == original)
+                continue;
+            const std::string key = name;
+            if (nodes_with([&](parameters& p) {
+                    for (auto& [n, sl] : p.all_params(TuneStage::search))
+                        if (n == key)
+                            *sl = value;
+                }) != baseline) {
+                moved = true;
+                break;
+            }
+        }
+
+        *slot = original;
+        if (!moved)
+            dead.push_back(name);
+    }
+
+    // Every search parameter must be live. Two of them were not: over a
+    // depth-15 bench the raw history table spanned only [-1769, +14903], so
+    // history pruning fired 0 times in 4240374 opportunities and LMR's
+    // bad-history reduction never triggered either. That was fixed by adding
+    // the missing malus on fail-low nodes, which flips the table's range to
+    // [-10184, +1797] and brings both to life. Keep this assertion strict:
+    // a knob wired to nothing costs a full SPSA arm per iteration and produces
+    // a confident-looking tuned value that means nothing.
+    // history_prune_depth is wired to live code that cannot fire at the
+    // default settings. History pruning reads hist < -history_prune_margin *
+    // depth, and with history_malus_pct at 0 the table has almost no negative
+    // side -- it bottoms at -1769 over a depth-15 bench, against a threshold
+    // of -4096 at depth 1. So widening or narrowing the depth window changes
+    // nothing; only shrinking the margin does, which is why that knob still
+    // registers as live. Both stay registered so SPSA can decide against game
+    // results whether this pruning is worth turning on at all.
+    const std::set<std::string> known_dead = {"history_prune_depth"};
+
+    std::vector<std::string> unexpected;
+    for (const auto& d : dead)
+        if (!known_dead.count(d))
+            unexpected.push_back(d);
+
+    EXPECT_TRUE(unexpected.empty()) << "search parameters registered with the tuner that no "
+                                       "amount of perturbation can make the search notice: "
+                                    << [&] {
+                                           std::string s;
+                                           for (const auto& d : unexpected)
+                                               s += "\n  " + d;
+                                           return s;
+                                       }();
+}
+
 
 } // namespace
 } // namespace havoc

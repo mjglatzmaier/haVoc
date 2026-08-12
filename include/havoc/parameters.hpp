@@ -17,7 +17,8 @@ enum class TuneStage {
     category, // Stage 1: category-level scale factors
     shape,    // Stage 2: curve shapes and individual weights
     fine,     // Stage 3: material values + stage 2
-    pst       // Stage 4: the 768 piece-square table entries
+    pst,      // Stage 4: the 768 piece-square table entries
+    search    // Stage 5: search pruning and reduction constants
 };
 
 struct parameters {
@@ -141,6 +142,33 @@ struct parameters {
 
     // Search
     int fixed_depth = -1;
+
+    // ── Search pruning and reduction constants ──────────────────────────────
+    // These do not appear in the static evaluation, so they have no Texel
+    // gradient: changing one changes *which nodes get visited*, not what any
+    // position is worth. They can only be tuned against game results, which
+    // is what SPSA is for. They live here so the tuner and the ParamFile
+    // machinery can reach them; search.cpp reads them through params_.
+    int rfp_max_depth = 6;          // reverse futility only below this depth
+    int rfp_margin = 80;            // ...and only if eval - margin*depth >= beta
+    int nmp_min_depth = 3;          // null move needs at least this much depth
+    int nmp_base_r = 3;             // base null-move reduction
+    int nmp_depth_div = 6;          // extra reduction of depth/this
+    int nmp_eval_div = 200;         // extra reduction of (eval-beta)/this
+    int nmp_eval_max = 3;           // ...capped here
+    int futility_base = 6;          // (base + depth^2) / (2 - improving)
+    int history_prune_depth = 3;    // history pruning only below this depth
+    int history_prune_margin = 4096; // ...and only below -margin*depth
+    int see_prune_depth = 1;        // negative-SEE capture pruning depth
+    int singular_min_depth = 8;     // singular extension minimum depth
+    int singular_margin = 2;        // singular beta = ttvalue - margin*depth
+    int lmr_min_depth = 3;          // late move reductions minimum depth
+    int lmr_hist_bad = 2000;        // reduce one extra ply below -this
+    int lmr_hist_good = 4000;       // reduce one less ply above this
+    int best_move_bonus = 2;        // best-move history bonus, times depth
+    int history_bonus_scale = 1;    // history bonus is scale * depth^2
+    int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)
+    int lazy_margin = 225;          // lazy evaluation cutoff margin
 
     static constexpr int pawn_lever_score[64] = {
         1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3,

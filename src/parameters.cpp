@@ -157,6 +157,34 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         return result;
     }
 
+    if (stage == TuneStage::search) {
+        // Stage 5: search constants. Deliberately NOT part of any eval stage
+        // -- a Texel gradient over these is identically zero, because they
+        // change which nodes the search visits rather than what a position is
+        // worth. They are tuned by SPSA against game results.
+        result.emplace_back("rfp_max_depth", &rfp_max_depth);
+        result.emplace_back("rfp_margin", &rfp_margin);
+        result.emplace_back("nmp_min_depth", &nmp_min_depth);
+        result.emplace_back("nmp_base_r", &nmp_base_r);
+        result.emplace_back("nmp_depth_div", &nmp_depth_div);
+        result.emplace_back("nmp_eval_div", &nmp_eval_div);
+        result.emplace_back("nmp_eval_max", &nmp_eval_max);
+        result.emplace_back("futility_base", &futility_base);
+        result.emplace_back("history_prune_depth", &history_prune_depth);
+        result.emplace_back("history_prune_margin", &history_prune_margin);
+        result.emplace_back("see_prune_depth", &see_prune_depth);
+        result.emplace_back("singular_min_depth", &singular_min_depth);
+        result.emplace_back("singular_margin", &singular_margin);
+        result.emplace_back("lmr_min_depth", &lmr_min_depth);
+        result.emplace_back("lmr_hist_bad", &lmr_hist_bad);
+        result.emplace_back("lmr_hist_good", &lmr_hist_good);
+        result.emplace_back("best_move_bonus", &best_move_bonus);
+        result.emplace_back("history_bonus_scale", &history_bonus_scale);
+        result.emplace_back("history_malus_pct", &history_malus_pct);
+        result.emplace_back("lazy_margin", &lazy_margin);
+        return result;
+    }
+
     // Stage 3 (fine): material values + everything from stage 2
     // Material values
     for (size_t i = 0; i < material_value.size(); ++i)
@@ -174,7 +202,7 @@ std::vector<std::pair<std::string, int*>> parameters::every_param() {
     // on this set; when they did not, whole groups were written to disk and
     // then silently ignored on the way back in.
     auto result = all_params(TuneStage::category);
-    for (auto stage : {TuneStage::fine, TuneStage::pst}) {
+    for (auto stage : {TuneStage::fine, TuneStage::pst, TuneStage::search}) {
         auto s = all_params(stage);
         result.insert(result.end(), s.begin(), s.end());
     }
