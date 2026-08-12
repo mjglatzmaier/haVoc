@@ -29,8 +29,12 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
             killers[1] = killers[0];
             killers[0] = m;
         }
+        // Penalise the quiet moves that were tried and failed, skipping the one
+        // that caused the cutoff. Comparing only the from-square let a single
+        // piece's other destinations escape the penalty while penalising moves
+        // that merely started on the same square.
         for (auto& q : quiets) {
-            if (m.f == q.f)
+            if (m == q)
                 continue;
             apply_history_bonus(history_[c][q.f][q.t], -bonus);
         }
