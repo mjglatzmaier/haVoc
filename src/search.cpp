@@ -123,7 +123,11 @@ float SearchEngine::lazy_eval_margin(int depth, bool advanced_pawn) {
 
 // ─── Start search ───────────────────────────────────────────────────────────
 
-void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
+void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
+    // Copy the limits into the engine before anything asynchronous can see
+    // them. start() only enqueues work and returns, so the caller's object is
+    // gone by the time the timer thread reads it -- see limits_ in search.hpp.
+    limits_ = lims;
     // Wait for any previous search to finish
     wait();
 
@@ -157,10 +161,10 @@ void SearchEngine::start(position& p, SearchLimits& lims, bool silent) {
 
     // Launch the entire search on the worker thread so UCI loop stays responsive.
     // The worker thread manages the timer, search threads, and result collection.
-    worker_.enqueue([this, &p, &lims, depth, silent]() {
+    worker_.enqueue([this, &p, depth, silent]() {
         // Launch timer
         Threadpool<Workerthread> timer_thread(1);
-        timer_thread.enqueue([this, &p, &lims]() { search_timer(p, lims); });
+        timer_thread.enqueue([this, &p]() { search_timer(p); });
 
         // Launch helper threads
         if (search_threads_.size() > 1) {
@@ -239,11 +243,11 @@ void SearchEngine::wait() {
 
 // ─── Timer ──────────────────────────────────────────────────────────────────
 
-void SearchEngine::search_timer(position& p, SearchLimits& lims) {
+void SearchEngine::search_timer(position& p) {
     util::Clock c;
-    bool fixed_time = lims.movetime > 0;
+    bool fixed_time = limits_.movetime > 0;
     int delay = 1;
-    double time_limit = estimate_max_time(p, lims);
+    double time_limit = estimate_max_time(p);
     auto sleep = [delay]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     };
@@ -254,7 +258,7 @@ void SearchEngine::search_timer(position& p, SearchLimits& lims) {
             elapsed = c.elapsed_ms();
             sleep();
         } while (!signals_.stop.load() && searching_.load() &&
-                 elapsed <= static_cast<double>(lims.movetime));
+                 elapsed <= static_cast<double>(limits_.movetime));
     } else if (time_limit > -1) {
         do {
             elapsed = c.elapsed_ms();
@@ -302,8 +306,8 @@ double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     return std::max(kMinSearchTime, std::min(base_time, max_time));
 }
 
-double SearchEngine::estimate_max_time(position& p, SearchLimits& lims) {
-    return estimate_move_time(lims, p.to_move() == white);
+double SearchEngine::estimate_max_time(position& p) const {
+    return estimate_move_time(limits_, p.to_move() == white);
 }
 
 // ─── Iterative deepening ────────────────────────────────────────────────────
