@@ -327,8 +327,6 @@ static U64 piece_rands[64][2][6];
 static U64 castle_rands[2][16];
 static U64 ep_rands[8];
 static U64 stm_rands[2];
-static U64 move50_rands[512];
-static U64 hmv_rands[512];
 
 // ---------------------------------------------------------------------------
 // Initialization — ported from legacy zobrist::load()
@@ -361,12 +359,6 @@ void init() {
     // Side-to-move keys
     stm_rands[white] = kZobristRands[idx++];
     stm_rands[black] = kZobristRands[idx++];
-
-    // 50-move and half-move keys
-    for (int m = 0; m < 512; ++m, idx += 2) {
-        move50_rands[m] = kZobristRands[idx];
-        hmv_rands[m] = kZobristRands[idx + 1];
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -384,16 +376,6 @@ U64 ep(int file) {
 }
 U64 stm(Color c) {
     return stm_rands[c];
-}
-U64 mv50(int move50) {
-    return move50_rands[static_cast<unsigned>(move50) & 511u];
-}
-U64 hmvs(int halfmoves) {
-    // The half-move counter grows without bound over a long game while the
-    // table holds 512 entries, so a game past 256 moves indexed off the end of
-    // it. Wrapping keeps every reachable game identical to before and only
-    // changes behaviour where the old code read out of bounds.
-    return hmv_rands[static_cast<unsigned>(halfmoves) & 511u];
 }
 
 } // namespace havoc::zobrist

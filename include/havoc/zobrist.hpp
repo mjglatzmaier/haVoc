@@ -20,9 +20,6 @@ void init();
 [[nodiscard]] U64 stm(Color c);
 
 /// Zobrist key for 50-move rule counter.
-[[nodiscard]] U64 mv50(int move50);
 
-/// Zobrist key for half-move counter.
-[[nodiscard]] U64 hmvs(int halfmoves);
 
 } // namespace havoc::zobrist

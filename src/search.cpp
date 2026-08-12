@@ -790,7 +790,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                           : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR),
                                             stack + 1, thread_id));
 
-            if (score_val > alpha) {
+            if (score_val > alpha && (pvNode || LMR < newdepth)) {
                 (stack + 1)->pv = pv_line;
                 (stack + 1)->pv[0].set(A1, A1, no_type);
 
