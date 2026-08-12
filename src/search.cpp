@@ -1034,6 +1034,11 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
         ++legal_moves;
 
+        // qsearch never recorded the move it was searching, so a qsearch node
+        // whose parent was also a qsearch node read whatever move some unrelated
+        // subtree left at this ply and used it to key the counter-move bonus.
+        stack->curr_move = move;
+
         auto hashOrKiller = (move == ttm) || (move == stack->killers[0]) ||
                             (move == stack->killers[1]) || (move == stack->killers[2]) ||
                             (move == stack->killers[3]);
