@@ -521,9 +521,6 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     int16_t static_eval_val;
     if (in_check) {
         static_eval_val = score::kNegInf;
-    } else if ((stack - 2)->static_eval != score::kNegInf &&
-               (stack - 2)->static_eval >= (stack - 1)->static_eval) {
-        static_eval_val = static_cast<int16_t>((stack - 2)->static_eval + 15);
     } else {
         auto* sthread = search_threads_[thread_id];
         float lm = lazy_eval_margin_search(depth, anyPawnsOn7th);
@@ -604,7 +601,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     Move move;
     Move pre_move = (stack - 1)->curr_move;
     Move pre_pre_move = (stack - 2)->curr_move;
-    bool improving = stack->static_eval - (stack - 2)->static_eval >= 0;
+    // `improving` asks whether our position got better over our own last two
+    // turns. kNegInf is the in-check sentinel, not a number: subtracting it
+    // makes any node whose grandparent was in check look like a huge
+    // improvement. Test for it rather than doing arithmetic on it. When there
+    // is nothing to compare against, default to improving, which is the
+    // cautious answer -- it prunes and reduces less.
+    bool improving;
+    if (in_check)
+        improving = false;
+    else if ((stack - 2)->static_eval != score::kNegInf)
+        improving = stack->static_eval >= (stack - 2)->static_eval;
+    else
+        improving = true;
     auto to_mv = pos.to_move();
     int SEE = 0;
     bool skipQuiets = false;
@@ -932,13 +941,18 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     const bool anyPawnsOn7th = p.pawns_near_promotion();
 
     if (!in_check) {
-        if (!pv_type && ttvalue != score::kNegInf && e.depth >= depth)
+        auto* sthread = search_threads_[thread_id];
+        float lm = lazy_eval_margin(qsdepth, anyPawnsOn7th);
+        best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p, lm)));
+
+        // As in search(): a TT score has a search behind it and is the better
+        // estimate, but only in the direction its bound supports. This was an
+        // unconditional `best_score = ttvalue`, which let an upper bound become
+        // the stand pat and then fail high against beta.
+        if (ttvalue != score::kNegInf &&
+            (e.bound == bound_exact || (e.bound == bound_low && ttvalue > best_score) ||
+             (e.bound == bound_high && ttvalue < best_score)))
             best_score = ttvalue;
-        else {
-            auto* sthread = search_threads_[thread_id];
-            float lm = lazy_eval_margin(qsdepth, anyPawnsOn7th);
-            best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p, lm)));
-        }
 
         // Stand pat
         if (best_score >= beta)
