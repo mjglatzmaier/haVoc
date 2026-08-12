@@ -88,12 +88,10 @@ void position::setup(std::istringstream& fen) {
     // half-moves since last pawn move/capture
     fen >> token;
     ifo.move50 = (token != "-" ? U8(std::stoi(token)) : 0);
-    ifo.key ^= zobrist::mv50(ifo.move50);
 
     // move counter
     fen >> token;
     ifo.hmvs = (token != "-" ? U16(std::stoi(token)) : 0);
-    ifo.key ^= zobrist::hmvs(ifo.hmvs);
 
     // check info
     Color stm = to_move();
@@ -261,23 +259,17 @@ void position::do_move(const Move& m) {
 
     // move50
     //
-    // Note that move50 and hmvs below are folded into the main key and not into
-    // repkey, so the transposition key is deliberately path-dependent: the same
-    // position reached at a different ply, or with a different number of
-    // reversible moves behind it, hashes differently. That looks like a bug
-    // because it blocks cross-ply transpositions, but removing both terms was
-    // measured over the bench suite at fixed depth and cost 20% more nodes
-    // (2,639,419 -> 3,161,654). repkey, which repetition detection uses, is the
-    // path-independent key and must stay that way.
+    // Neither move50 nor hmvs belongs in the transposition key: the key must
+    // identify a position, and these describe how the game arrived at it. The
+    // 50-move rule is enforced by is_draw() reading move50 directly, and
+    // repetition by repkey, so nothing here depends on them being hashed.
     if (p == pawn || t == capture)
         ifo.move50 = 0;
     else
         ifo.move50++;
-    ifo.key ^= zobrist::mv50(ifo.move50);
 
     // half-moves
     ifo.hmvs++;
-    ifo.key ^= zobrist::hmvs(ifo.hmvs);
 
     // side to move
     ifo.stm = Color(ifo.stm ^ 1);
@@ -348,10 +340,7 @@ void position::do_null_move() {
     ifo.repkey ^= zobrist::stm(ifo.stm);
 
     ifo.move50++;
-    ifo.key ^= zobrist::mv50(ifo.move50);
-
     ifo.hmvs++;
-    ifo.key ^= zobrist::hmvs(ifo.hmvs);
 }
 
 void position::undo_null_move() {

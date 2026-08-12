@@ -5,6 +5,7 @@
 #include "havoc/zobrist.hpp"
 
 #include <sstream>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -47,6 +48,81 @@ TEST_F(PositionTest, FenRoundTrip_Kiwipete) {
 }
 
 // ── do_move / undo_move preserves state ─────────────────────────────────────
+
+// ── the transposition key identifies a position, not a path ─────────────────
+//
+// move50 and hmvs used to be XORed into ifo.key. They were also never XORed
+// back out when they changed, so the key accumulated a term for every value
+// the counters took along the path, making it a function of the route rather
+// than of the position. Two routes to one position therefore probed different
+// entries and never transposed.
+
+namespace {
+// Plays a move given in coordinate notation. Only needs to handle the quiet
+// knight moves these tests use.
+void play(position& pos, const std::string& uci) {
+    Movegen mvs(pos);
+    mvs.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mvs.size(); ++i) {
+        if (!pos.is_legal(mvs[i]))
+            continue;
+        std::string got;
+        got += static_cast<char>('a' + static_cast<int>(util::col(mvs[i].f)));
+        got += static_cast<char>('1' + static_cast<int>(util::row(mvs[i].f)));
+        got += static_cast<char>('a' + static_cast<int>(util::col(mvs[i].t)));
+        got += static_cast<char>('1' + static_cast<int>(util::row(mvs[i].t)));
+        if (got == uci) {
+            pos.do_move(mvs[i]);
+            return;
+        }
+    }
+    ADD_FAILURE() << "no legal move " << uci;
+}
+} // namespace
+
+TEST_F(PositionTest, KeyIsIndependentOfTheRouteTakenToThePosition) {
+    const std::string start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    std::istringstream f1(start);
+    position direct(f1);
+
+    // Same board, reached by walking the knights out and back. Nothing is
+    // captured and no pawn moves, so the two differ only in how many
+    // reversible moves are behind them: move50 is 0 here and 4 there.
+    std::istringstream f2(start);
+    position wandered(f2);
+    play(wandered, "g1f3");
+    play(wandered, "g8f6");
+    play(wandered, "f3g1");
+    play(wandered, "f6g8");
+
+    ASSERT_EQ(direct.to_fen().substr(0, direct.to_fen().find(' ')),
+              wandered.to_fen().substr(0, wandered.to_fen().find(' ')))
+        << "the two routes must actually reach the same board";
+
+    EXPECT_EQ(direct.key(), wandered.key())
+        << "the same position reached two ways must probe the same TT entry";
+}
+
+TEST_F(PositionTest, KeyIsIndependentOfMoveOrder) {
+    const std::string start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    std::istringstream f1(start);
+    position a(f1);
+    play(a, "g1f3");
+    play(a, "g8f6");
+    play(a, "b1c3");
+    play(a, "b8c6");
+
+    std::istringstream f2(start);
+    position b(f2);
+    play(b, "b1c3");
+    play(b, "b8c6");
+    play(b, "g1f3");
+    play(b, "g8f6");
+
+    EXPECT_EQ(a.key(), b.key()) << "transposed move orders must share a key";
+}
 
 TEST_F(PositionTest, DoUndo_PreservesKey) {
     std::istringstream fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
