@@ -601,7 +601,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     Move move;
     Move pre_move = (stack - 1)->curr_move;
     Move pre_pre_move = (stack - 2)->curr_move;
-    bool improving = stack->static_eval - (stack - 2)->static_eval >= 0;
+    // `improving` asks whether our position got better over our own last two
+    // turns. kNegInf is the in-check sentinel, not a number: subtracting it
+    // makes any node whose grandparent was in check look like a huge
+    // improvement. Test for it rather than doing arithmetic on it. When there
+    // is nothing to compare against, default to improving, which is the
+    // cautious answer -- it prunes and reduces less.
+    bool improving;
+    if (in_check)
+        improving = false;
+    else if ((stack - 2)->static_eval != score::kNegInf)
+        improving = stack->static_eval >= (stack - 2)->static_eval;
+    else
+        improving = true;
     auto to_mv = pos.to_move();
     int SEE = 0;
     bool skipQuiets = false;
