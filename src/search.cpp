@@ -613,6 +613,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         int ndepth = std::max(0, static_cast<int>(depth) - R);
 
         (stack + 1)->null_search = true;
+        // The child only writes best_move if it reaches its move loop. A
+        // transposition cutoff, a reverse futility return, a draw or a null
+        // cutoff all return earlier and leave whatever an unrelated subtree put
+        // in the slot, so clear it: a threat should only be adopted when this
+        // null search actually produced one.
+        (stack + 1)->best_move = Move{};
         pos.do_null_move();
         int null_eval =
             (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
