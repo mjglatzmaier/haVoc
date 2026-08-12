@@ -29,6 +29,14 @@ HCEEvaluator::HCEEvaluator(pawn_table& pt, material_table& mt, const parameters&
 
 // ─── Main evaluate ──────────────────────────────────────────────────────────
 
+// Every exit from evaluate() goes through this. The running `score` is
+// white-relative; the caller wants a side-to-move-relative score. The tempo
+// bonus is a property of *having the move*, so it is added after the flip --
+// adding it before would hand the bonus to white and a penalty to black.
+static inline int to_stm(const position& p, int score, int tempo) {
+    return (p.to_move() == white ? score : -score) + tempo;
+}
+
 int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     int score = 0;
     einfo ei{};
@@ -58,7 +66,7 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
 
     // Lazy eval cutoff
     if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
-        return (p.to_move() == white ? score : -score) + params_.tempo;
+        return to_stm(p, score, params_.tempo);
 
     // Endgame specialization
     if (ei.me->is_endgame()) {
@@ -105,7 +113,7 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     score += (passed_score * params_.passed_pawn_category_scale) / 100;
 
     if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
-        return (p.to_move() == white ? score : -score) + params_.tempo;
+        return to_stm(p, score, params_.tempo);
 
     int threat_score = eval_threats<white>(p, ei) - eval_threats<black>(p, ei);
     int space_score = eval_space<white>(p, ei) - eval_space<black>(p, ei);
@@ -135,8 +143,7 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     if (scale != 128)
         score = (score * scale) / 128;
 
-    int side_to_move = (p.to_move() == white) ? 1 : -1;
-    return side_to_move * (score + params_.tempo);
+    return to_stm(p, score, params_.tempo);
 }
 
 // ─── eval_pawns ─────────────────────────────────────────────────────────────

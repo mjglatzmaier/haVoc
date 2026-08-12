@@ -348,4 +348,40 @@ TEST_F(EvalTest, KingPieceSquareTableIsLive) {
         << "scaling the king piece-square table must change the evaluation";
 }
 
+// evaluate() returns a side-to-move-relative score, so a position that is
+// symmetric under a colour swap must evaluate identically no matter whose turn
+// it is. The tempo bonus is a property of *having the move*, so it has to be
+// added after the side-to-move flip rather than before it.
+TEST_F(EvalTest, TempoFavoursWhicheverSideIsToMove) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    auto white_to_move = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    auto black_to_move = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+
+    EXPECT_EQ(eval.evaluate(white_to_move), eval.evaluate(black_to_move));
+    EXPECT_EQ(eval.evaluate(white_to_move), params.tempo);
+}
+
+// The lazy-eval cutoffs return early from the same function, so they must use
+// the same sign convention as the full path.
+TEST_F(EvalTest, LazyEvalAgreesWithTheFullEvalOnSign) {
+    havoc::parameters lazy;
+    havoc::pawn_table lazy_pt(lazy);
+    havoc::material_table lazy_mt(lazy);
+    havoc::HCEEvaluator lazy_eval(lazy_pt, lazy_mt, lazy);
+
+    // A whole extra queen for white: lopsided enough that the sign is not in
+    // doubt regardless of which path produced it.
+    auto white_up = make_pos("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    auto black_up = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1");
+
+    // lazy_margin of 1 cuts out at the earliest opportunity.
+    EXPECT_GT(lazy_eval.evaluate(white_up, 1), 0) << "white is up a queen and to move";
+    EXPECT_GT(lazy_eval.evaluate(black_up, 1), 0) << "black is up a queen and to move";
+    EXPECT_EQ(lazy_eval.evaluate(white_up, 1), lazy_eval.evaluate(black_up, 1));
+}
+
 } // namespace
