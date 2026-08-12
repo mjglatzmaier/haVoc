@@ -647,3 +647,51 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
 }
 
 } // namespace
+
+// The pawn hash is keyed on pawn structure alone, so nothing that depends on
+// anything else may be cached in a pawn_entry. Castling is the case that makes
+// this concrete: it moves the king two squares and leaves every pawn where it
+// was, so it hits the entry the pre-castling position filled.
+//
+// The king shelter mask used to be built in evaluate_pawns() from
+// p.king_square(c) and stored in the entry, so the shelter term was scored
+// against whichever king square happened to fill the slot first. Evaluating the
+// castled position on a cold table and again after the uncastled one had
+// polluted it gave two different numbers.
+//
+// Stated as an invariant that holds for any cache: evaluating a position must
+// not depend on what was evaluated before it.
+TEST_F(EvalTest, EvaluationDoesNotDependOnWhatWasEvaluatedBefore) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    // Identical pawn structures, king on a different square.
+    const std::vector<std::pair<std::string, std::string>> pairs = {
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQ1RK1 w kq - 0 1",
+         "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 1"},
+        {"6k1/pp3ppp/8/8/8/8/PP3PPP/2K5 w - - 0 1",
+         "6k1/pp3ppp/8/8/8/8/PP3PPP/6K1 w - - 0 1"},
+        {"r4rk1/1pp2ppp/8/8/8/8/1PP2PPP/R4RK1 w - - 0 1",
+         "r4rk1/1pp2ppp/8/8/8/8/1PP2PPP/R2K3R w - - 0 1"},
+    };
+
+    for (const auto& [a_fen, b_fen] : pairs) {
+        auto a = make_pos(a_fen);
+        auto b = make_pos(b_fen);
+        ASSERT_EQ(a.pawnkey(), b.pawnkey()) << "test positions must share a pawn structure";
+
+        pt.clear();
+        mt.clear();
+        const float b_cold = eval.evaluate(b, -1.0f);
+
+        pt.clear();
+        mt.clear();
+        eval.evaluate(a, -1.0f); // fills the shared pawn entry from a
+        const float b_warm = eval.evaluate(b, -1.0f);
+
+        EXPECT_FLOAT_EQ(b_cold, b_warm)
+            << "evaluation of " << b_fen << " changed after evaluating " << a_fen;
+    }
+}

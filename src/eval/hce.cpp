@@ -274,6 +274,12 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score +=
             params_.sq_score_scaling[bishop] * square_score<c>(params_, bishop, s, ei.me->phase_interpolant);
 
+        // The colour of the square this bishop is on. light_sq / dark_sq below
+        // are running "have we seen one of these" flags for the bishop pair
+        // test at the end of the function, so they must not be used to ask
+        // about the bishop currently in hand.
+        const bool this_light = (sq_bb & bitboards::colored_sqs[white]) != 0ULL;
+
         // Bishop color tracking
         if (sq_bb & bitboards::colored_sqs[white]) {
             light_sq = true;
@@ -316,7 +322,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
             bits::count(mvs & bitboards::big_center_mask) * params_.center_influence_bonus[bishop];
 
         // Long diagonal bonus
-        if (sq_bb & (light_sq ? bitboards::battks[D5] : bitboards::battks[E5]))
+        if (sq_bb & (this_light ? bitboards::battks[D5] : bitboards::battks[E5]))
             score += parameters::bishop_open_center_bonus;
 
         // Outpost
@@ -334,7 +340,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
 
         // Penalty for bishops on same color as own pawns
         int same_color_penalty = (ei.me->is_endgame() ? 3 : 1);
-        U64 fcolored_pawns = (light_sq ? flight_sq_pawns : fdark_sq_pawns);
+        U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
         // Queen attacks
@@ -555,7 +561,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
 
         // Pawn shelter (middlegame)
         if (!is_endgame) {
-            U64 pawn_shelter = ei.pe->king[c] & ei.kmask[c];
+            // Computed live rather than read from the pawn hash. The hash is
+            // keyed on pawn structure alone, so a mask built from the king
+            // square does not belong in it: castling leaves the pawns
+            // untouched, hits the same entry, and would score the shelter
+            // against wherever the king stood when that entry was filled.
+            U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
             score += params_.king_shelter[n] / 2;
 
