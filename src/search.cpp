@@ -774,6 +774,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     }
 
     U16 moves_searched = 0;
+    // Counted separately from moves_searched so that a pruning rule can never
+    // make a position with legal evasions look like checkmate.
+    U16 legal_moves = 0;
     QMoveorder mvs(p, ttm, stack, &history_);
     Move move;
     Move pre_move = (stack - 1)->curr_move;
@@ -786,6 +789,8 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
         if (move.type == static_cast<U8>(no_type) || !p.is_legal(move))
             continue;
+
+        ++legal_moves;
 
         auto hashOrKiller = (move == ttm) || (move == stack->killers[0]) ||
                             (move == stack->killers[1]) || (move == stack->killers[2]) ||
@@ -818,7 +823,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
                 continue;
         }
 
-        if (p.see(move) < 0)
+        // Losing captures are not worth searching, but an evasion has to be
+        // played whatever it costs, so never prune one.
+        if (!in_check && p.see(move) < 0)
             continue;
 
         p.do_move(move);
@@ -842,7 +849,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
         }
     }
 
-    if (moves_searched == 0 && in_check)
+    if (legal_moves == 0 && in_check)
         return score::kMated + root_dist;
 
     Bound bound = (best_score >= beta                                        ? bound_low
