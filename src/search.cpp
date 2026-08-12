@@ -458,6 +458,16 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     const Move excluded_move = stack->excluded_move;
     const bool singular_search = !excluded_move.is_null();
 
+    // threat_move records a threat that *this* node's null move search found:
+    // the opponent's refutation, used to order and extend replies to it. The
+    // stack slot is shared by every node at this ply, and nothing ever cleared
+    // it, so a node that ran no null move search read whatever some unrelated
+    // sibling subtree happened to leave there. A singular verification search
+    // is excluded because it re-searches this same position on this same stack
+    // entry, and the threat found here is still the right one.
+    if (!singular_search)
+        stack->threat_move = Move{};
+
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
 
@@ -915,6 +925,10 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
     bool in_check = p.in_check();
     stack->in_check = in_check;
+
+    // qsearch runs no null move search, so it has no threat to report and must
+    // not inherit one left in this slot by a search() node at the same ply.
+    stack->threat_move = Move{};
 
     // See the matching guard in search(): qsearch has no depth counter, so a
     // long chain of captures and check evasions is bounded only by the stack.
