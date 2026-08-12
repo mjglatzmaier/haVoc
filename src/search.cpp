@@ -526,7 +526,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
         bool givesCheck = pos.in_check();
         int extensions = std::max(givesCheck ? 1 : 0, singular_ext);
-        int reductions_val = 1;
+        // Extra reductions beyond the one ply every move already consumes.
+        int reductions_val = 0;
 
         // Reduce uninteresting quiet moves
         if (!pvNode && !improving && !hashOrKiller && !isCapture && !isEvasion && !givesCheck &&
@@ -545,7 +546,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // Movecount pruning
         skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
 
-        int newdepth = depth + extensions - reductions_val;
+        // Depth for the child node: one ply is always consumed here.
+        int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
         (stack + 1)->pv = nullptr;
 
         int score_val = score::kNegInf;
@@ -556,11 +558,11 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         if (moves_searched < 3) {
             (stack + 1)->pv = pv_line;
             (stack + 1)->pv[0].set(A1, A1, no_type);
-            score_val =
-                (newdepth <= 1
-                     ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
-                     : -search<Nodetype::pv>(pos, -beta, -alpha, static_cast<U16>(newdepth - 1),
-                                             stack + 1, thread_id));
+            score_val = (newdepth <= 0
+                             ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
+                             : -search<Nodetype::pv>(pos, -beta, -alpha,
+                                                     static_cast<U16>(newdepth), stack + 1,
+                                                     thread_id));
         } else {
             int LMR = newdepth;
             auto captureFollowup =
@@ -588,19 +590,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             }
 
             score_val =
-                (LMR <= 1 ? -qsearch<non_pv>(pos, -alpha - 1, -alpha, 0, stack + 1, thread_id)
-                          : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR - 1),
+                (LMR <= 0 ? -qsearch<non_pv>(pos, -alpha - 1, -alpha, 0, stack + 1, thread_id)
+                          : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR),
                                             stack + 1, thread_id));
 
             if (score_val > alpha) {
                 (stack + 1)->pv = pv_line;
                 (stack + 1)->pv[0].set(A1, A1, no_type);
 
-                score_val =
-                    (newdepth <= 1
-                         ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
-                         : -search<Nodetype::pv>(pos, -beta, -alpha, static_cast<U16>(newdepth - 1),
-                                                 stack + 1, thread_id));
+                score_val = (newdepth <= 0 ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0,
+                                                                    stack + 1, thread_id)
+                                           : -search<Nodetype::pv>(pos, -beta, -alpha,
+                                                                   static_cast<U16>(newdepth),
+                                                                   stack + 1, thread_id));
             }
         }
         ++moves_searched;
