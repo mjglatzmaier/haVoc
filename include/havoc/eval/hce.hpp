@@ -31,8 +31,10 @@ struct einfo {
     bool bishop_colors[2][2]{};
     U64 central_pawns[2]{};
     U64 queen_sqs[2]{};
-    U64 white_pawns[2]{};
-    U64 black_pawns[2]{};
+    /// Own pawns standing on light and on dark squares, indexed by colour.
+    /// Used to penalise a bishop for its own pawns fixed on its own colour.
+    U64 light_sq_pawns[2]{};
+    U64 dark_sq_pawns[2]{};
     bool closed_center = false;
     unsigned kattackers[2][5]{};
 };

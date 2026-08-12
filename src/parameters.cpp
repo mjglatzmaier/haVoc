@@ -133,6 +133,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         for (size_t i = 0; i < king_safe_sqs.size(); ++i)
             result.emplace_back("king_safe_sqs_" + std::to_string(i), &king_safe_sqs[i]);
 
+        result.emplace_back("bishop_own_pawn_penalty_mg", &bishop_own_pawn_penalty_mg);
+        result.emplace_back("bishop_own_pawn_penalty_eg", &bishop_own_pawn_penalty_eg);
+
         result.emplace_back("uncastled_penalty", &uncastled_penalty);
         return result;
     }

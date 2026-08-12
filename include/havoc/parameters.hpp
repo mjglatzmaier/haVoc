@@ -110,6 +110,15 @@ struct parameters {
     };
 
     std::vector<int> attacker_weight{1, 4, 8, 16, 32};
+    // Penalty per own pawn standing on the same square colour as the bishop,
+    // one value per phase endpoint. The bishop cannot attack any of them and
+    // they get in its way, and it matters more once the position simplifies,
+    // hence the larger endgame figure. These were hard-coded 1 and 3 in
+    // eval_bishops and are exposed here so the tuner can reach them and so
+    // EveryTunableParameterReachesTheEvaluation keeps them connected.
+    int bishop_own_pawn_penalty_mg = 1;
+    int bishop_own_pawn_penalty_eg = 3;
+
     std::vector<int> king_shelter{-3, -2, 2, 3}; // 0,1,2,3 pawns
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 

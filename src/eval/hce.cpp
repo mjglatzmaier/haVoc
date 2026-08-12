@@ -136,6 +136,14 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
                            ei.pe->undefended[black];
     ei.kmask[white] = bitboards::kmask[p.king_square(white)];
     ei.kmask[black] = bitboards::kmask[p.king_square(black)];
+    // colored_sqs[white] is the light squares and colored_sqs[black] the dark
+    // ones; see the initialiser in bitboard.cpp. These two lines are what makes
+    // the bad-bishop penalty in eval_bishops do anything at all -- the masks it
+    // reads were declared and read but never written, so they were always zero.
+    ei.light_sq_pawns[white] = p.get_pieces<white, pawn>() & bitboards::colored_sqs[white];
+    ei.dark_sq_pawns[white] = p.get_pieces<white, pawn>() & bitboards::colored_sqs[black];
+    ei.light_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[white];
+    ei.dark_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[black];
     ei.central_pawns[white] = p.get_pieces<white, pawn>() & bitboards::big_center_mask;
     ei.central_pawns[black] = p.get_pieces<black, pawn>() & bitboards::big_center_mask;
     ei.queen_sqs[white] = p.get_pieces<white, queen>();
@@ -363,8 +371,8 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
     Square* bishops = p.squares_of<c, bishop>();
     bool dark_sq = false;
     bool light_sq = false;
-    U64 flight_sq_pawns = ei.white_pawns[c];
-    U64 fdark_sq_pawns = ei.black_pawns[c];
+    U64 flight_sq_pawns = ei.light_sq_pawns[c];
+    U64 fdark_sq_pawns = ei.dark_sq_pawns[c];
     U64 equeen_sq = ei.queen_sqs[them];
     U64 valuable_enemies =
         p.get_pieces<them, queen>() | p.get_pieces<them, rook>() | p.get_pieces<them, king>();
@@ -453,7 +461,8 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         }
 
         // Penalty for bishops on same color as own pawns
-        int same_color_penalty = (ei.me->is_endgame() ? 3 : 1);
+        int same_color_penalty = (ei.me->is_endgame() ? params_.bishop_own_pawn_penalty_eg
+                                                      : params_.bishop_own_pawn_penalty_mg);
         U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
