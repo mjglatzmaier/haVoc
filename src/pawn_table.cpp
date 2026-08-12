@@ -85,6 +85,7 @@ const float material_vals[5] = {100.0f, 300.0f, 315.0f, 480.0f, 910.0f};
 struct pawn_score {
     int16_t mg = 0;
     int16_t eg = 0;
+    int16_t material = 0;
 
     void operator+=(int v) {
         mg = static_cast<int16_t>(mg + v);
@@ -120,7 +121,8 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
             score.mg + par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 0));
         score.eg = static_cast<int16_t>(
             score.eg + par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 24));
-        score += static_cast<int>(pawn_scaling[col_idx] * material_vals[pawn]);
+        score.material =
+            static_cast<int16_t>(score.material + pawn_scaling[col_idx] * material_vals[pawn]);
 
         // Pawn attacks
         e.attacks[c] |= bitboards::pattks[c][s];
@@ -246,6 +248,7 @@ pawn_entry* pawn_table::fetch(const position& p) const {
     const pawn_score b = evaluate_pawns<black>(p, entries_[idx], *params_);
     entries_[idx].score_mg = static_cast<int16_t>(w.mg - b.mg);
     entries_[idx].score_eg = static_cast<int16_t>(w.eg - b.eg);
+    entries_[idx].material = static_cast<int16_t>(w.material - b.material);
     return &entries_[idx];
 }
 
