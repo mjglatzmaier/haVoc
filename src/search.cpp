@@ -332,6 +332,14 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
 
         (stack + 0)->ply = (stack + 1)->ply = (stack + 2)->ply = 0;
 
+        // Carry the last iteration's scores forward. Every root move that fails
+        // low this iteration has its score reset to -inf, so without this they
+        // would all compare equal and the ordering the previous iteration
+        // established would survive only as an accident of stable_sort. The
+        // comparator has always read prevScore; nothing ever wrote it.
+        for (auto& rm : p.root_moves)
+            rm.prevScore = rm.score;
+
         bool failLow = false;
         bool failHigh = false;
 
