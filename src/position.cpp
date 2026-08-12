@@ -155,8 +155,42 @@ std::string position::to_fen() const {
     return fen;
 }
 
+bool position::is_material_draw() const {
+    // Any pawn, rook or queen leaves mate possible, and this is the overwhelming
+    // majority of positions, so reject them with a single test before counting
+    // anything else.
+    if (number_of(white, pawn) || number_of(black, pawn) || number_of(white, rook) ||
+        number_of(black, rook) || number_of(white, queen) || number_of(black, queen))
+        return false;
+
+    const unsigned wn = number_of(white, knight), wb = number_of(white, bishop);
+    const unsigned bn = number_of(black, knight), bb = number_of(black, bishop);
+    const unsigned w = wn + wb, b = bn + bb;
+
+    // King against king, and king plus a single minor against a bare king, are
+    // dead positions under the FIDE rules: no sequence of legal moves mates.
+    if (w <= 1 && b <= 1)
+        return true;
+
+    // Two knights against a bare king cannot be forced, and the arbiter will
+    // never award it, so treating it as anything but a draw only makes the
+    // engine trade into it.
+    if ((wn == 2 && wb == 0 && b == 0) || (bn == 2 && bb == 0 && w == 0))
+        return true;
+
+    return false;
+}
+
 bool position::is_draw() {
     if (ifo.move50 > 99)
+        return true;
+
+    // Trading down into king and a lone minor is a draw however winning the
+    // material count looks. Without this the search happily walked into it: over
+    // 158 gauntlet games haVoc drew 4 by insufficient mating material while its
+    // own evaluation still read +3.6 to +3.9 on the very last move, because
+    // nothing in the engine knew the position was dead.
+    if (is_material_draw())
         return true;
 
     U64 kcurrent = ifo.repkey;

@@ -138,6 +138,10 @@ class position {
     [[nodiscard]] U64 pinned(Color us);
     [[nodiscard]] bool is_draw();
 
+    /// True when neither side can possibly deliver mate, so the position is
+    /// dead drawn no matter how well either side plays.
+    [[nodiscard]] bool is_material_draw() const;
+
     [[nodiscard]] inline bool can_castle_ks() const {
         return (ifo.cmask & (ifo.stm == white ? wks : bks)) == (ifo.stm == white ? wks : bks);
     }

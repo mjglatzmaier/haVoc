@@ -38,6 +38,13 @@ static inline int to_stm(const position& p, int score, int tempo) {
 }
 
 int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
+    // A dead position is worth exactly nothing to either side. Without this the
+    // material term happily reports a bishop or knight up in a king-and-minor
+    // ending, which is how the search traded into one: the stand pat in qsearch,
+    // reverse futility and null move pruning all read this number.
+    if (p.is_material_draw())
+        return score::kDraw;
+
     int score = 0;
     einfo ei{};
 
