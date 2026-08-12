@@ -453,6 +453,10 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
                       p.get_pieces<them, bishop>() | p.get_pieces<them, rook>();
 
     for (Square s = *queens; s != no_square; s = *++queens) {
+        // Square eval
+        score +=
+            params_.sq_score_scaling[queen] * square_score<c>(params_, queen, s, ei.me->phase_interpolant);
+
         // Mobility
         U64 mvs =
             magics::attacks<bishop>(ei.all_pieces, s) | magics::attacks<rook>(ei.all_pieces, s);

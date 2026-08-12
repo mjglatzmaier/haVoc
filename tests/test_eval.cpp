@@ -384,4 +384,59 @@ TEST_F(EvalTest, LazyEvalAgreesWithTheFullEvalOnSign) {
     EXPECT_EQ(lazy_eval.evaluate(white_up, 1), lazy_eval.evaluate(black_up, 1));
 }
 
+// Every piece with a non-zero default piece-square table must actually have
+// that table read. The queen's 128 entries were dead data for exactly this
+// reason: eval_queens never called square_score.
+TEST_F(EvalTest, EveryPieceSquareTableReachesTheEvaluation) {
+    // Two positions differing only in where one side's piece of type `pc`
+    // stands, on squares whose default table entries differ. If the table is
+    // consulted the evaluations must differ.
+    struct Case {
+        havoc::Piece pc;
+        const char* a;
+        const char* b;
+    };
+    const Case cases[] = {
+        // knight b1 (corner-ish, -40) vs e4 (centre, +20)
+        {havoc::knight, "4k3/8/8/8/8/8/PPPPPPPP/1N2K3 w - - 0 1",
+         "4k3/8/8/8/4N3/8/PPPPPPPP/4K3 w - - 0 1"},
+        // bishop a1 (-20) vs d4 (+15)
+        {havoc::bishop, "4k3/8/8/8/8/8/PPPPPPPP/B3K3 w - - 0 1",
+         "4k3/8/8/8/3B4/8/PPPPPPPP/4K3 w - - 0 1"},
+        // rook a1 (0) vs a7 (+5 .. +10 band)
+        {havoc::rook, "4k3/8/8/8/8/8/PPPPPPPP/R3K3 w - - 0 1",
+         "4k3/R7/8/8/8/8/PPPPPPPP/4K3 w - - 0 1"},
+        // queen a1 (-20) vs d4 (+5)
+        {havoc::queen, "4k3/8/8/8/8/8/PPPPPPPP/Q3K3 w - - 0 1",
+         "4k3/8/8/8/3Q4/8/PPPPPPPP/4K3 w - - 0 1"},
+    };
+
+    for (const auto& c : cases) {
+        havoc::parameters params;
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        auto pos_a = make_pos(c.a);
+        auto pos_b = make_pos(c.b);
+        int base_a = eval.evaluate(pos_a);
+        int base_b = eval.evaluate(pos_b);
+
+        // Now scale that one piece's table up and confirm the gap widens,
+        // which isolates the piece-square term from the mobility and centre
+        // terms that also differ between the two placements.
+        havoc::parameters scaled;
+        scaled.sq_score_scaling[c.pc] = 8;
+        havoc::pawn_table spt(scaled);
+        havoc::material_table smt(scaled);
+        havoc::HCEEvaluator seval(spt, smt, scaled);
+        auto spos_a = make_pos(c.a);
+        auto spos_b = make_pos(c.b);
+        int scaled_gap = seval.evaluate(spos_b) - seval.evaluate(spos_a);
+
+        EXPECT_NE(scaled_gap, base_b - base_a)
+            << "piece-square table for piece " << static_cast<int>(c.pc)
+            << " is never read by the evaluation";
+    }
+}
+
 } // namespace
