@@ -146,7 +146,13 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     wait();
 
     positions_.clear();
-    history_.clear();
+    // History is deliberately not cleared here. It is indexed by colour and
+    // from/to square, so nothing in it is tied to the position it was learned
+    // from, and the cutoff statistics it accumulates are the whole point of the
+    // heuristic. Clearing it on every "go" threw that away before every move
+    // and made each search start ordering-blind. ucinewgame calls
+    // SearchEngine::clear(), which is the right granularity: history persists
+    // through a game and is reset between games.
 
     signals_.stop = false;
     tt_.new_search();
