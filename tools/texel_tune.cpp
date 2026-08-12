@@ -5,6 +5,7 @@
 #include "havoc/eval/hce.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/material_table.hpp"
+#include "havoc/movegen.hpp"
 #include "havoc/parameters.hpp"
 #include "havoc/pawn_table.hpp"
 #include "havoc/position.hpp"
@@ -21,10 +22,48 @@
 
 using namespace havoc;
 
+/// Is this position quiet enough for a *static* evaluation to be meaningful?
+///
+/// Texel tuning compares a static evaluation against a game result. That only
+/// makes sense where the static score is not about to be overturned by a
+/// tactic. pgn2epd's filter is just "not in check", which keeps every position
+/// with a hanging piece on it -- the static score there can be a whole piece
+/// away from the truth, and the optimiser has no way to fix it by moving
+/// weights, so it is pure label noise.
+///
+/// Requiring that no capture wins material by static exchange is the cheap
+/// approximation of "the quiescence search would not move the score".
+static bool is_quiet_position(position& p) {
+    if (p.in_check())
+        return false;
+    Movegen mvs(p);
+    mvs.generate<capture, pieces>();
+    for (int i = 0; i < mvs.size(); ++i) {
+        if (!p.is_legal(mvs[i]))
+            continue;
+        if (p.see(mvs[i]) > 0)
+            return false;
+    }
+    return true;
+}
+
 struct TuningEntry { position pos; double result; };
 
 static inline double sigmoid(double eval, double K) {
     return 1.0 / (1.0 + std::pow(10.0, -eval / K));
+}
+
+/// Convert an evaluation to white's point of view.
+///
+/// HCEEvaluator::evaluate() returns a *side-to-move* relative score (positive
+/// means "good for whoever is to move"), but the training labels are the game
+/// result from *white's* point of view (1.0 = white won), constant for every
+/// position taken from that game. Comparing the two directly inverts the sign
+/// of every black-to-move position, which is roughly half the data set. The
+/// optimiser cannot represent such a target, so it drives the weights toward
+/// the degenerate "always predict 0.5" solution instead of fitting anything.
+static inline double to_white_pov(double stm_relative_eval, const position& p) {
+    return p.to_move() == white ? stm_relative_eval : -stm_relative_eval;
 }
 
 class TexelTuner {
@@ -33,13 +72,14 @@ public:
     parameters params;
     double cached_K = 0.0;
     int num_threads = 1;
+    bool quiet_filter = true;
 
     bool load_data(const std::string& filename) {
         auto t0 = std::chrono::steady_clock::now();
         std::ifstream in(filename);
         if (!in.is_open()) return false;
         std::string line;
-        uint64_t loaded = 0, skipped = 0;
+        uint64_t loaded = 0, skipped = 0, noisy = 0;
         while (std::getline(in, line)) {
             auto c9 = line.find(" c9 ");
             if (c9 == std::string::npos) { ++skipped; continue; }
@@ -49,13 +89,16 @@ public:
             double result = std::stod(line.substr(q1 + 1, q2 - q1 - 1));
             std::istringstream fs(line.substr(0, c9));
             TuningEntry e; e.pos.setup(fs); e.result = result;
+            if (quiet_filter && !is_quiet_position(e.pos)) { ++noisy; continue; }
             entries.push_back(std::move(e));
             if (++loaded % 100000 == 0)
                 std::cout << "  Loaded " << loaded << " positions...\r" << std::flush;
         }
         auto s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         std::cout << "Loaded " << loaded << " positions in " << (int)s
-                  << "s (" << skipped << " skipped)" << std::endl;
+                  << "s (" << skipped << " skipped";
+        if (quiet_filter) std::cout << ", " << noisy << " not quiet";
+        std::cout << ")" << std::endl;
         return !entries.empty();
     }
 
@@ -70,7 +113,8 @@ public:
             size_t a = (N * tid) / T, b = (N * (tid + 1)) / T;
             double e = 0.0;
             for (size_t i = a; i < b; ++i) {
-                double p = sigmoid((double)ev.evaluate(entries[i].pos, -1), K);
+                double raw = (double)ev.evaluate(entries[i].pos, -1);
+                double p = sigmoid(to_white_pov(raw, entries[i].pos), K);
                 double d = entries[i].result - p;
                 e += d * d;
             }
@@ -89,8 +133,11 @@ public:
         }
         std::cout << "Finding optimal K..." << std::flush;
         auto t0 = std::chrono::steady_clock::now();
-        double lo = 50, hi = 800;
-        for (int i = 0; i < 15; ++i) {
+        // Range deliberately wide: a K pinned against the top of the search
+        // interval silently flattens the sigmoid and shrinks every gradient,
+        // which looks like "tuning converged" rather than "K was clamped".
+        double lo = 10, hi = 4000;
+        for (int i = 0; i < 30; ++i) {
             double m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
             if (compute_error(m1) < compute_error(m2)) hi = m2; else lo = m1;
         }
@@ -101,8 +148,43 @@ public:
         return cached_K;
     }
 
+    /// Report the error under both sign conventions.
+    ///
+    /// This exists to make the perspective bug visible rather than theoretical.
+    /// If the labels and the evaluation disagree about point of view, the
+    /// "white POV" and "raw stm" errors will straddle 0.25 -- the error you get
+    /// from predicting 0.5 for every position, i.e. from having learned
+    /// nothing.
+    void diagnose(double K) {
+        const size_t N = entries.size();
+        size_t black_to_move = 0;
+        double err_white_pov = 0.0, err_raw = 0.0, mean_label = 0.0;
+
+        pawn_table pt(params); material_table mt;
+        HCEEvaluator ev(pt, mt, params);
+        for (size_t i = 0; i < N; ++i) {
+            if (entries[i].pos.to_move() != white) ++black_to_move;
+            mean_label += entries[i].result;
+            double raw = (double)ev.evaluate(entries[i].pos, -1);
+            double dw = entries[i].result - sigmoid(to_white_pov(raw, entries[i].pos), K);
+            double dr = entries[i].result - sigmoid(raw, K);
+            err_white_pov += dw * dw;
+            err_raw += dr * dr;
+        }
+        std::cout << "\n--- data diagnostics (K=" << K << ") ---\n"
+                  << "  positions          : " << N << "\n"
+                  << "  black to move      : " << black_to_move << " ("
+                  << (100.0 * (double)black_to_move / (double)N) << "%)\n"
+                  << "  mean label         : " << (mean_label / (double)N) << "\n"
+                  << "  error (white POV)  : " << (err_white_pov / (double)N) << "\n"
+                  << "  error (raw stm)    : " << (err_raw / (double)N) << "\n"
+                  << "  error (predict 0.5): 0.25\n"
+                  << "-------------------------------" << std::endl;
+    }
+
     void optimize(int iters, TuneStage stage, const std::string& ckpt) {
         double K = find_optimal_K();
+        diagnose(K);
         auto tunable = params.all_params(stage);
         const size_t NP = tunable.size();
         double lr, lr_decay, mom; int pert;
@@ -181,6 +263,7 @@ public:
 int main(int argc, char* argv[]) {
     std::string data = "training_data.epd", pfile, out = "tuned_params.txt";
     int iters = 5, stg = 2, thr = (int)std::thread::hardware_concurrency();
+    bool qfilter = true;
     double fK = 0;
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
@@ -191,14 +274,16 @@ int main(int argc, char* argv[]) {
         else if ((k=="--stage"||k=="-s") && i+1<argc) stg = std::stoi(argv[++i]);
         else if (k=="--K" && i+1<argc) fK = std::stod(argv[++i]);
         else if ((k=="--threads"||k=="-t") && i+1<argc) thr = std::stoi(argv[++i]);
+        else if (k=="--no-quiet-filter") qfilter = false;
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
-                      << "[--iterations N] [--stage 1|2|3] [--K val] [--threads N]\n"; return 0;
+                      << "[--iterations N] [--stage 1|2|3] [--K val] [--threads N] "
+                      << "[--no-quiet-filter]\n"; return 0;
         }
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine : TuneStage::shape);
     bitboards::init(); magics::init(); zobrist::init();
-    TexelTuner tuner; tuner.num_threads = std::max(1, thr);
+    TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
     if (!pfile.empty() && tuner.params.load(pfile))
         std::cout << "Loaded params from " << pfile << std::endl;
     if (!tuner.load_data(data)) { std::cerr << "Failed to load " << data << std::endl; return 1; }
