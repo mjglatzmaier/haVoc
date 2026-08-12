@@ -20,6 +20,17 @@ inline bool is_pawnless_endgame(const position& p) {
     return (p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>()) == 0ULL;
 }
 
+/// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
+/// so a1-h8 is every ninth square from a1 and a8-h1 every seventh from h1.
+constexpr U64 kLongDiagonals = [] {
+    U64 m = 0ULL;
+    for (int i = 0; i < 8; ++i) {
+        m |= 1ULL << (i * 9);
+        m |= 1ULL << (7 + i * 7);
+    }
+    return m;
+}();
+
 /// Evaluation for a pawnless ending in which one side is down to a lone king.
 ///
 /// The ordinary evaluation is completely flat here. Every strong-side move
@@ -412,8 +423,20 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score +=
             bits::count(mvs & bitboards::big_center_mask) * params_.center_influence_bonus[bishop];
 
-        // Long diagonal bonus
-        if (sq_bb & (this_light ? bitboards::battks[D5] : bitboards::battks[E5]))
+        // Long diagonal bonus. This has to be the two genuinely long diagonals,
+        // a1-h8 and a8-h1, and nothing else. The old test asked whether the
+        // bishop stood anywhere a bishop on d5 (for light squares) or e5 (for
+        // dark squares) could see, which is the long diagonal *plus* a second,
+        // shorter one -- a2-g8 for light, b8-h2 for dark. Those two extras are
+        // not mirror images of each other, so the bonus was handed out on
+        // different squares depending on color and the evaluation was not
+        // symmetric. A bishop on c4 collected it while its mirror on c5 did
+        // not; a bishop on g3 collected it while its mirror on g6 did not.
+        //
+        // The union of the two long diagonals is mirror invariant, and a
+        // bishop can only ever stand on the one matching its square color, so
+        // a single mask is both correct and symmetric.
+        if (sq_bb & kLongDiagonals)
             score += parameters::bishop_open_center_bonus;
 
         // Outpost

@@ -10,6 +10,8 @@
 #include "havoc/tt.hpp"
 #include "havoc/zobrist.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -18,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <set>
+#include <vector>
 
 namespace {
 
@@ -25,6 +28,104 @@ namespace {
 havoc::position make_pos(const std::string& fen) {
     std::istringstream iss(fen);
     return havoc::position(iss);
+}
+
+/// Mirror a FEN vertically and swap the colors of every piece.
+///
+/// The evaluation is defined from the point of view of the side to move, so a
+/// position and its mirror describe exactly the same problem seen from the
+/// other side, and a correct evaluator has to return an identical score for
+/// both. Any difference at all is a color-indexing bug: a table indexed with
+/// the wrong color, a shift that only works for white, a relative rank
+/// computed from the wrong end of the board.
+std::string mirror_fen(const std::string& fen) {
+    std::istringstream iss(fen);
+    std::string board, stm, castle, ep;
+    std::string half = "0", full = "1";
+    iss >> board >> stm >> castle >> ep;
+    iss >> half >> full;
+
+    std::vector<std::string> ranks;
+    std::string cur;
+    for (char ch : board) {
+        if (ch == '/') {
+            ranks.push_back(cur);
+            cur.clear();
+        } else {
+            cur.push_back(ch);
+        }
+    }
+    ranks.push_back(cur);
+
+    std::string mirrored_board;
+    for (int i = static_cast<int>(ranks.size()) - 1; i >= 0; --i) {
+        for (char ch : ranks[i]) {
+            auto uc = static_cast<unsigned char>(ch);
+            mirrored_board.push_back(std::isupper(uc)
+                                         ? static_cast<char>(std::tolower(uc))
+                                         : static_cast<char>(std::toupper(uc)));
+        }
+        if (i != 0)
+            mirrored_board.push_back('/');
+    }
+
+    std::string mirrored_castle;
+    if (castle != "-") {
+        // Swap the case of each right, then re-emit in canonical KQkq order so
+        // the string does not depend on the order the original happened to use.
+        std::string swapped;
+        for (char ch : castle) {
+            auto uc = static_cast<unsigned char>(ch);
+            swapped.push_back(std::isupper(uc) ? static_cast<char>(std::tolower(uc))
+                                               : static_cast<char>(std::toupper(uc)));
+        }
+        for (char want : std::string("KQkq"))
+            if (swapped.find(want) != std::string::npos)
+                mirrored_castle.push_back(want);
+    }
+    if (mirrored_castle.empty())
+        mirrored_castle = "-";
+
+    std::string mirrored_ep = ep;
+    if (ep != "-" && ep.size() == 2)
+        mirrored_ep[1] = (ep[1] == '6') ? '3' : '6';
+
+    return mirrored_board + " " + (stm == "w" ? "b" : "w") + " " + mirrored_castle + " " +
+           mirrored_ep + " " + half + " " + full;
+}
+
+/// A spread of positions chosen to exercise every category in the evaluation:
+/// openings, sharp middlegames, king attacks, pawn structures, passed pawns,
+/// opposite-colored bishops and a range of endgames.
+const std::vector<std::string>& mirror_test_positions() {
+    static const std::vector<std::string> fens = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/3P1N1P/PPP1NPP1/R2Q1RK1 w - - 0 1",
+        "r1bqkb1r/pppppppp/2n2n2/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+        "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1N1P/PPP1BPP1/RNBQR1K1 w - - 0 8",
+        "2rr2k1/pp3ppp/2n1bn2/2q1p3/8/1NP2N1P/PP3PP1/R1BQR1K1 w - - 5 14",
+        // Opposite-colored bishops, pieces still on
+        "r2q1rk1/1p2bppp/2n2n2/3p4/3P4/2N2N2/PP2BPPP/R2Q1RK1 w - - 0 1",
+        // Pure opposite-colored bishop ending
+        "8/pp3p2/2b1k3/8/1P6/2B1K3/P4P2/8 w - - 0 1",
+        // Passed pawns and a rook ending
+        "8/3k4/8/2P5/8/4K3/6p1/8 w - - 0 1",
+        "8/1R6/5pk1/8/6P1/5K2/1r6/8 w - - 0 1",
+        // Wrecked structure: doubled, isolated and backward pawns
+        "r1b2rk1/pp3ppp/2p5/2p5/8/2P2P2/PP4PP/R1B2RK1 w - - 0 1",
+        // Exposed king with heavy pieces bearing down on it
+        "6k1/5ppp/8/8/8/8/5PPP/2R2RK1 w - - 0 1",
+        "r1bq1rk1/pp3ppp/2n1pn2/2pp4/1b1P4/2NBPN2/PPQ2PPP/R1B2RK1 w - - 0 1",
+        // En passant available, to exercise the ep mirroring too
+        "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+        // Knight outposts and a closed centre
+        "r1bq1rk1/pp2ppbp/2np1np1/2p5/2P1P3/2NP1NP1/PP3PBP/R1BQ1RK1 w - - 0 1",
+    };
+    return fens;
 }
 
 /// Fixture that initializes tables once for all tests.
@@ -97,6 +198,31 @@ TEST_F(EvalTest, EvalIsSymmetric) {
     // Both should be similar magnitude (from side-to-move perspective)
     EXPECT_NEAR(score_w, score_b, 30)
         << "White eval: " << score_w << ", Black mirrored eval: " << score_b;
+}
+
+// The old symmetry test checked a single position with a 30cp tolerance, which
+// is wide enough to hide almost any color bug. Require exact agreement across a
+// spread of positions instead.
+TEST_F(EvalTest, EvaluationIsExactlyMirrorSymmetric) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    for (const auto& fen : mirror_test_positions()) {
+        auto original = make_pos(fen);
+        const std::string mirrored_fen = mirror_fen(fen);
+        auto mirrored = make_pos(mirrored_fen);
+
+        // Guard the helper itself: a mirror that dropped or mangled material
+        // would make the test vacuous.
+        ASSERT_EQ(mirror_fen(mirrored_fen), fen) << "mirror_fen is not an involution on " << fen;
+
+        const int a = eval.evaluate(original);
+        const int b = eval.evaluate(mirrored);
+        EXPECT_EQ(a, b) << "asymmetric evaluation\n  " << fen << " -> " << a << "\n  "
+                        << mirrored_fen << " -> " << b << "\n  difference " << (a - b);
+    }
 }
 
 // ─── TT basic operations ───────────────────────────────────────────────────
