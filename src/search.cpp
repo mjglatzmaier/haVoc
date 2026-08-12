@@ -712,10 +712,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         //               There may be nothing else to find and everything to
         //               lose.
         //
-        // Deliberately not guarded on pvNode. In this engine Nodetype::pv is
-        // passed to the first two moves of every node, not just to the true
-        // principal variation, so !pvNode would disable the rule across most
-        // of the tree -- measured at bench 3,368,834 -> 6,900,560.
+        // Not guarded on pvNode, matching Stockfish, which guards move count
+        // pruning on rootNode only. (An earlier version of this comment argued
+        // that !pvNode was unusable because Nodetype::pv leaked across most of
+        // the tree. That leak is fixed -- pvNode is now derived from the window
+        // -- so the argument no longer applies, but the conclusion is unchanged
+        // and !pvNode remains untested here.)
         if (!root_node && !in_check && bestScore > score::kMatedMaxPly)
             skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
 
