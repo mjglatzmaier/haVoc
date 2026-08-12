@@ -490,14 +490,15 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
     // [-10184, +1797] and brings both to life. Keep this assertion strict:
     // a knob wired to nothing costs a full SPSA arm per iteration and produces
     // a confident-looking tuned value that means nothing.
-    // history_prune_margin is wired to live code, but that code is gated off:
-    // history_prune_depth defaults to 0. Enabling the pruning costs 8% more
-    // nodes at fixed depth (bench 694556 -> 756105), because its threshold
-    // scales with depth while history values do not, so it only ever fires at
-    // depth 1 and there it prunes moves the search needed. The knob stays
-    // registered so SPSA can revisit that judgement against game results
-    // rather than against a twelve-position node count.
-    const std::set<std::string> known_dead = {"history_prune_margin"};
+    // history_prune_depth is wired to live code that cannot fire at the
+    // default settings. History pruning reads hist < -history_prune_margin *
+    // depth, and with history_malus_pct at 0 the table has almost no negative
+    // side -- it bottoms at -1769 over a depth-15 bench, against a threshold
+    // of -4096 at depth 1. So widening or narrowing the depth window changes
+    // nothing; only shrinking the margin does, which is why that knob still
+    // registers as live. Both stay registered so SPSA can decide against game
+    // results whether this pruning is worth turning on at all.
+    const std::set<std::string> known_dead = {"history_prune_depth"};
 
     std::vector<std::string> unexpected;
     for (const auto& d : dead)
