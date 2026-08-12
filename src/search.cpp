@@ -21,6 +21,20 @@ const std::vector<float> kMaterialVals{100.0f, 300.0f, 315.0f, 480.0f, 910.0f};
 // Mate scores are relative to the root, but a transposition may be reached at a
 // different distance from the root than where it was stored. Convert to a
 // node-relative value on store and back to a root-relative value on probe.
+// A position can be a fifty move draw and checkmate at the same time, and mate
+// ends the game before the rule can be claimed, so that case has to confirm the
+// side to move still has a move. Repetitions carry the guarantee for free -- the
+// same position occurred earlier and the game continued -- but the test is cheap
+// enough here to just run for both.
+bool has_legal_move(position& p) {
+    Movegen mvs(p);
+    mvs.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mvs.size(); ++i)
+        if (p.is_legal(mvs[i]))
+            return true;
+    return false;
+}
+
 inline int16_t score_to_tt(int score, int ply) {
     if (score >= score::kMateMaxPly)
         return static_cast<int16_t>(score + ply);
@@ -132,7 +146,13 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     wait();
 
     positions_.clear();
-    history_.clear();
+    // History is deliberately not cleared here. It is indexed by colour and
+    // from/to square, so nothing in it is tied to the position it was learned
+    // from, and the cutoff statistics it accumulates are the whole point of the
+    // heuristic. Clearing it on every "go" threw that away before every move
+    // and made each search start ordering-blind. ucinewgame calls
+    // SearchEngine::clear(), which is the right granularity: history persists
+    // through a game and is reset between games.
 
     signals_.stop = false;
     tt_.new_search();
@@ -458,6 +478,16 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     const Move excluded_move = stack->excluded_move;
     const bool singular_search = !excluded_move.is_null();
 
+    // threat_move records a threat that *this* node's null move search found:
+    // the opponent's refutation, used to order and extend replies to it. The
+    // stack slot is shared by every node at this ply, and nothing ever cleared
+    // it, so a node that ran no null move search read whatever some unrelated
+    // sibling subtree happened to leave there. A singular verification search
+    // is excluded because it re-searches this same position on this same stack
+    // entry, and the threat found here is still the right one.
+    if (!singular_search)
+        stack->threat_move = Move{};
+
     if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
         sel_depth_++;
 
@@ -469,7 +499,13 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     if (stack->ply >= MAX_PLY)
         return in_check ? score::kDraw : static_eval(pos, thread_id);
 
-    if (!root_node && !in_check && pos.is_draw())
+    // Repetition and the fifty move rule apply whether or not the side to move
+    // is in check. This used to carry a !in_check guard, which hid every draw
+    // that arrives while in check -- perpetual check above all, the single most
+    // common way a lost game is saved. Over 40 self play games the guard
+    // suppressed 48036 positions that is_draw() called drawn, roughly 1200 a
+    // game; each was searched on as though the game continued.
+    if (!root_node && pos.is_draw() && (!in_check || has_legal_move(pos)))
         return score::kDraw;
 
     { // mate distance pruning
@@ -577,6 +613,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         int ndepth = std::max(0, static_cast<int>(depth) - R);
 
         (stack + 1)->null_search = true;
+        // The child only writes best_move if it reaches its move loop. A
+        // transposition cutoff, a reverse futility return, a draw or a null
+        // cutoff all return earlier and leave whatever an unrelated subtree put
+        // in the slot, so clear it: a threat should only be adopted when this
+        // null search actually produced one.
+        (stack + 1)->best_move = Move{};
         pos.do_null_move();
         int null_eval =
             (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
@@ -915,6 +957,10 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
     bool in_check = p.in_check();
     stack->in_check = in_check;
+
+    // qsearch runs no null move search, so it has no threat to report and must
+    // not inherit one left in this slot by a search() node at the same ply.
+    stack->threat_move = Move{};
 
     // See the matching guard in search(): qsearch has no depth counter, so a
     // long chain of captures and check evasions is bounded only by the stack.

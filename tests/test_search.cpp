@@ -46,6 +46,35 @@ class SearchTest : public ::testing::Test {
     }
 
     std::string move_str(const Move& m) { return uci::move_to_string(m); }
+
+    /// Play a UCI move string on `pos`, keeping the repetition history that
+    /// do_move() accumulates. Returns false if the move is not legal.
+    bool play(position& pos, const std::string& uci_move) {
+        Movegen mvs(pos);
+        mvs.generate<pseudo_legal, pieces>();
+        for (int i = 0; i < mvs.size(); ++i) {
+            if (!pos.is_legal(mvs[i]))
+                continue;
+            if (uci::move_to_string(mvs[i]) == uci_move) {
+                pos.do_move(mvs[i]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Fixed-depth search returning the score of the best root move.
+    int search_score(position& pos, int depth) {
+        SearchEngine engine;
+        SearchLimits lims{};
+        lims.depth = depth;
+        engine.start(pos, lims, /*silent=*/true);
+        engine.wait();
+        int best = score::kNegInf;
+        for (const auto& rm : pos.root_moves)
+            best = std::max(best, static_cast<int>(rm.score));
+        return best;
+    }
 };
 
 // ─── Mate in 1 ──────────────────────────────────────────────────────────────
@@ -329,6 +358,38 @@ TEST(TimeManagement, MovetimeIsHonouredExactly) {
     lims.movetime = 1234;
     lims.wtime = 60000;
     EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), 1234.0);
+}
+
+
+// ─── Draws that arrive while in check ───────────────────────────────────────
+// The draw test in search() was guarded by !in_check, so a repetition or a
+// fifty move draw was invisible whenever the side to move was in check. That
+// is exactly the perpetual check case, the most common way a lost position is
+// saved.
+//
+// White is down two rooks and is losing by roughly ten pawns. The one saving
+// resource is Qd8+, which returns the position to one that has already
+// occurred, with Black to move and in check. Black never gets to decline it:
+// the repetition is claimed at that node, before Black replies. Every other
+// White move loses. So the score is a draw if and only if search() looks for
+// draws while in check.
+TEST_F(SearchTest, ARepetitionIsADrawEvenWhenTheSideToMoveIsInCheck) {
+    auto pos = make_pos("7k/8/8/8/q7/1rr5/8/3Q3K w - - 0 1");
+
+    // Qd8+ Kh7, Qd1 Kh8 -- back to the start, with the position after Qd8+
+    // now recorded in the repetition history.
+    ASSERT_TRUE(play(pos, "d1d8"));
+    ASSERT_TRUE(play(pos, "h8h7"));
+    ASSERT_TRUE(play(pos, "d8d1"));
+    ASSERT_TRUE(play(pos, "h7h8"));
+
+    const int score = search_score(pos, 6);
+
+    // Without the fix the search cannot see the repetition and reports Black's
+    // two extra rooks, around -900. With it, Qd8+ holds the draw.
+    EXPECT_GT(score, -200) << "search missed a repetition draw that arrives "
+                              "while the side to move is in check";
+    EXPECT_LT(score, 200);
 }
 
 } // namespace
