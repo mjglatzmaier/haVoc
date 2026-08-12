@@ -61,7 +61,11 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     ei.pawn_holes[white] = ei.pe->backward[white] << 8;
     ei.pawn_holes[black] = ei.pe->backward[black] >> 8;
 
-    score += ei.pe->score;
+    // The pawn hash stores both ends of the taper because it is keyed on pawn
+    // structure alone; interpolate against this position's phase.
+    score += (ei.pe->score_eg * ei.me->phase_interpolant +
+              ei.pe->score_mg * (24 - ei.me->phase_interpolant)) /
+             24;
     score += ei.me->score;
 
     // Lazy eval cutoff

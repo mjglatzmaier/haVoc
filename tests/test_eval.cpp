@@ -439,4 +439,35 @@ TEST_F(EvalTest, EveryPieceSquareTableReachesTheEvaluation) {
     }
 }
 
+// The pawn hash is keyed on pawn structure alone, so the pawn piece-square
+// term used to be evaluated at a hard-coded phase of 0 -- pure middlegame --
+// which meant the endgame pawn table was never read. That table is where pawn
+// advancement is rewarded: a pawn on the seventh rank is worth 100 there
+// against 50 in the middlegame table.
+TEST_F(EvalTest, PawnPieceSquareTableTapersWithPhase) {
+    auto eval_pos = [](const char* fen, bool zero_endgame_pawn_table) {
+        havoc::parameters params;
+        if (zero_endgame_pawn_table)
+            params.pst_eg[havoc::pawn].fill(0);
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+        auto pos = make_pos(fen);
+        return eval.evaluate(pos);
+    };
+
+    // Kings and pawns only: maximum phase, so the endgame table should
+    // dominate. White's pawns are far advanced, black's are on their home
+    // rank, so zeroing the endgame table must move the score.
+    const char* endgame = "4k3/pppppppp/8/8/PPPPPPPP/8/8/4K3 w - - 0 1";
+    EXPECT_NE(eval_pos(endgame, false), eval_pos(endgame, true))
+        << "the endgame pawn piece-square table is never read";
+
+    // Full material: phase 0, pure middlegame, so the endgame table must have
+    // no influence at all. This is the other half of the taper.
+    const char* middlegame = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    EXPECT_EQ(eval_pos(middlegame, false), eval_pos(middlegame, true))
+        << "the endgame pawn table must not apply at phase 0";
+}
+
 } // namespace

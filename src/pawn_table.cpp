@@ -79,7 +79,24 @@ template <Color c> bool backward_pawn(int row, int col, U64 pawns) {
 const float pawn_scaling[8] = {0.86f, 0.90f, 0.95f, 1.00f, 1.00f, 0.95f, 0.90f, 0.86f};
 const float material_vals[5] = {100.0f, 300.0f, 315.0f, 480.0f, 910.0f};
 
-template <Color c> int16_t evaluate_pawns(const position& p, pawn_entry& e, const parameters& par) {
+/// Middlegame and endgame endpoints of one side's pawn-structure score. Only
+/// the piece-square term is phase dependent; every other pawn term is a
+/// structural judgement that does not taper, so it lands in both.
+struct pawn_score {
+    int16_t mg = 0;
+    int16_t eg = 0;
+
+    void operator+=(int v) {
+        mg = static_cast<int16_t>(mg + v);
+        eg = static_cast<int16_t>(eg + v);
+    }
+    void operator-=(int v) {
+        mg = static_cast<int16_t>(mg - v);
+        eg = static_cast<int16_t>(eg - v);
+    }
+};
+
+template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, const parameters& par) {
     constexpr Color them = Color(c ^ 1);
 
     U64 pawns = p.get_pieces<c, pawn>();
@@ -88,7 +105,7 @@ template <Color c> int16_t evaluate_pawns(const position& p, pawn_entry& e, cons
     Square* sqs = p.squares_of<c, pawn>();
     Square ksq = p.king_square(c);
 
-    int16_t score = 0;
+    pawn_score score;
     U64 locked_bb = 0ULL;
 
     for (Square s = *sqs; s != no_square; s = *++sqs) {
@@ -97,8 +114,13 @@ template <Color c> int16_t evaluate_pawns(const position& p, pawn_entry& e, cons
         int row = util::row(s);
         int col_idx = util::col(s);
 
-        score += static_cast<int16_t>(par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 0));
-        score += static_cast<int16_t>(pawn_scaling[col_idx] * material_vals[pawn]);
+        // Phase 0 is pure middlegame and 24 pure endgame; take both ends and
+        // let the consumer interpolate against the position's actual phase.
+        score.mg = static_cast<int16_t>(
+            score.mg + par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 0));
+        score.eg = static_cast<int16_t>(
+            score.eg + par.sq_score_scaling[pawn] * square_score<c>(par, pawn, s, 24));
+        score += static_cast<int>(pawn_scaling[col_idx] * material_vals[pawn]);
 
         // Pawn attacks
         e.attacks[c] |= bitboards::pattks[c][s];
@@ -119,7 +141,6 @@ template <Color c> int16_t evaluate_pawns(const position& p, pawn_entry& e, cons
         U64 mask = bitboards::passpawn_mask[c][s] & epawns;
         if (mask == 0ULL) {
             e.passed[c] |= fbb;
-            e.score += par.passed_pawn_bonus;
             e.weak_squares[c] |= front;
         }
 
@@ -221,8 +242,10 @@ pawn_entry* pawn_table::fetch(const position& p) const {
     }
     std::memset(&entries_[idx], 0, sizeof(pawn_entry));
     entries_[idx].key = k;
-    entries_[idx].score = evaluate_pawns<white>(p, entries_[idx], *params_) -
-                          evaluate_pawns<black>(p, entries_[idx], *params_);
+    const pawn_score w = evaluate_pawns<white>(p, entries_[idx], *params_);
+    const pawn_score b = evaluate_pawns<black>(p, entries_[idx], *params_);
+    entries_[idx].score_mg = static_cast<int16_t>(w.mg - b.mg);
+    entries_[idx].score_eg = static_cast<int16_t>(w.eg - b.eg);
     return &entries_[idx];
 }
 
