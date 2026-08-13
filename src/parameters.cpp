@@ -196,6 +196,8 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("history_prune_depth", &history_prune_depth);
         result.emplace_back("history_prune_margin", &history_prune_margin);
         result.emplace_back("see_prune_depth", &see_prune_depth);
+    result.emplace_back("qs_delta_margin", &qs_delta_margin);
+    result.emplace_back("qs_delta_pawn7th", &qs_delta_pawn7th);
         result.emplace_back("singular_min_depth", &singular_min_depth);
         result.emplace_back("singular_margin", &singular_margin);
         result.emplace_back("lmr_min_depth", &lmr_min_depth);
