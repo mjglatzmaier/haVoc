@@ -83,7 +83,6 @@ extern U64 neighbor_cols[8];
 /// King flank masks for pawn shelter.
 extern U64 kflanks[8];
 /// Pawn storm detection masks [color][side].
-extern U64 kpawnstorm[2][2];
 /// King zone masks (extended king area for eval).
 /// Check masks for each piece type from king square.
 /// Passed pawn detection masks [color][square].

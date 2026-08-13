@@ -177,6 +177,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
             result.emplace_back("king_shelter_" + std::to_string(i), &king_shelter[i]);
         result.emplace_back("pawnless_flank_penalty", &pawnless_flank_penalty);        for (size_t i = 0; i < king_storm_penalty.size(); ++i)
             result.emplace_back("king_storm_penalty_" + std::to_string(i), &king_storm_penalty[i]);
+        for (size_t i = 0; i < king_storm_rank_penalty.size(); ++i)
+            result.emplace_back("king_storm_rank_penalty_" + std::to_string(i),
+                                &king_storm_rank_penalty[i]);
 
         // eval_threats weights, all of which used to be bare literals.
         result.emplace_back("threat_by_pawn", &threat_by_pawn);

@@ -169,6 +169,13 @@ struct parameters {
     /// Charged by the number of enemy pawns bearing down on the king's side of
     /// the board, capped at three.
     std::vector<int> king_storm_penalty{0, 0, 2, 4};
+
+    /// Per-pawn storm penalty, indexed by how many ranks in front of the king
+    /// the storming pawn stands, minus one -- so entry 0 is a pawn on the very
+    /// next rank and entry 5 is one still on its starting square. The count
+    /// table above says how many pawns are coming; this says how close they
+    /// have got.
+    std::vector<int> king_storm_rank_penalty{32, 20, 8, 2, 0, 0};
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
     /// Danger per square from which an enemy piece could give check without
