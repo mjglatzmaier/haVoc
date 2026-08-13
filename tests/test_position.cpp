@@ -448,4 +448,139 @@ TEST_F(PositionTest, MaterialKeyIdentifiesMaterialAndNothingElse) {
         << "the material key must be a bijection with material";
 }
 
+// Every incrementally maintained key must equal the key a fresh position
+// computes from scratch for the same board. The keys are updated by hand in
+// do_quiet, add_piece, remove_piece and set, each guarded by its own
+// condition, and a missed or mismatched guard is invisible until it silently
+// corrupts whatever cache the key feeds -- exactly how the material key came
+// to identify capture squares rather than material.
+//
+// Rebuilding from the FEN is the independent oracle: it exercises set() only,
+// with no incremental path at all, so agreement across a random walk means the
+// incremental updates compose to the same function as a from-scratch build.
+// Promotions and en passant are the interesting cases, since both move a pawn
+// off a square without a pawn arriving on it.
+TEST_F(PositionTest, IncrementalKeysAgreeWithKeysBuiltFromScratch) {
+    std::mt19937 rng(90210u);
+    long positions = 0, promotions = 0, en_passants = 0;
+
+    for (int game = 0; game < 40; ++game) {
+        std::istringstream ss("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        position p(ss);
+        for (int ply = 0; ply < 140; ++ply) {
+            Movegen mv(p);
+            mv.generate<pseudo_legal, pieces>();
+            std::vector<Move> legal;
+            for (int i = 0; i < mv.size(); ++i)
+                if (p.is_legal(mv[i]))
+                    legal.push_back(mv[i]);
+            if (legal.empty())
+                break;
+
+            const Move m = legal[rng() % legal.size()];
+            if (m.type <= capture_promotion_n)
+                ++promotions;
+            if (m.type == ep)
+                ++en_passants;
+            p.do_move(m);
+            ++positions;
+
+            const std::string fen = p.to_fen();
+            std::istringstream rebuilt_ss(fen);
+            position rebuilt(rebuilt_ss);
+
+            ASSERT_EQ(p.key(), rebuilt.key()) << "position key drifted at " << fen;
+            ASSERT_EQ(p.pawnkey(), rebuilt.pawnkey()) << "pawn key drifted at " << fen;
+            ASSERT_EQ(p.material_key(), rebuilt.material_key())
+                << "material key drifted at " << fen;
+        }
+    }
+
+    EXPECT_GT(positions, 2000);
+    EXPECT_GT(promotions, 0) << "the walk never promoted, so it never tested the case "
+                                "where a pawn leaves the board without one arriving";
+    EXPECT_GT(en_passants, 0) << "the walk never played en passant, so it never tested "
+                                 "a capture on a square the captured pawn is not on";
+}
+
+namespace {
+/// Plays the move with the given origin and destination, and fails if no such
+/// legal move exists.
+bool play(position& p, Square from, Square to) {
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mv.size(); ++i)
+        if (mv[i].f == from && mv[i].t == to && p.is_legal(mv[i])) {
+            p.do_move(mv[i]);
+            return true;
+        }
+    return false;
+}
+} // namespace
+
+// A repetition is a repetition however many moves it took to come back.
+//
+// is_draw() walks the history two plies at a time, which is right, because only
+// positions with the same side to move can repeat. But the side-to-move term
+// was XORed into the key on every move without the outgoing side being XORed
+// back out, so it accumulated rather than toggled and had a period of four
+// plies instead of two. Every candidate the walk examined at a distance of two
+// plies mod four therefore differed by a constant and could not match, no
+// matter what was on the board.
+//
+// The engine consequently saw repetitions four and eight plies back and was
+// structurally blind to those six, ten and fourteen plies back. Rooks
+// triangulating home -- a1-b1-c1-a1 against a8-b8-c8-a8 -- repeat after six.
+TEST_F(PositionTest, ARepetitionSixPliesBackIsStillARepetition) {
+    std::istringstream ss("r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1");
+    position p(ss);
+    const U64 start_key = p.key();
+
+    const Square path[][2] = {{A1, B1}, {A8, B8}, {B1, C1}, {B8, C8}, {C1, A1}, {C8, A8}};
+    for (auto& mv : path) {
+        ASSERT_TRUE(play(p, mv[0], mv[1])) << "could not play the manoeuvre";
+        if (&mv != &path[5])
+            EXPECT_FALSE(p.is_draw()) << "claimed a draw before the position had repeated";
+    }
+
+    EXPECT_EQ(p.key(), start_key) << "the same board with the same side to move must hash "
+                                     "the same however many plies ago it was last seen";
+    EXPECT_TRUE(p.is_draw()) << "the position has occurred twice and was not detected";
+}
+
+// Castling rights die with the rook, whether it moves or is taken.
+//
+// do_move retired rights when the king or the rook moved, but nothing looked at
+// the square a capture landed on, so taking a rook on its home square left the
+// owner still nominally able to castle with it. The rights mask, the key and
+// the FEN all went on describing a rook that was no longer on the board, and
+// move generation kept emitting the castle for is_legal to throw away.
+TEST_F(PositionTest, CapturingARookOnItsHomeSquareRetiresTheCastlingRight) {
+    std::istringstream ss("4k2r/8/6N1/8/8/8/8/4K3 w k - 0 1");
+    position p(ss);
+    ASSERT_TRUE(p.can_castle_ks<black>());
+
+    ASSERT_TRUE(play(p, G6, H8)) << "Nxh8 should be legal";
+
+    EXPECT_FALSE(p.can_castle_ks<black>())
+        << "black kept the kingside right after the h8 rook was captured";
+    std::istringstream fen_fields(p.to_fen());
+    std::string board, stm, castling;
+    fen_fields >> board >> stm >> castling;
+    EXPECT_EQ(castling, "-")
+        << "the FEN still advertises a castling right for a rook that is gone: " << p.to_fen();
+
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mv.size(); ++i)
+        EXPECT_NE(mv[i].type, castle_ks) << "still generating a castle with no rook to castle with";
+
+    // And the key must agree with a position built from scratch, which is what
+    // makes the stale right corrupt transposition lookups rather than merely
+    // look untidy.
+    std::istringstream rebuilt_ss(p.to_fen());
+    position rebuilt(rebuilt_ss);
+    EXPECT_EQ(p.key(), rebuilt.key());
+}
+
 } // namespace havoc

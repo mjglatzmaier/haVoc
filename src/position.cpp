@@ -59,12 +59,14 @@ void position::setup(std::istringstream& fen) {
     // castle rights
     fen >> token;
     ifo.cmask = U16(0);
-    for (auto& c : token) {
-        U16 cr = castle_right_from_char(c);
-        ifo.cmask |= cr;
-        ifo.key ^= zobrist::castle(ifo.stm, cr);
-        ifo.repkey ^= zobrist::castle(ifo.stm, cr);
-    }
+    for (auto& c : token)
+        ifo.cmask |= castle_right_from_char(c);
+    // Hashed as a whole mask. Hashing each right under zobrist::castle(stm, cr)
+    // made the term depend on whose turn it was, so the same rights hashed
+    // differently for white and for black, and it could never be cancelled by
+    // do_move, which cleared with masks under the owning colour instead.
+    ifo.key ^= zobrist::castle_rights(ifo.cmask);
+    ifo.repkey ^= zobrist::castle_rights(ifo.cmask);
 
     // ep square
     fen >> token;
@@ -212,41 +214,20 @@ void position::do_move(const Move& m) {
     const Movetype t = Movetype(m.type);
     const Piece p = piece_on(from);
     const Color us = to_move();
+    const U16 old_cmask = ifo.cmask;
 
     // king square update and castle rights update
     if (p == king) {
         pcs.king_sq[us] = to;
         ifo.ks[us] = to;
-        if (can_castle_ks() || can_castle_qs()) {
-            ifo.cmask &= (us == white ? clearw : clearb);
-            ifo.key ^=
-                (us == white ? zobrist::castle(white, clearw) : zobrist::castle(black, clearb));
-            ifo.repkey ^=
-                (us == white ? zobrist::castle(white, clearw) : zobrist::castle(black, clearb));
-        }
-    } else if (p == rook) {
-        if (us == white && can_castle<white>()) {
-            if (from == A1) {
-                ifo.cmask &= clearwqs;
-                ifo.key ^= zobrist::castle(white, clearwqs);
-                ifo.repkey ^= zobrist::castle(white, clearwqs);
-            } else if (from == H1) {
-                ifo.cmask &= clearwks;
-                ifo.key ^= zobrist::castle(white, clearwks);
-                ifo.repkey ^= zobrist::castle(white, clearwks);
-            }
-        } else if (us == black && can_castle<black>()) {
-            if (from == A8) {
-                ifo.cmask &= clearbqs;
-                ifo.key ^= zobrist::castle(black, clearbqs);
-                ifo.repkey ^= zobrist::castle(black, clearbqs);
-            } else if (from == H8) {
-                ifo.cmask &= clearbks;
-                ifo.key ^= zobrist::castle(black, clearbks);
-                ifo.repkey ^= zobrist::castle(black, clearbks);
-            }
-        }
     }
+
+    // Castling rights, hashed once from the finished mask below. Indexing by
+    // both squares the move touches retires a right when the king leaves home,
+    // when the rook leaves its corner, and when the rook is *captured* on its
+    // corner -- the last of which nothing used to handle, so the engine went on
+    // believing in a rook that was no longer on the board.
+    ifo.cmask &= castle_rights_after(from) & castle_rights_after(to);
 
     ifo.captured = no_piece;
 
@@ -283,12 +264,25 @@ void position::do_move(const Move& m) {
         ifo.has_castled[us] = true;
     }
 
-    // eps
+    if (ifo.cmask != old_cmask) {
+        ifo.key ^= zobrist::castle_rights(old_cmask) ^ zobrist::castle_rights(ifo.cmask);
+        ifo.repkey ^= zobrist::castle_rights(old_cmask) ^ zobrist::castle_rights(ifo.cmask);
+    }
+
+    // En passant. The square the previous move offered has to be hashed back
+    // out as it expires, exactly as do_null_move already did. Only XORing the
+    // new one in left every square ever offered in the key, so the key recorded
+    // the history of double pushes instead of the one square, if any, that can
+    // actually be captured on now.
+    if (ifo.eps != no_square) {
+        ifo.key ^= zobrist::ep(util::col(ifo.eps));
+        ifo.repkey ^= zobrist::ep(util::col(ifo.eps));
+    }
     ifo.eps = no_square;
     if (p == pawn && std::abs(from - to) == 16) {
         ifo.eps = Square(from + (us == white ? 8 : -8));
-        ifo.key ^= zobrist::ep(util::col(to));
-        ifo.repkey ^= zobrist::ep(util::col(to));
+        ifo.key ^= zobrist::ep(util::col(ifo.eps));
+        ifo.repkey ^= zobrist::ep(util::col(ifo.eps));
     }
 
     // move50
@@ -305,7 +299,13 @@ void position::do_move(const Move& m) {
     // half-moves
     ifo.hmvs++;
 
-    // side to move
+    // Side to move. Both terms have to move: XOR the outgoing side back out
+    // before XORing the incoming side in. Only adding the new one leaves the
+    // old one in the key, so the side-to-move contribution accumulates over a
+    // game instead of toggling, giving it a period of four plies rather than
+    // two.
+    ifo.key ^= zobrist::stm(ifo.stm);
+    ifo.repkey ^= zobrist::stm(ifo.stm);
     ifo.stm = Color(ifo.stm ^ 1);
     ifo.key ^= zobrist::stm(ifo.stm);
     ifo.repkey ^= zobrist::stm(ifo.stm);
@@ -369,6 +369,9 @@ void position::do_null_move() {
         ifo.eps = no_square;
     }
 
+    // As in do_move: the outgoing side has to be XORed back out.
+    ifo.key ^= zobrist::stm(ifo.stm);
+    ifo.repkey ^= zobrist::stm(ifo.stm);
     ifo.stm = them;
     ifo.key ^= zobrist::stm(ifo.stm);
     ifo.repkey ^= zobrist::stm(ifo.stm);
