@@ -10,6 +10,8 @@
 #include <map>
 #include <random>
 #include <vector>
+#include <set>
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -582,6 +584,87 @@ TEST_F(PositionTest, CapturingARookOnItsHomeSquareRetiresTheCastlingRight) {
     std::istringstream rebuilt_ss(p.to_fen());
     position rebuilt(rebuilt_ss);
     EXPECT_EQ(p.key(), rebuilt.key());
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zobrist randoms must actually be random.
+//
+// The legacy table was 1835 hand-rolled constants that all fitted in 32 bits
+// and had a Hamming weight of at most 4. They spanned a GF(2) space of only
+// 32 dimensions, which saturated the table with short linear dependencies:
+// 1715 triples XORed to zero and 400785 quadruples satisfied a ^ b == c ^ d.
+//
+// A four-term dependency is a key collision between two positions differing by
+// two pieces, and three of the old ones used a single piece type, so they
+// collided positions with identical material reachable in one game: two white
+// knights on a2 and b2 hashed exactly like the same knights on h4 and d6.
+// is_draw() compares repetition keys for equality, so that pair fabricates a
+// repetition that never happened.
+//
+// This test guards the properties the old table lacked.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_F(PositionTest, ZobristRandomsAreStatisticallyIndependent) {
+    std::vector<havoc::U64> rands;
+    for (int sq = havoc::A1; sq <= havoc::H8; ++sq)
+        for (int c = havoc::white; c <= havoc::black; ++c)
+            for (int p = havoc::pawn; p <= havoc::king; ++p)
+                rands.push_back(havoc::zobrist::piece(havoc::Square(sq), havoc::Color(c),
+                                                      havoc::Piece(p)));
+    for (int c = havoc::white; c <= havoc::black; ++c)
+        for (havoc::U16 r = 0; r < 16; ++r)
+            rands.push_back(havoc::zobrist::castle(havoc::Color(c), r));
+    for (int f = 0; f < 8; ++f)
+        rands.push_back(havoc::zobrist::ep(f));
+    rands.push_back(havoc::zobrist::stm(havoc::white));
+    rands.push_back(havoc::zobrist::stm(havoc::black));
+
+    // Every value distinct.
+    std::set<havoc::U64> distinct(rands.begin(), rands.end());
+    EXPECT_EQ(distinct.size(), rands.size()) << "duplicate zobrist randoms";
+
+    // Full 64-bit range, balanced bits. The old table averaged 3.84.
+    long total_bits = 0;
+    int min_pc = 64;
+    for (auto v : rands) {
+        int pc = __builtin_popcountll(v);
+        total_bits += pc;
+        min_pc = std::min(min_pc, pc);
+    }
+    const double mean_pc = double(total_bits) / double(rands.size());
+    EXPECT_GT(mean_pc, 24.0) << "zobrist randoms are too sparse, mean popcount " << mean_pc;
+    EXPECT_LT(mean_pc, 40.0) << "zobrist randoms are too dense, mean popcount " << mean_pc;
+    EXPECT_GE(min_pc, 12) << "a zobrist random has only " << min_pc << " bits set";
+
+    // They must span the full 64-dimensional GF(2) space, not a subspace.
+    std::map<int, havoc::U64> basis;
+    for (auto v : rands) {
+        havoc::U64 x = v;
+        for (auto it = basis.rbegin(); it != basis.rend(); ++it)
+            x = std::min(x, x ^ it->second);
+        if (x != 0ULL)
+            basis[63 - __builtin_clzll(x)] = x;
+    }
+    EXPECT_EQ(basis.size(), 64u) << "zobrist randoms span only " << basis.size() << " dimensions";
+
+    // No three or four of them may XOR to zero: those are outright key
+    // collisions between positions differing by two or three pieces.
+    std::map<havoc::U64, std::vector<size_t>> pair_xor;
+    for (size_t i = 0; i < rands.size(); ++i)
+        for (size_t j = i + 1; j < rands.size(); ++j)
+            pair_xor[rands[i] ^ rands[j]].push_back(i);
+
+    int three_term = 0;
+    for (auto v : rands)
+        if (pair_xor.count(v) != 0)
+            ++three_term;
+    EXPECT_EQ(three_term, 0) << three_term << " triples of zobrist randoms XOR to zero";
+
+    long four_term = 0;
+    for (const auto& [x, who] : pair_xor)
+        if (who.size() > 1)
+            four_term += long(who.size()) * long(who.size() - 1) / 2;
+    EXPECT_EQ(four_term, 0) << four_term << " quadruples of zobrist randoms satisfy a^b == c^d";
 }
 
 } // namespace havoc
