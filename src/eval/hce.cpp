@@ -914,6 +914,35 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 shelter -= params_.pawnless_flank_penalty;
 
             score += (shelter * mg) / material_entry::kPhaseMax;
+
+            // Open and half-open files beside the king.
+            //
+            // The shelter term above only counts pawns on the eight squares
+            // touching the king, so it cannot tell a king behind three pawns on
+            // a closed wing from one whose own file has been emptied by an
+            // exchange. The second is where the attack comes from: the enemy
+            // doubles rooks on the open file and the king has nothing in front
+            // of it. This was worth nothing at all.
+            //
+            // Faded on the middlegame weight like the shelter term it extends.
+            // An open file beside the king is a route for heavy pieces; once
+            // they are gone the king wants open lines, not fewer of them.
+            const U64 our_pawns = p.get_pieces<c, pawn>();
+            const U64 their_pawns = p.get_pieces<them, pawn>();
+            const U64 heavies = p.get_pieces<them, rook>() | p.get_pieces<them, queen>();
+            const int kcol = util::col(s);
+            int file_penalty = 0;
+            for (int f = std::max(0, kcol - 1); f <= std::min(7, kcol + 1); ++f) {
+                const U64 file = bitboards::col[f];
+                if ((file & our_pawns) != 0ULL)
+                    continue;
+                file_penalty += ((file & their_pawns) == 0ULL)
+                                    ? params_.king_open_file_penalty
+                                    : params_.king_semiopen_file_penalty;
+                if ((file & heavies) != 0ULL)
+                    file_penalty += params_.king_open_file_heavy_penalty;
+            }
+            score -= (file_penalty * mg) / material_entry::kPhaseMax;
         }
 
 
