@@ -337,9 +337,18 @@ struct parameters {
     int passed_pawn_rook_support = 30;  ///< own rook behind with a clear path
     int passed_pawn_connected = 30;     ///< another passer on a neighbouring file
     /// Penalty when the square in front is controlled by the opponent, by
-    /// distance to promotion, indexed [3 - row_dist]: entry 0 is three ranks
-    /// out and entry 2 is one step from queening.
-    std::array<int, 3> passed_pawn_blocked_penalty = {30, 55, 120};
+    /// distance to promotion, indexed [6 - row_dist] to match the rank ladder
+    /// above: entry 0 is a passer on its starting rank and entry 5 is one step
+    /// from queening.
+    ///
+    /// This had three entries covering the last three ranks, because that was
+    /// all eval_passed_pawns looked at. Widening the ladder without widening
+    /// this would charge a passer six ranks from promotion the same 30 that a
+    /// passer three ranks out pays, against a rank bonus of 5 -- a pawn worth
+    /// five centipawns losing thirty for a square it was never going to reach
+    /// this move. The three new entries stay in proportion to the bonuses they
+    /// sit beside.
+    std::array<int, 6> passed_pawn_blocked_penalty = {3, 7, 15, 30, 55, 120};
 
     // Search
     int fixed_depth = -1;

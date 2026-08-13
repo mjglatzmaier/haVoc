@@ -1252,11 +1252,8 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         // 5. Closer to promotion
         score += params_.passed_pawn_rank_bonus[6 - row_dist];
 
-        // The blocked penalty only ever had entries for the last three ranks.
-        // A passer further out that loses the square in front is charged the
-        // furthest-out rate rather than reading off the end of the table.
         if (crudeControl < 0)
-            score -= params_.passed_pawn_blocked_penalty[std::max(0, 3 - row_dist)];
+            score -= params_.passed_pawn_blocked_penalty[6 - row_dist];
     }
     return score;
 }
