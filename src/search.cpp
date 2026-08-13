@@ -1054,12 +1054,28 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
         if (best_score >= beta)
             return best_score;
 
-        // Delta pruning
+        // Delta pruning.
+        //
+        // This returned `alpha`, which is a fail-hard return inside a fail-soft
+        // search. Two things are wrong with that. It throws away what the node
+        // actually knows -- best_score is below alpha - deltaCut, so it is a
+        // strictly tighter and equally valid upper bound than alpha is. And it
+        // makes the value a function of the window the node happened to be
+        // searched with rather than of the position, so the same position
+        // reached with a different window, or with a different move ordering
+        // ahead of it, returns a different number.
+        //
+        // That second part is measurable: with an exact evaluation underneath
+        // it, QuiescenceIsMirrorSymmetricOverRandomPlay finds a position and its
+        // mirror scoring -18 and -19 at depth 1. Returning best_score makes all
+        // 189 sampled positions symmetric again. The asymmetry is only hidden
+        // today because the lazy evaluation cutoff above usually returns before
+        // the difference can show.
         int deltaCut = 910;
         if (anyPawnsOn7th)
             deltaCut += 775;
         if (best_score < alpha - deltaCut)
-            return alpha;
+            return best_score;
 
         if (pv_type && alpha < best_score)
             alpha = best_score;
