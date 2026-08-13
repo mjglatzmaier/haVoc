@@ -142,9 +142,19 @@ struct parameters {
     static constexpr int rook_7th_bonus = 2;
 
     // Pawn structure
-    static constexpr int doubled_pawn_penalty = 4;
-    static constexpr int backward_pawn_penalty = 1;
-    static constexpr int isolated_pawn_penalty = 4;
+    /// Pawn-structure penalties, split by game phase.
+    ///
+    /// These used to be static constexpr, so they were invisible to the
+    /// tuner, and pawn_score applied every penalty identically to the
+    /// middlegame and endgame accumulators. A pawn weakness is worth far more
+    /// in an endgame, where it cannot be covered by pieces and becomes a
+    /// fixed target, so the endgame endpoints default higher.
+    int doubled_pawn_penalty_mg = 4;
+    int doubled_pawn_penalty_eg = 12;
+    int backward_pawn_penalty_mg = 1;
+    int backward_pawn_penalty_eg = 3;
+    int isolated_pawn_penalty_mg = 4;
+    int isolated_pawn_penalty_eg = 12;
     static constexpr int passed_pawn_bonus = 2;
     static constexpr int semi_open_pawn_penalty = 1;
 
