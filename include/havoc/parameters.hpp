@@ -118,6 +118,12 @@ struct parameters {
     // Minor piece bonuses
     std::vector<int> knight_outpost_bonus{0, 1, 2, 3, 3, 2, 1, 0};
     std::vector<int> bishop_outpost_bonus{0, 0, 1, 2, 2, 1, 0, 0};
+    /// Extra for an outpost a friendly pawn defends, indexed by Piece. Only the
+    /// knight and bishop entries are read; the rest are zero and unregistered.
+    /// A defended outpost cannot be challenged by a pawn or driven off cheaply,
+    /// which is the difference between an outpost and a square a piece happens
+    /// to be standing on.
+    std::vector<int> outpost_defended_bonus{0, 4, 3, 0, 0, 0};
     std::vector<int> center_influence_bonus{0, 1, 1, 1, 1, 0};
 
     // King harassment tables: bonus for attacking N squares of the enemy king

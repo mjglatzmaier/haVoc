@@ -36,6 +36,11 @@ struct pawn_entry {
     U64 light[2]{};
     U64 attacks[2]{};
     U64 undefended[2]{};
+    /// Every square a side's pawns could ever attack, now or after any number
+    /// of advances: the adjacent files, ahead of each pawn. Its complement in
+    /// the enemy half is the set of holes -- squares a minor can occupy
+    /// without ever being challenged by a pawn.
+    U64 attack_span[2]{};
     U64 queenside[2]{};
     U64 kingside[2]{};
     int16_t center_pawn_count = 0;

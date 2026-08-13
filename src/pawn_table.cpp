@@ -133,8 +133,13 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         score.material =
             static_cast<int16_t>(score.material + pawn_scaling[col_idx] * material_vals[pawn]);
 
-        // Pawn attacks
+        // Pawn attacks, and every square this pawn could ever attack if it
+        // kept advancing. passpawn_mask is the own file plus both neighbours
+        // ahead of the pawn, so intersecting it with the neighbour files
+        // leaves exactly the squares it can ever cover.
         e.attacks[c] |= bitboards::pattks[c][s];
+        e.attack_span[c] |= bitboards::pattks[c][s] |
+                            (bitboards::passpawn_mask[c][s] & bitboards::neighbor_cols[col_idx]);
 
         // Track undefended pawns
         auto defend_mask = (c == white ? bitboards::pattks[black][s] : bitboards::pattks[white][s]);

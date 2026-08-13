@@ -1292,6 +1292,16 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // sits at the endgame end of the phase, so it moves the eg half only;
         // the mg half needs a position with the non-pawn material still on.
         "rnbqkbnr/pppppppp/8/8/8/2P5/2P5/RNBQKBNR w KQkq - 0 1",
+        // A knight and a bishop on pawn-defended outposts. Black has no c or e
+        // pawn, so d5 can never be attacked by a black pawn, and White's c4
+        // pawn defends it; the same holds for f5, defended by White's e4 pawn
+        // -- Black has no e or g pawn either, and the e5 pawn's own attack
+        // span runs down the board, not up it.
+        // Both minors therefore collect the plain outpost bonus and the extra
+        // for being defended. That second condition is rare -- it holds for
+        // 0.34% of the minors evaluated over a depth-15 bench -- so no
+        // ordinary position in this corpus reaches it.
+        "r2qkb1r/pp1p3p/2n5/3NpB2/2P1P3/8/PP3PPP/RNBQK2R w KQkq - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
