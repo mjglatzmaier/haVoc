@@ -128,22 +128,26 @@ void ScoredMoves::load_and_score(const position& p, Movegen* moves,
             continue;
 
         int sc = score_lambda(p, m, previous, followup, threat, stack, hist);
-        m_moves[m_size++] = ScoredMove(m, sc);
+        // Placement construction rather than assignment: the storage is
+        // deliberately left uninitialised, so this is the write that begins
+        // the entry's lifetime.
+        std::construct_at(&m_moves()[m_size++], m, sc);
     }
 }
 
 void ScoredMoves::sort(int cutoff) {
     const unsigned N = m_size;
+    auto& moves = m_moves();
     ScoredMove key;
     int j;
     for (unsigned i = m_start + 1; i < N; ++i) {
-        key = m_moves[i];
+        key = moves[i];
         j = static_cast<int>(i) - 1;
-        while (j >= 0 && m_moves[j] < key) {
-            m_moves[j + 1] = m_moves[j];
+        while (j >= 0 && moves[j] < key) {
+            moves[j + 1] = moves[j];
             --j;
         }
-        m_moves[j + 1] = key;
+        moves[j + 1] = key;
     }
     create_chunk(cutoff);
 }
@@ -151,7 +155,7 @@ void ScoredMoves::sort(int cutoff) {
 void ScoredMoves::create_chunk(int cutoff) {
     m_start = m_end;
     for (unsigned i = m_start; i < m_size; ++i) {
-        if (m_moves[i].s >= cutoff)
+        if (m_moves()[i].s >= cutoff)
             m_end++;
     }
 }
