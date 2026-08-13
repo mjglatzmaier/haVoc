@@ -53,6 +53,13 @@ const std::vector<std::string>& mirror_test_positions() {
     static const std::vector<std::string> fens = {
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        // Direct proof that this position's evaluation is symmetric. It is the
+        // one ExactSearchIsMirrorSymmetric currently disagrees on, and that
+        // test documents its own residual: the transposition table, the
+        // aspiration window and the qsearch SEE filter all survive the knobs
+        // it turns off. Keeping the FEN here means that if a real asymmetry is
+        // ever introduced, this test catches it rather than the search one.
+        "2rq1rk1/pp1bppbp/3p1np1/8/3NP3/1BN1BP2/PPPQ2PP/2KR3R w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
         "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
         "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
@@ -1194,12 +1201,12 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // heuristic, which never runs eval_threats at all.
         "7k/p7/8/8/3N4/8/6K1/B7 w - - 0 1",
         // Skewers, by the value of the piece standing behind the king. The
-        // b2 pawn blocks the diagonal so that the king is not actually in
-        // check, which would make the position illegal with White to move;
-        // the term reads pseudo-attacks and is unaffected by the blocker.
-        "7n/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
-        "7r/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
-        "7q/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
+        // diagonal has to be genuinely clear -- a blocker on it means there
+        // is no skewer -- which puts the enemy king in check, so these are
+        // Black to move rather than White.
+        "7n/p7/8/8/3k4/8/6K1/B7 b - - 0 1",
+        "7r/8/8/8/3k4/8/6K1/B7 b - - 0 1",
+        "7q/8/8/8/3k4/8/6K1/B7 b - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
