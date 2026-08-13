@@ -20,6 +20,17 @@ inline bool is_pawnless_endgame(const position& p) {
     return (p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>()) == 0ULL;
 }
 
+/// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
+/// so a1-h8 is every ninth square from a1 and a8-h1 every seventh from h1.
+constexpr U64 kLongDiagonals = [] {
+    U64 m = 0ULL;
+    for (int i = 0; i < 8; ++i) {
+        m |= 1ULL << (i * 9);
+        m |= 1ULL << (7 + i * 7);
+    }
+    return m;
+}();
+
 /// Evaluation for a pawnless ending in which one side is down to a lone king.
 ///
 /// The ordinary evaluation is completely flat here. Every strong-side move
@@ -125,8 +136,14 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
                            ei.pe->undefended[black];
     ei.kmask[white] = bitboards::kmask[p.king_square(white)];
     ei.kmask[black] = bitboards::kmask[p.king_square(black)];
-    ei.central_pawns[white] = p.get_pieces<white, pawn>() & bitboards::big_center_mask;
-    ei.central_pawns[black] = p.get_pieces<black, pawn>() & bitboards::big_center_mask;
+    // colored_sqs[white] is the light squares and colored_sqs[black] the dark
+    // ones; see the initialiser in bitboard.cpp. These two lines are what makes
+    // the bad-bishop penalty in eval_bishops do anything at all -- the masks it
+    // reads were declared and read but never written, so they were always zero.
+    ei.light_sq_pawns[white] = p.get_pieces<white, pawn>() & bitboards::colored_sqs[white];
+    ei.dark_sq_pawns[white] = p.get_pieces<white, pawn>() & bitboards::colored_sqs[black];
+    ei.light_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[white];
+    ei.dark_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[black];
     ei.queen_sqs[white] = p.get_pieces<white, queen>();
     ei.queen_sqs[black] = p.get_pieces<black, queen>();
     ei.pawn_holes[white] = ei.pe->backward[white] << 8;
@@ -204,12 +221,32 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     // Endgame scaling
     int scale = 128;
 
-    // Opposite-color bishops → drawish
-    bool ocb = ei.bishop_colors[white][0] && ei.bishop_colors[black][1] &&
-               !ei.bishop_colors[white][1] && !ei.bishop_colors[black][0];
-    bool ocb2 = ei.bishop_colors[white][1] && ei.bishop_colors[black][0] &&
-                !ei.bishop_colors[white][0] && !ei.bishop_colors[black][1];
-    if (ocb || ocb2)
+    // Opposite-color bishops → drawish, but only in a *pure* opposite-colored
+    // bishop ending: one bishop each, on opposite colors, and no other pieces.
+    //
+    // The old test looked at bishop colors alone. Any position in which each
+    // side happened to hold a single bishop on opposite colors -- an extremely
+    // common middlegame shape -- had its entire evaluation multiplied by
+    // opposite_bishop_scale/128 = 24/128 = 0.19. On a middlegame with both
+    // queens, all four rooks and all four knights still on, white a clean pawn
+    // up, that reported +0.26 instead of +1.42.
+    //
+    // The drawishness of opposite bishops comes from the defender's bishop
+    // guarding a color complex the attacker can never contest, which only holds
+    // once the bishops are the last pieces. With a rook or queen still on, the
+    // extra piece covers the missing color and opposite bishops make the
+    // position *sharper*, since the attacker effectively plays a piece up on
+    // the squares the defending bishop cannot see.
+    const U64 white_bishops = p.get_pieces<white, bishop>();
+    const U64 black_bishops = p.get_pieces<black, bishop>();
+    const bool bishops_only =
+        (p.get_pieces<white, knight>() | p.get_pieces<black, knight>() |
+         p.get_pieces<white, rook>() | p.get_pieces<black, rook>() | p.get_pieces<white, queen>() |
+         p.get_pieces<black, queen>()) == 0ULL;
+    const bool one_bishop_each = bits::count(white_bishops) == 1 && bits::count(black_bishops) == 1;
+    const bool opposite_colors = ((white_bishops & bitboards::colored_sqs[white]) != 0ULL) !=
+                                 ((black_bishops & bitboards::colored_sqs[white]) != 0ULL);
+    if (bishops_only && one_bishop_each && opposite_colors)
         scale = std::min(scale, params_.opposite_bishop_scale);
 
     // No pawns with small material advantage → likely drawn
@@ -332,8 +369,8 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
     Square* bishops = p.squares_of<c, bishop>();
     bool dark_sq = false;
     bool light_sq = false;
-    U64 flight_sq_pawns = ei.white_pawns[c];
-    U64 fdark_sq_pawns = ei.black_pawns[c];
+    U64 flight_sq_pawns = ei.light_sq_pawns[c];
+    U64 fdark_sq_pawns = ei.dark_sq_pawns[c];
     U64 equeen_sq = ei.queen_sqs[them];
     U64 valuable_enemies =
         p.get_pieces<them, queen>() | p.get_pieces<them, rook>() | p.get_pieces<them, king>();
@@ -351,15 +388,12 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         // about the bishop currently in hand.
         const bool this_light = (sq_bb & bitboards::colored_sqs[white]) != 0ULL;
 
-        // Bishop color tracking
-        if (sq_bb & bitboards::colored_sqs[white]) {
+        // Which square colors this side has a bishop on, for the pair bonus at
+        // the end of the function.
+        if (this_light)
             light_sq = true;
-            ei.bishop_colors[c][white] = true;
-        }
-        if (sq_bb & bitboards::colored_sqs[black]) {
+        else
             dark_sq = true;
-            ei.bishop_colors[c][black] = true;
-        }
 
         // X-Ray attacks on valuable pieces
         score += bits::count(bitboards::battks[s] & valuable_enemies);
@@ -392,8 +426,20 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score +=
             bits::count(mvs & bitboards::big_center_mask) * params_.center_influence_bonus[bishop];
 
-        // Long diagonal bonus
-        if (sq_bb & (this_light ? bitboards::battks[D5] : bitboards::battks[E5]))
+        // Long diagonal bonus. This has to be the two genuinely long diagonals,
+        // a1-h8 and a8-h1, and nothing else. The old test asked whether the
+        // bishop stood anywhere a bishop on d5 (for light squares) or e5 (for
+        // dark squares) could see, which is the long diagonal *plus* a second,
+        // shorter one -- a2-g8 for light, b8-h2 for dark. Those two extras are
+        // not mirror images of each other, so the bonus was handed out on
+        // different squares depending on color and the evaluation was not
+        // symmetric. A bishop on c4 collected it while its mirror on c5 did
+        // not; a bishop on g3 collected it while its mirror on g6 did not.
+        //
+        // The union of the two long diagonals is mirror invariant, and a
+        // bishop can only ever stand on the one matching its square color, so
+        // a single mask is both correct and symmetric.
+        if (sq_bb & kLongDiagonals)
             score += parameters::bishop_open_center_bonus;
 
         // Outpost
@@ -410,7 +456,8 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         }
 
         // Penalty for bishops on same color as own pawns
-        int same_color_penalty = (ei.me->is_endgame() ? 3 : 1);
+        int same_color_penalty = (ei.me->is_endgame() ? params_.bishop_own_pawn_penalty_eg
+                                                      : params_.bishop_own_pawn_penalty_mg);
         U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
@@ -621,10 +668,31 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                         int attack_penalty = parameters::attack_combos[p1][p2];
                         score -= attack_penalty;
 
-                        Square attacked_sq = Square(bits::pop_lsb(twiceAttacked));
-                        U64 defenders = p.attackers_of2(attacked_sq, c) ^ sq_bb;
-                        if (!defenders)
-                            score -= 3 * attack_penalty;
+                        // Any twice-attacked square beside the king that only
+                        // the king defends is the dangerous one, so look at all
+                        // of them.
+                        //
+                        // This used to test a single square, pop_lsb of the
+                        // set, which is the lowest square index rather than any
+                        // chess property. Mirroring the board reverses the rank
+                        // order, so the mirrored position picked a different
+                        // square out of the same set and reached a different
+                        // verdict: the extra 3 * attack_penalty landed on one
+                        // color and not the other, worth 12cp with the rook and
+                        // knight combination weight of 4.
+                        //
+                        // twiceAttacked only ever holds squares in our own
+                        // king's mask, and attackers_of2 counts the king, so
+                        // masking the king out is what makes "undefended"
+                        // mean undefended by anything else.
+                        U64 remaining = twiceAttacked;
+                        while (remaining) {
+                            const Square attacked_sq = Square(bits::pop_lsb(remaining));
+                            if ((p.attackers_of2(attacked_sq, c) & ~sq_bb) == 0ULL) {
+                                score -= 3 * attack_penalty;
+                                break;
+                            }
+                        }
                     }
                 }
             }

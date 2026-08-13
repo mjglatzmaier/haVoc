@@ -328,6 +328,23 @@ TEST_F(PositionTest, SeeRefusesKingCaptureOfADefendedPiece) {
     EXPECT_LT(see_of("4r3/8/8/8/8/8/4r3/4K3 w - - 0 1", E1, E2), 0);
 }
 
+// Capture-promotions are the one path in see() that changes both the value of
+// the initial gain and the piece left standing on the target square, and they
+// were the only move type it handles specially that had no test.
+
+TEST_F(PositionTest, SeeCapturePromotionWinsTheRookAndKeepsTheQueen) {
+    // exd8=Q takes a rook and promotes, and nothing can recapture on d8.
+    // Gained: the rook, plus a queen in place of the pawn.
+    EXPECT_EQ(see_of("3r4/4P3/8/8/4k3/8/8/4K3 w - - 0 1", E7, D8),
+              480 + 910 - 100);
+}
+
+TEST_F(PositionTest, SeeCapturePromotionAccountsForLosingTheNewQueen) {
+    // exd8=Q Kxd8 wins a rook for a pawn: the promoted queen is captured, so it
+    // is the rook minus the pawn that is left, not the queen.
+    EXPECT_EQ(see_of("3rk3/4P3/8/8/8/8/8/4K3 w - - 0 1", E7, D8), 480 - 100);
+}
+
 TEST_F(PositionTest, RecognisesDeadDrawnMaterial) {
     auto material_draw = [](const std::string& fen) {
         std::istringstream ss(fen);

@@ -2,6 +2,7 @@
 #include "havoc/book.hpp"
 #include "havoc/eval/hce.hpp"
 #include "havoc/magics.hpp"
+#include "havoc/movegen.hpp"
 #include "havoc/material_table.hpp"
 #include "havoc/parameters.hpp"
 #include "havoc/pawn_table.hpp"
@@ -10,14 +11,20 @@
 #include "havoc/tt.hpp"
 #include "havoc/zobrist.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <sstream>
 #include <string>
+
+#include "mirror.hpp"
 
 #include <gtest/gtest.h>
 #include <iostream>
 #include <set>
+#include <vector>
 
 namespace {
 
@@ -25,6 +32,50 @@ namespace {
 havoc::position make_pos(const std::string& fen) {
     std::istringstream iss(fen);
     return havoc::position(iss);
+}
+
+/// Mirror a FEN vertically and swap the colors of every piece.
+///
+/// The evaluation is defined from the point of view of the side to move, so a
+/// position and its mirror describe exactly the same problem seen from the
+/// other side, and a correct evaluator has to return an identical score for
+/// both. Any difference at all is a color-indexing bug: a table indexed with
+/// the wrong color, a shift that only works for white, a relative rank
+/// computed from the wrong end of the board.
+using havoc::testing::mirror_fen;
+
+/// A spread of positions chosen to exercise every category in the evaluation:
+/// openings, sharp middlegames, king attacks, pawn structures, passed pawns,
+/// opposite-colored bishops and a range of endgames.
+const std::vector<std::string>& mirror_test_positions() {
+    static const std::vector<std::string> fens = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/3P1N1P/PPP1NPP1/R2Q1RK1 w - - 0 1",
+        "r1bqkb1r/pppppppp/2n2n2/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
+        "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1N1P/PPP1BPP1/RNBQR1K1 w - - 0 8",
+        "2rr2k1/pp3ppp/2n1bn2/2q1p3/8/1NP2N1P/PP3PP1/R1BQR1K1 w - - 5 14",
+        // Opposite-colored bishops, pieces still on
+        "r2q1rk1/1p2bppp/2n2n2/3p4/3P4/2N2N2/PP2BPPP/R2Q1RK1 w - - 0 1",
+        // Pure opposite-colored bishop ending
+        "8/pp3p2/2b1k3/8/1P6/2B1K3/P4P2/8 w - - 0 1",
+        // Passed pawns and a rook ending
+        "8/3k4/8/2P5/8/4K3/6p1/8 w - - 0 1",
+        "8/1R6/5pk1/8/6P1/5K2/1r6/8 w - - 0 1",
+        // Wrecked structure: doubled, isolated and backward pawns
+        "r1b2rk1/pp3ppp/2p5/2p5/8/2P2P2/PP4PP/R1B2RK1 w - - 0 1",
+        // Exposed king with heavy pieces bearing down on it
+        "6k1/5ppp/8/8/8/8/5PPP/2R2RK1 w - - 0 1",
+        "r1bq1rk1/pp3ppp/2n1pn2/2pp4/1b1P4/2NBPN2/PPQ2PPP/R1B2RK1 w - - 0 1",
+        // En passant available, to exercise the ep mirroring too
+        "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+        // Knight outposts and a closed centre
+        "r1bq1rk1/pp2ppbp/2np1np1/2p5/2P1P3/2NP1NP1/PP3PBP/R1BQ1RK1 w - - 0 1",
+    };
+    return fens;
 }
 
 /// Fixture that initializes tables once for all tests.
@@ -97,6 +148,87 @@ TEST_F(EvalTest, EvalIsSymmetric) {
     // Both should be similar magnitude (from side-to-move perspective)
     EXPECT_NEAR(score_w, score_b, 30)
         << "White eval: " << score_w << ", Black mirrored eval: " << score_b;
+}
+
+// The old symmetry test checked a single position with a 30cp tolerance, which
+// is wide enough to hide almost any color bug. Require exact agreement across a
+// spread of positions instead.
+TEST_F(EvalTest, EvaluationIsExactlyMirrorSymmetric) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    for (const auto& fen : mirror_test_positions()) {
+        auto original = make_pos(fen);
+        const std::string mirrored_fen = mirror_fen(fen);
+        auto mirrored = make_pos(mirrored_fen);
+
+        // Guard the helper itself: a mirror that dropped or mangled material
+        // would make the test vacuous.
+        ASSERT_EQ(mirror_fen(mirrored_fen), fen) << "mirror_fen is not an involution on " << fen;
+
+        const int a = eval.evaluate(original);
+        const int b = eval.evaluate(mirrored);
+        EXPECT_EQ(a, b) << "asymmetric evaluation\n  " << fen << " -> " << a << "\n  "
+                        << mirrored_fen << " -> " << b << "\n  difference " << (a - b);
+    }
+}
+
+// The fixed position list above is a spot check. This walks a few hundred
+// positions reached by random legal play and requires the same exact symmetry
+// of every one of them, which is what makes it likely to catch the next
+// color-indexing mistake rather than the two it already caught.
+TEST_F(EvalTest, EvaluationIsMirrorSymmetricOverRandomPlay) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    std::mt19937 rng(20260812u); // fixed seed: a failure must be reproducible
+    int checked = 0;
+    int asymmetric = 0;
+
+    for (int game = 0; game < 150 && asymmetric < 5; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+        for (int ply = 0; ply < 60; ++ply) {
+            std::vector<havoc::Move> legal;
+            havoc::Movegen mvs(pos);
+            mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+
+            pos.do_move(legal[rng() % legal.size()]);
+
+            // Skip the opening moves, where every position is still nearly
+            // symmetric anyway and a bug would not show.
+            if (ply < 6)
+                continue;
+
+            // Compare the position round-tripped through FEN, not the live one.
+            // has_castled is play history, not board state, and does not
+            // survive FEN, so evaluating the played position against a parsed
+            // mirror would compare a castled king with an uncastled one.
+            const std::string fen = pos.to_fen();
+            auto original = make_pos(fen);
+            auto mirrored = make_pos(mirror_fen(fen));
+            const int a = eval.evaluate(original);
+            const int b = eval.evaluate(mirrored);
+            ++checked;
+            if (a != b) {
+                ++asymmetric;
+                ADD_FAILURE() << "asymmetric evaluation\n  " << fen << " -> " << a << "\n  "
+                              << mirror_fen(fen) << " -> " << b << "\n  difference " << (a - b);
+            }
+        }
+    }
+
+    EXPECT_GT(checked, 5000) << "the walk did not cover enough positions to mean anything";
+    std::cout << "[          ] checked " << checked << " random positions" << std::endl;
 }
 
 // ─── TT basic operations ───────────────────────────────────────────────────
@@ -228,6 +360,42 @@ TEST_F(EvalTest, OppositeColorBishops_Scaled) {
     auto pos = make_pos("8/pp3p2/2b1k3/8/8/2B1K3/PP3P2/8 w - - 0 1");
     int score = eval.evaluate(pos);
     EXPECT_LT(std::abs(score), 100) << "OCB endgame should be close to drawn, got: " << score;
+}
+
+// Opposite-colored bishops are only drawish once the bishops are the last
+// pieces. The scale factor used to be keyed on bishop colors alone, so any
+// middlegame in which each side happened to hold one bishop on opposite colors
+// had its whole evaluation multiplied by 24/128 = 0.19 -- a clean extra pawn
+// read as +0.26 instead of +1.42.
+//
+// Assert it by differencing against a run with the scale neutralized: with
+// other pieces on the board the knob must make no difference at all.
+TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
+    havoc::parameters params;
+    havoc::parameters neutral;
+    neutral.opposite_bishop_scale = 128;
+
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    havoc::pawn_table npt(neutral);
+    havoc::material_table nmt(neutral);
+    havoc::HCEEvaluator neval(npt, nmt, neutral);
+
+    // Both queens, all four rooks and all four knights still on the board.
+    // White has Be2 (light), black Be7 (dark), and white is a clean pawn up.
+    auto middlegame = make_pos("r2q1rk1/1p2bppp/2n2n2/3p4/3P4/2N2N2/PP2BPPP/R2Q1RK1 w - - 0 1");
+    EXPECT_EQ(eval.evaluate(middlegame), neval.evaluate(middlegame))
+        << "opposite_bishop_scale must not touch a position that still has "
+           "queens, rooks and knights on it";
+
+    // Positive control: in a genuine opposite-colored bishop ending the knob
+    // must still bite, otherwise the test above could pass by the feature
+    // having been removed outright.
+    auto ending = make_pos("8/pp3p2/2b1k3/8/1P6/2B1K3/P4P2/8 w - - 0 1");
+    EXPECT_NE(eval.evaluate(ending), neval.evaluate(ending))
+        << "opposite_bishop_scale must still apply to a pure OCB ending";
 }
 
 // ─── Parameter round-trip ──────────────────────────────────────────────────

@@ -10,16 +10,9 @@
 
 namespace havoc {
 
-struct endgame_info {
-    bool evaluated_fence = false;
-    bool is_fence = false;
-};
-
-/// Evaluation info gathered during HCE evaluation.
 struct einfo {
     pawn_entry* pe = nullptr;
     material_entry* me = nullptr;
-    endgame_info endgame;
     U64 pawn_holes[2]{};
     U64 all_pieces = 0;
     U64 pieces[2]{};
@@ -28,12 +21,11 @@ struct einfo {
     U64 kmask[2]{};
     U64 kattk_points[2][5]{};
     U64 piece_attacks[2][5]{};
-    bool bishop_colors[2][2]{};
-    U64 central_pawns[2]{};
     U64 queen_sqs[2]{};
-    U64 white_pawns[2]{};
-    U64 black_pawns[2]{};
-    bool closed_center = false;
+    /// Own pawns standing on light and on dark squares, indexed by colour.
+    /// Used to penalise a bishop for its own pawns fixed on its own colour.
+    U64 light_sq_pawns[2]{};
+    U64 dark_sq_pawns[2]{};
     unsigned kattackers[2][5]{};
 };
 
