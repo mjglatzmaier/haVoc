@@ -87,11 +87,13 @@ struct parameters {
     // Piece attack scaling
     std::vector<int> attack_scaling{1, 1, 1, 1, 1};
 
-    // King attack tables per piece type
-    static constexpr int knight_attks[6] = {1, 3, 4, 9, 16, 25};
-    static constexpr int bishop_attks[6] = {1, 3, 4, 9, 16, 25};
-    static constexpr int rook_attks[6] = {0, 2, 5, 5, 7, 15};
-    static constexpr int queen_attks[6] = {0, 1, 2, 3, 4, 9};
+    // Threat tables: value of attacking a given victim, indexed by victim.
+    // These were static constexpr and so unreachable by the tuner, even though
+    // they are multiplied into every threat score the evaluation produces.
+    std::array<int, 6> knight_attks = {1, 3, 4, 9, 16, 25};
+    std::array<int, 6> bishop_attks = {1, 3, 4, 9, 16, 25};
+    std::array<int, 6> rook_attks = {0, 2, 5, 5, 7, 15};
+    std::array<int, 6> queen_attks = {0, 1, 2, 3, 4, 9};
 
     std::vector<int> trapped_rook_penalty{1, 2}; // mg, eg
 
@@ -105,20 +107,27 @@ struct parameters {
     std::vector<int> bishop_outpost_bonus{0, 0, 1, 2, 2, 1, 0, 0};
     std::vector<int> center_influence_bonus{0, 1, 1, 1, 1, 0};
 
-    // King harassment tables
-    static constexpr int pawn_king[3] = {1, 2, 3};
-    static constexpr int knight_king[3] = {1, 2, 3};
-    static constexpr int bishop_king[3] = {1, 2, 3};
-    static constexpr int rook_king[5] = {1, 2, 3, 3, 4};
-    static constexpr int queen_king[7] = {1, 3, 3, 4, 4, 5, 6};
+    // King harassment tables: bonus for attacking N squares of the enemy king
+    // ring, indexed by that count. Together with attack_combos these are the
+    // whole of the king attack weighting, and every one of them used to be
+    // static constexpr -- so the single largest group of king-safety weights
+    // in the evaluation was the one group the tuner could not reach.
+    std::array<int, 3> pawn_king = {1, 2, 3};
+    std::array<int, 3> knight_king = {1, 2, 3};
+    std::array<int, 3> bishop_king = {1, 2, 3};
+    std::array<int, 5> rook_king = {1, 2, 3, 3, 4};
+    std::array<int, 7> queen_king = {1, 3, 3, 4, 4, 5, 6};
 
-    static constexpr int attack_combos[5][5] = {
-        {0, 0, 0, 4, 10},     // pawn
-        {0, 4, 4, 4, 15},     // knight
-        {0, 4, 4, 4, 12},     // bishop
-        {0, 4, 4, 10, 15},    // rook
-        {10, 15, 12, 15, 20}, // queen
-    };
+    /// Extra danger when two different piece types attack the king zone
+    /// together, indexed by the two piece types. Row/column order is
+    /// pawn, knight, bishop, rook, queen.
+    std::array<std::array<int, 5>, 5> attack_combos = {{
+        {{0, 0, 0, 4, 10}},     // pawn
+        {{0, 4, 4, 4, 15}},     // knight
+        {{0, 4, 4, 4, 12}},     // bishop
+        {{0, 4, 4, 10, 15}},    // rook
+        {{10, 15, 12, 15, 20}}, // queen
+    }};
 
     std::vector<int> attacker_weight{1, 4, 8, 16, 32};
     // Penalty per own pawn standing on the same square colour as the bishop,
@@ -139,11 +148,14 @@ struct parameters {
     std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
 
     int uncastled_penalty = 5;
-    static constexpr int connected_rook_bonus = 1;
-    static constexpr int doubled_bishop_bonus = 4;
-    static constexpr int open_file_bonus = 1;
-    static constexpr int bishop_open_center_bonus = 1;
-    static constexpr int rook_7th_bonus = 2;
+    int connected_rook_bonus = 1;
+    int doubled_bishop_bonus = 4;
+    int open_file_bonus = 1;
+    /// Applied with a positive sign to a knight and a negative one to a bishop
+    /// when the centre is locked, so the name describes the bishop's side of
+    /// the trade only. A knight gains what the bishop loses.
+    int bishop_open_center_bonus = 1;
+    int rook_7th_bonus = 2;
 
 
     // Pawn structure

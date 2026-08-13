@@ -368,7 +368,7 @@ template <Color c> int HCEEvaluator::eval_pawns(const position& p, einfo& ei) {
     if (kAttkCount) {
         ei.kattackers[c][pawn]++;
         ei.kattk_points[c][pawn] |= kattks;
-        score += parameters::pawn_king[std::min(2, kAttkCount)];
+        score += params_.pawn_king[std::min(2, kAttkCount)];
     }
 
     // Pawn chain bases / undefended enemy pawns
@@ -416,7 +416,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
 
         // Closed center bonus
         if (ei.pe->locked_center || ei.pe->center_pawn_count >= 4)
-            score += parameters::bishop_open_center_bonus;
+            score += params_.bishop_open_center_bonus;
 
         // Center influence
         U64 center_influence = mvs & bitboards::big_center_mask;
@@ -444,7 +444,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
         if (kattks) {
             ei.kattackers[c][knight]++;
             ei.kattk_points[c][knight] |= kattks;
-            score += parameters::knight_king[std::min(2, bits::count(kattks))];
+            score += params_.knight_king[std::min(2, bits::count(kattks))];
         }
 
         // Protection
@@ -512,7 +512,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
 
         // Closed center penalty
         if (ei.pe->locked_center || ei.pe->center_pawn_count >= 4)
-            score -= parameters::bishop_open_center_bonus;
+            score -= params_.bishop_open_center_bonus;
 
         // Center influence
         score +=
@@ -532,7 +532,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         // bishop can only ever stand on the one matching its square color, so
         // a single mask is both correct and symmetric.
         if (sq_bb & kLongDiagonals)
-            score += parameters::bishop_open_center_bonus;
+            score += params_.bishop_open_center_bonus;
 
         // Outpost
         if (sq_bb & ei.pawn_holes[them])
@@ -568,7 +568,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         if (king_attk_count) {
             ei.kattackers[c][bishop]++;
             ei.kattk_points[c][bishop] |= kattks;
-            score += parameters::bishop_king[std::min(2, king_attk_count)];
+            score += params_.bishop_king[std::min(2, king_attk_count)];
         }
 
         // Protection
@@ -577,7 +577,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
 
     // Double bishop bonus
     if (light_sq && dark_sq)
-        score += parameters::doubled_bishop_bonus;
+        score += params_.doubled_bishop_bonus;
 
     return score;
 }
@@ -643,11 +643,11 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
 
         // Open file
         if ((bitboards::col[util::col(s)] & all_pawns) == 0ULL)
-            score += parameters::open_file_bonus;
+            score += params_.open_file_bonus;
 
         // 7th rank
         if (sq_bb & (c == white ? bitboards::row[r7] : bitboards::row[r2]))
-            score += parameters::rook_7th_bonus;
+            score += params_.rook_7th_bonus;
 
         // King harassment
         U64 kattks = mvs & ei.kmask[them];
@@ -655,7 +655,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         if (king_attk_count) {
             ei.kattackers[c][rook]++;
             ei.kattk_points[c][rook] |= kattks;
-            score += parameters::rook_king[std::min(4, king_attk_count)];
+            score += params_.rook_king[std::min(4, king_attk_count)];
         }
 
         // Protection
@@ -675,7 +675,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
             U64 blockers = (between_bb ^ sq_bb) & ei.all_pieces;
 
             if (blockers == 0ULL)
-                score += parameters::connected_rook_bonus;
+                score += params_.connected_rook_bonus;
         }
     }
 
@@ -715,7 +715,7 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
         if (king_attk_count) {
             ei.kattackers[c][queen]++;
             ei.kattk_points[c][queen] |= kattks;
-            score += parameters::queen_king[std::min(6, king_attk_count)];
+            score += params_.queen_king[std::min(6, king_attk_count)];
         }
     }
 
@@ -814,7 +814,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 for (Piece p2 = pawn; p2 < p1; ++p2) {
                     U64 twiceAttacked = ei.kattk_points[them][p1] & ei.kattk_points[them][p2];
                     if (twiceAttacked) {
-                        int attack_penalty = parameters::attack_combos[p1][p2];
+                        int attack_penalty = params_.attack_combos[p1][p2];
                         score -= attack_penalty;
 
                         // Any twice-attacked square beside the king that only
@@ -943,13 +943,13 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         auto victim = p.piece_on(to);
         auto sqbb = bitboards::squares[to];
         if (sqbb & ei.piece_attacks[c][knight])
-            score += 2 * params_.attack_scaling[knight] * parameters::knight_attks[victim];
+            score += 2 * params_.attack_scaling[knight] * params_.knight_attks[victim];
         if (sqbb & ei.piece_attacks[c][bishop])
-            score += 2 * params_.attack_scaling[bishop] * parameters::bishop_attks[victim];
+            score += 2 * params_.attack_scaling[bishop] * params_.bishop_attks[victim];
         if (sqbb & ei.piece_attacks[c][rook])
-            score += 2 * params_.attack_scaling[rook] * parameters::rook_attks[victim];
+            score += 2 * params_.attack_scaling[rook] * params_.rook_attks[victim];
         if (sqbb & ei.piece_attacks[c][queen])
-            score += 2 * params_.attack_scaling[queen] * parameters::queen_attks[victim];
+            score += 2 * params_.attack_scaling[queen] * params_.queen_attks[victim];
     }
 
     // 3. Hanging weak pawns
