@@ -668,10 +668,31 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                         int attack_penalty = parameters::attack_combos[p1][p2];
                         score -= attack_penalty;
 
-                        Square attacked_sq = Square(bits::pop_lsb(twiceAttacked));
-                        U64 defenders = p.attackers_of2(attacked_sq, c) ^ sq_bb;
-                        if (!defenders)
-                            score -= 3 * attack_penalty;
+                        // Any twice-attacked square beside the king that only
+                        // the king defends is the dangerous one, so look at all
+                        // of them.
+                        //
+                        // This used to test a single square, pop_lsb of the
+                        // set, which is the lowest square index rather than any
+                        // chess property. Mirroring the board reverses the rank
+                        // order, so the mirrored position picked a different
+                        // square out of the same set and reached a different
+                        // verdict: the extra 3 * attack_penalty landed on one
+                        // color and not the other, worth 12cp with the rook and
+                        // knight combination weight of 4.
+                        //
+                        // twiceAttacked only ever holds squares in our own
+                        // king's mask, and attackers_of2 counts the king, so
+                        // masking the king out is what makes "undefended"
+                        // mean undefended by anything else.
+                        U64 remaining = twiceAttacked;
+                        while (remaining) {
+                            const Square attacked_sq = Square(bits::pop_lsb(remaining));
+                            if ((p.attackers_of2(attacked_sq, c) & ~sq_bb) == 0ULL) {
+                                score -= 3 * attack_penalty;
+                                break;
+                            }
+                        }
                     }
                 }
             }

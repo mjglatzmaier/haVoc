@@ -2,6 +2,7 @@
 #include "havoc/book.hpp"
 #include "havoc/eval/hce.hpp"
 #include "havoc/magics.hpp"
+#include "havoc/movegen.hpp"
 #include "havoc/material_table.hpp"
 #include "havoc/parameters.hpp"
 #include "havoc/pawn_table.hpp"
@@ -14,6 +15,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -223,6 +225,62 @@ TEST_F(EvalTest, EvaluationIsExactlyMirrorSymmetric) {
         EXPECT_EQ(a, b) << "asymmetric evaluation\n  " << fen << " -> " << a << "\n  "
                         << mirrored_fen << " -> " << b << "\n  difference " << (a - b);
     }
+}
+
+// The fixed position list above is a spot check. This walks a few hundred
+// positions reached by random legal play and requires the same exact symmetry
+// of every one of them, which is what makes it likely to catch the next
+// color-indexing mistake rather than the two it already caught.
+TEST_F(EvalTest, EvaluationIsMirrorSymmetricOverRandomPlay) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    std::mt19937 rng(20260812u); // fixed seed: a failure must be reproducible
+    int checked = 0;
+    int asymmetric = 0;
+
+    for (int game = 0; game < 150 && asymmetric < 5; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+        for (int ply = 0; ply < 60; ++ply) {
+            std::vector<havoc::Move> legal;
+            havoc::Movegen mvs(pos);
+            mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+
+            pos.do_move(legal[rng() % legal.size()]);
+
+            // Skip the opening moves, where every position is still nearly
+            // symmetric anyway and a bug would not show.
+            if (ply < 6)
+                continue;
+
+            // Compare the position round-tripped through FEN, not the live one.
+            // has_castled is play history, not board state, and does not
+            // survive FEN, so evaluating the played position against a parsed
+            // mirror would compare a castled king with an uncastled one.
+            const std::string fen = pos.to_fen();
+            auto original = make_pos(fen);
+            auto mirrored = make_pos(mirror_fen(fen));
+            const int a = eval.evaluate(original);
+            const int b = eval.evaluate(mirrored);
+            ++checked;
+            if (a != b) {
+                ++asymmetric;
+                ADD_FAILURE() << "asymmetric evaluation\n  " << fen << " -> " << a << "\n  "
+                              << mirror_fen(fen) << " -> " << b << "\n  difference " << (a - b);
+            }
+        }
+    }
+
+    EXPECT_GT(checked, 5000) << "the walk did not cover enough positions to mean anything";
+    std::cout << "[          ] checked " << checked << " random positions" << std::endl;
 }
 
 // ─── TT basic operations ───────────────────────────────────────────────────
