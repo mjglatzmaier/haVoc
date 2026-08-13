@@ -85,9 +85,7 @@ extern U64 kflanks[8];
 /// Pawn storm detection masks [color][side].
 extern U64 kpawnstorm[2][2];
 /// King zone masks (extended king area for eval).
-extern U64 kzone[64];
 /// Check masks for each piece type from king square.
-extern U64 kchecks[5][64];
 /// Passed pawn detection masks [color][square].
 extern U64 passpawn_mask[2][64];
 /// Pawn majority region masks (queen/center/king-side).
