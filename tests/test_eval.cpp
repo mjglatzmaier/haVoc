@@ -370,6 +370,47 @@ TEST_F(EvalTest, OppositeColorBishops_Scaled) {
 //
 // Assert it by differencing against a run with the scale neutralized: with
 // other pieces on the board the knob must make no difference at all.
+TEST_F(EvalTest, WrongRookPawnAndWrongBishopIsDrawn) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    // Every pawn on a rook file, every bishop on the complex the promotion
+    // square is not on, and the defending king on the promotion square. The
+    // attacker cannot make progress no matter how many pawns are involved.
+    struct Case {
+        const char* fen;
+        const char* why;
+    };
+    const Case drawn[] = {
+        {"k7/8/8/8/8/8/PB6/6K1 w - - 0 1", "a-pawn, dark bishop, black king on a8"},
+        {"7k/8/8/8/8/8/7P/5BK1 w - - 0 1", "h-pawn, bishop on f1 cannot see h8"},
+        {"k7/8/8/8/8/P7/PB6/6K1 w - - 0 1", "two a-pawns, still drawn"},
+        // Same theorem with the colors reversed, which the mirror tests do not
+        // reach because they never generate this material.
+        {"1k6/1b6/p7/8/8/8/8/K7 b - - 0 1", "black a-pawn, bishop on b7 cannot see a1"},
+    };
+    for (const auto& c : drawn) {
+        auto pos = make_pos(c.fen);
+        EXPECT_EQ(eval.evaluate(pos), 0) << "should be a dead draw: " << c.why << " (" << c.fen << ")";
+    }
+
+    // Negative controls. Each breaks exactly one clause of the theorem, and
+    // each must still be scored as a win, so the rule cannot pass by simply
+    // zeroing every rook-pawn ending.
+    const Case winning[] = {
+        {"k7/8/8/8/8/8/P1B5/6K1 w - - 0 1", "bishop on c2 does cover a8"},
+        {"6k1/8/8/8/8/8/PB6/6K1 w - - 0 1", "defending king nowhere near the corner"},
+        {"k7/8/8/8/8/8/PBN5/6K1 w - - 0 1", "a knight covers the corner the bishop cannot"},
+        {"k7/8/8/8/8/8/PPB5/6K1 w - - 0 1", "the b-pawn does not promote in the corner"},
+    };
+    for (const auto& c : winning) {
+        auto pos = make_pos(c.fen);
+        EXPECT_GT(eval.evaluate(pos), 200) << "should still be winning: " << c.why << " (" << c.fen << ")";
+    }
+}
+
 TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
     havoc::parameters params;
     havoc::parameters neutral;
@@ -748,12 +789,16 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "8/8/8/1P6/8/8/6p1/K6k w - - 0 1",
         "4k3/pppppppp/8/8/PPPPPPPP/8/8/4K3 w - - 0 1",
         // Endgame scale factors: opposite bishops, pawnless, lone minor
-        "6k1/5ppp/8/8/3b4/8/2B2PPP/6K1 w - - 0 1",
-        "6k1/8/8/3b4/8/8/2B5/6K1 w - - 0 1",
+        "6k1/5ppp/8/8/3b4/8/2B2PPP/6K1 w - - 0 1",        "6k1/8/8/3b4/8/8/2B5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2B5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2N5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2R5/6K1 w - - 0 1",
         "6k1/5ppp/8/8/8/8/5PPP/2R3K1 w - - 0 1",
+        // A wrong rook pawn: white's a-pawn promotes on a8, white's bishop is
+        // on the dark complex and can never touch it, and the black king is
+        // already sitting on the promotion square. Nothing else in this list
+        // reaches wrong_rook_pawn_scale.
+        "k7/8/8/8/8/8/PB6/6K1 w - - 0 1",
         // King and pawn endings
         "8/3k4/8/8/3P4/3K4/8/8 w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",

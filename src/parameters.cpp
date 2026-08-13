@@ -115,6 +115,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("opposite_bishop_scale", &opposite_bishop_scale);
         result.emplace_back("no_pawn_scale", &no_pawn_scale);
         result.emplace_back("minor_advantage_no_pawn_scale", &minor_advantage_no_pawn_scale);
+        result.emplace_back("wrong_rook_pawn_scale", &wrong_rook_pawn_scale);
 
         // Passed pawn rank bonuses
         for (size_t i = 0; i < passed_pawn_rank_bonus.size(); ++i)

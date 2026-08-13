@@ -20,6 +20,65 @@ inline bool is_pawnless_endgame(const position& p) {
     return (p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>()) == 0ULL;
 }
 
+/// True when `c` holds the classic drawn "wrong rook pawn" ending: every pawn
+/// on a single rook file, at least one bishop, no bishop able to touch the
+/// promotion square, and the defending king already controlling that square.
+///
+/// This is a theorem rather than a heuristic. The pawn can only promote on the
+/// corner square; the defending king sits on or beside it and can never be
+/// driven away, because the attacking bishop covers the opposite color complex
+/// and so can neither take the corner nor cover the escape square. The attacker
+/// may have any number of pawns and any number of bishops -- if they are all on
+/// the rook file and all on the wrong color, none of that matters.
+///
+/// haVoc had no notion of this at all. `k7/8/8/8/8/8/PB6/6K1 w` (a-pawn, dark
+/// bishop, black king on a8) is a dead draw and scored +443, one point off the
+/// +441 it gave the genuinely winning light-bishop version of the same
+/// position. The engine would happily trade into it believing it was a pawn up.
+template <Color c> inline bool is_wrong_rook_pawn_draw(const position& p) {
+    constexpr Color them = (c == white ? black : white);
+
+    // The defender must be down to a bare king. Any other material gives
+    // counterplay, or a piece to sacrifice for the pawn, and the proof breaks.
+    if ((p.get_pieces<them, pawn>() | p.get_pieces<them, knight>() |
+         p.get_pieces<them, bishop>() | p.get_pieces<them, rook>() |
+         p.get_pieces<them, queen>()) != 0ULL)
+        return false;
+
+    // The attacker must hold nothing but king, pawns and bishops. A knight or
+    // a rook covers the corner the bishop cannot, and wins.
+    if ((p.get_pieces<c, knight>() | p.get_pieces<c, rook>() | p.get_pieces<c, queen>()) != 0ULL)
+        return false;
+
+    const U64 pawns = p.get_pieces<c, pawn>();
+    const U64 bishops = p.get_pieces<c, bishop>();
+    if (pawns == 0ULL || bishops == 0ULL)
+        return false;
+
+    // Every pawn on the a-file, or every pawn on the h-file.
+    int promo_col;
+    if ((pawns & ~bitboards::col[Col::A]) == 0ULL)
+        promo_col = Col::A;
+    else if ((pawns & ~bitboards::col[Col::H]) == 0ULL)
+        promo_col = Col::H;
+    else
+        return false;
+
+    const int promo = (c == white ? 56 + promo_col : promo_col);
+
+    // Derive the promotion square's color from the board rather than assuming a
+    // convention, then require every bishop to be on the other complex.
+    const U64 promo_complex = (bitboards::squares[promo] & bitboards::colored_sqs[white]) != 0ULL
+                                  ? bitboards::colored_sqs[white]
+                                  : bitboards::colored_sqs[black];
+    if ((bishops & promo_complex) != 0ULL)
+        return false;
+
+    // The defending king must already be on or beside the promotion square.
+    const int dk = static_cast<int>(p.king_square(them));
+    return std::max(util::row_dist(dk, promo), util::col_dist(dk, promo)) <= 1;
+}
+
 /// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
 /// so a1-h8 is every ninth square from a1 and a8-h1 every seventh from h1.
 constexpr U64 kLongDiagonals = [] {
@@ -252,10 +311,14 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     // No pawns with small material advantage → likely drawn
     if (is_pawnless_endgame(p) && std::abs(score) < 400)
         scale = std::min(scale, params_.no_pawn_scale);
-
     // Single minor piece advantage with no pawns → near draw
     if (is_pawnless_endgame(p) && std::abs(ei.me->score) <= 315 && std::abs(ei.me->score) > 0)
         scale = std::min(scale, params_.minor_advantage_no_pawn_scale);
+
+    // Wrong rook pawn plus wrong-colored bishop: a proven draw, so the whole
+    // score collapses regardless of how many pawns the attacker is up.
+    if (is_wrong_rook_pawn_draw<white>(p) || is_wrong_rook_pawn_draw<black>(p))
+        scale = std::min(scale, params_.wrong_rook_pawn_scale);
 
     if (scale != 128)
         score = (score * scale) / 128;
