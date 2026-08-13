@@ -293,7 +293,9 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     score += (pawn_score * params_.pawn_structure_category_scale) / 100;
     score += (piece_score * params_.sq_score_category_scale) / 100;
     score += (king_score * params_.king_safety_category_scale) / 100;
-    score += (passed_score * params_.passed_pawn_category_scale) / 100;
+    score += (passed_score * ei.me->taper(params_.passed_pawn_category_scale,
+                                          params_.passed_pawn_endgame_scale)) /
+             100;
 
     if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
         return to_stm(p, score, params_.tempo);
@@ -545,9 +547,15 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
                 score += 12;
         }
 
-        // Penalty for bishops on same color as own pawns
-        int same_color_penalty = (ei.me->is_endgame() ? params_.bishop_own_pawn_penalty_eg
-                                                      : params_.bishop_own_pawn_penalty_mg);
+        // Penalty for bishops on same color as own pawns.
+        //
+        // Blended by game phase. Selecting on is_endgame() picked the endgame
+        // value only once the board was down to two non-pawn pieces, which is
+        // 8.5% of positions, so bishop_own_pawn_penalty_eg was very nearly a
+        // dead parameter and a bad bishop was charged the middlegame rate
+        // through three quarters of all real endgames.
+        int same_color_penalty =
+            ei.me->taper(params_.bishop_own_pawn_penalty_mg, params_.bishop_own_pawn_penalty_eg);
         U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
@@ -617,11 +625,15 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
 
         score += mobility_score;
 
-        // Trapped rook
+        // Trapped rook. Blended by phase for the same reason as the bishop
+        // penalty above: index 1 of trapped_rook_penalty was reachable only in
+        // the barest positions. The extra charge for having not yet castled is
+        // a middlegame idea, so it fades with the middlegame weight instead of
+        // switching off.
         if (trapped_rook<c>(p, ei, s)) {
-            score -= params_.trapped_rook_penalty[ei.me->is_endgame()];
-            if (!ei.me->is_endgame() && !p.has_castled<c>())
-                score -= 2;
+            score -= ei.me->taper(params_.trapped_rook_penalty[0], params_.trapped_rook_penalty[1]);
+            if (!p.has_castled<c>())
+                score -= (2 * ei.me->mg_weight()) / material_entry::kPhaseMax;
         }
 
         // Center influence
@@ -719,15 +731,26 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
     constexpr Color them = Color(c ^ 1);
     Square* kings = p.squares_of<c, king>();
     U64 enemyPawns = p.get_pieces<them, pawn>();
-    bool is_endgame = ei.me->is_endgame();
+    // Shelter, storm and the castling bonus are middlegame ideas: they fade
+    // out as the pieces that could exploit a draughty king leave the board.
+    // They used to switch off in one step when the material happened to match
+    // a classified ending, which is 8.5% of positions, so a king was still
+    // charged full middlegame shelter through most real endgames and then had
+    // the whole term vanish at an arbitrary boundary.
+    const int mg = ei.me->mg_weight();
 
     for (Square s = *kings; s != no_square; s = *++kings) {
         U64 sq_bb = bitboards::squares[s];
 
-        // Square eval (middlegame only)
-        if (!is_endgame)
-            score +=
-                params_.sq_score_scaling[king] * square_score<c>(params_, king, s, ei.me->phase_interpolant);
+        // Square eval. square_score already tapers between the middlegame and
+        // endgame king tables by phase, so gating it as well left the king with
+        // no positional guidance at all in exactly the positions where king
+        // activity decides the game. Classified endings that supply their own
+        // king logic -- KPK through the bitbase, KRK, KBNK -- do so by adding
+        // to this score, and the endgame king table already wants the king
+        // centralised, so there is nothing here to double count.
+        score += params_.sq_score_scaling[king] *
+                 square_score<c>(params_, king, s, ei.me->phase_interpolant);
 
         // Mobility
         U64 mvs = ei.kmask[c] & ei.empty;
@@ -826,8 +849,8 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             }
         }
 
-        // Pawn shelter (middlegame)
-        if (!is_endgame) {
+        // Pawn shelter, weighted towards the middlegame.
+        {
             // Computed live rather than read from the pawn hash. The hash is
             // keyed on pawn structure alone, so a mask built from the king
             // square does not belong in it: castling leaves the pawns
@@ -835,28 +858,32 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             // against wherever the king stood when that entry was filled.
             U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
-            score += params_.king_shelter[n] / 2;
+            int shelter = params_.king_shelter[n] / 2;
 
             // Pawnless flank penalty
             U64 kflank = bitboards::kflanks[util::col(s)] & p.get_pieces<c, pawn>();
             if (!kflank)
-                score -= 2;
+                shelter -= 2;
+
+            score += (shelter * mg) / material_entry::kPhaseMax;
         }
 
-        // Castling bonus (middlegame)
-        if (!is_endgame && p.has_castled<c>())
-            score += 16;
+        // Castling bonus
+        if (p.has_castled<c>())
+            score += (16 * mg) / material_entry::kPhaseMax;
 
         // Enemy pawn storm
-        if (!is_endgame) {
+        {
             auto pawnStormMask = bitboards::kpawnstorm[c][!(util::col(s) >= Col::E)];
             auto pawnStorm = pawnStormMask & enemyPawns;
             auto numAttackers = bits::count(pawnStorm);
+            int storm = 0;
             if (numAttackers >= 2) {
-                score -= 2;
+                storm -= 2;
                 if (numAttackers >= 3)
-                    score -= 2;
+                    storm -= 2;
             }
+            score += (storm * mg) / material_entry::kPhaseMax;
         }
     }
     return score;
@@ -866,7 +893,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
 
 template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
     int score = 0;
-    if (ei.me->is_endgame())
+    // Space is worth having because pieces need somewhere to go, so it fades
+    // as the pieces do. Returning zero the moment the material matched a
+    // classified ending made it worth full value right up to that boundary and
+    // nothing after it.
+    const int mg = ei.me->mg_weight();
+    if (mg == 0)
         return score;
 
     U64 spacemask =
@@ -885,7 +917,7 @@ template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
         space |= util::squares_behind(bitboards::col[util::col(s)], c, s);
     }
     score += bits::count(space);
-    return score;
+    return (score * mg) / material_entry::kPhaseMax;
 }
 
 // ─── eval_threats ───────────────────────────────────────────────────────────
