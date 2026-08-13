@@ -40,6 +40,27 @@ struct SearchNode {
     std::unique_ptr<BestMoveHistory> bmh;
     Move killers[4];
     int16_t static_eval = score::kNegInf;
+    /// Continuation history context: the move that was played *into* this
+    /// node, and the one played two plies before it. A node is handed these by
+    /// its parent rather than reading stack - 1 and stack - 2 itself, because
+    /// only the search guarantees those frames exist -- anything else holding a
+    /// SearchNode* (a test, a tool) would be reading off the front of its own
+    /// array. `no_piece` means "no predecessor at that distance": the frames
+    /// above the root, and null moves, both say so honestly.
+    Piece prev_piece = no_piece;
+    U8 prev_to = 0;
+    Piece prev2_piece = no_piece;
+    U8 prev2_to = 0;
+
+    /// Records `moved`, landing on `to`, as the move this node is playing, and
+    /// hands the resulting context down to the child frame. Call it before
+    /// do_move, while the from square still says what is standing on it.
+    void push_context(Piece moved, U8 to) {
+        (this + 1)->prev_piece = moved;
+        (this + 1)->prev_to = to;
+        (this + 1)->prev2_piece = prev_piece;
+        (this + 1)->prev2_to = prev_to;
+    }
 
     int (&best_move_history())[2][64][64] { return bmh->bm; }
 };
@@ -84,7 +105,7 @@ inline void apply_history_bonus(int& h, int bonus) {
 }
 
 struct Movehistory {
-    Movehistory() { clear(); }
+    Movehistory();
     Movehistory& operator=(const Movehistory& mh);
 
     /// `bonus` is the magnitude applied to the cutoff move, and subtracted
@@ -101,16 +122,53 @@ struct Movehistory {
     /// develops and any threshold read against it is unreachable.
     void malus(const Color& c, int bonus, const std::vector<Move>& quiets);
 
+    /// Continuation history counterparts. `stack` is the node whose move loop
+    /// produced the cutoff (or fail-low); it carries the predecessor context.
+    /// `p` must be the position at that node, with every searched move undone,
+    /// so that piece_on(from) still identifies the piece each quiet moved.
+    void update_continuation(const position& p, const SearchNode* stack, const Move& best,
+                             int bonus, const std::vector<Move>& quiets);
+    void malus_continuation(const position& p, const SearchNode* stack, int bonus,
+                            const std::vector<Move>& quiets);
+
     void clear();
 
     int score(const Move& m, const Color& c, const Move& previous, const Move& followup,
               const Move& threat) const;
     int score(const Move& m, const Color& c) const;
 
+    /// Sum of the two continuation tables for a candidate quiet `m`, scaled by
+    /// the weights set through `set_continuation_weights`.
+    int continuation_score(const position& p, const Move& m, const SearchNode* stack) const;
+
+    /// The scoring functions are plain function pointers with a fixed
+    /// signature and no route to the parameter block, so the search hands the
+    /// tunable continuation weights to the table itself.
+    void set_continuation_weights(int pct1, int pct2) {
+        cont_pct1_ = pct1;
+        cont_pct2_ = pct2;
+    }
+
   private:
+    /// One continuation plane per predecessor distance: [0] is keyed on the
+    /// move our opponent just played, [1] on our own move two plies back.
+    /// Heap-allocated -- 2.4 MB will not fit on the stack, and SearchEngine is
+    /// an ordinary local in main().
+    struct ContinuationHistory {
+        int table[2][pieces][squares][colors][pieces][squares] = {};
+    };
+
+    int* continuation_slot(int plane, const SearchNode* stack, Color c, Piece moved,
+                           const Move& m);
+    const int* continuation_slot(int plane, const SearchNode* stack, Color c, Piece moved,
+                                 const Move& m) const;
+
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
     // Countermove table: indexed by [color_of_previous_move][from][to] -> best response
     std::array<std::array<std::array<Move, 64>, 64>, 2> countermoves{};
+    std::unique_ptr<ContinuationHistory> continuation_;
+    int cont_pct1_ = 100;
+    int cont_pct2_ = 100;
 };
 
 // ─── Scored move ────────────────────────────────────────────────────────────

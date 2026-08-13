@@ -58,6 +58,40 @@ sees no gradient for them and they keep their defaults. Listed in
   `pinned_scaling` is a divisor the tuner could drive to zero. The reasoning is
   recorded in `src/parameters.cpp`; revisit only if a fit wants that freedom.
 
+## The history table lives on the wrong scale for its own thresholds
+
+Measured on a depth-15 bench, at every node where history pruning is
+considered, over 146769 samples:
+
+| `history_malus_pct` | table min | table max | below `lmr_hist_bad` (2000) | below `history_prune_margin` (4096) |
+|---|---|---|---|---|
+| **0 (the shipped default)** | **-194** | 9181 | **0.00%** | **0.00%** |
+| 50  | -4760 | 2946 | 5.08%  | 0.08%  |
+| 100 | -9042 | 2437 | 27.85% | 14.88% |
+| 200 | -13608 | 543 | 60.50% | 51.18% |
+
+With the default, the negative half of the table never leaves the
+neighbourhood of zero, so **history pruning and the LMR bad-history extra
+reduction never fire at all** -- not rarely, never. Both are live code
+reading a threshold two orders of magnitude outside the range the table
+reaches. `history_malus_pct` exists precisely to develop that half and
+ships switched off.
+
+Turning it on is not free, and the table is the reason: the malus is
+applied to every quiet at every fail-low node, which vastly outnumbers
+the bonuses handed out at cutoffs, so the whole distribution slides
+negative rather than widening. At 100 the maximum falls to 2437, which
+kills `lmr_hist_good` (4000) exactly as it revives `lmr_hist_bad`. The
+three thresholds cannot all be reachable at once while bonus and malus
+are this far out of balance.
+
+What this needs is a joint fit over `history_bonus_scale`,
+`history_malus_pct`, `lmr_hist_bad`, `lmr_hist_good` and
+`history_prune_margin`, not five separate guesses -- they are one
+mechanism and SPSA should see them together. Until then, note that three
+SPSA dimensions are being spent on thresholds that cannot move the
+search, which is worse than leaving them out.
+
 ## Test curation that depends on evaluation values
 
 `SearchTest.ExactSearchIsMirrorSymmetric` asserts a curated list of positions.
