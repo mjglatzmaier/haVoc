@@ -28,6 +28,25 @@ course.
 | King zone open files (`king_open_file_penalty`, `king_semi_open_file_penalty`) | `integration/ordering-shelter` | Landed on a batched SPRT that measured +3.8 +/- 25.9 over 460 games, which is a statement about the batch and not about these two numbers. Both defaults are guesses. They also overlap the shelter term, which already charges for a missing pawn in front of the king: an open file beside the king implies no shelter pawn on it, so some of this penalty is being paid twice. Check whether the fit drives one of the two toward zero, which is what collinearity looks like. |
 | Threat-escape move ordering | `integration/ordering-shelter` | Not a weight but an ordering rule: moves of the piece the null-move threat lands on are lifted by `kCounterMoveBonus`, a fixed eighth of the history range. That constant was picked for the countermove term and reused here without measurement. It is an SPSA candidate rather than a Texel one. |
 
+## Evaluation defaults introduced with no evidence behind them
+
+- **`open_file_bonus` (1 -> 12) and `semiopen_file_bonus` (new, 6).** A rook's
+  half-open file was not scored at all, and the fully open case was worth one
+  centipawn. Both numbers are now guesses in the right ballpark rather than one
+  guess in the wrong one. They are strongly collinear with the rook mobility
+  table -- an open file is mostly why a rook has moves -- so expect a fit to
+  move all three together, and do not read either in isolation.
+- **`king_storm_rank_penalty` {32, 20, 8, 2, 0, 0}.** A new six-entry table
+  replacing an ungraded count. The shape (steeply decaying with distance) is
+  the confident part; the magnitudes are not. It overlaps `king_storm_penalty`,
+  which still charges for the number of storming pawns, and both overlap the
+  shelter and king-zone open-file terms.
+- **`cont_hist1_pct` and `cont_hist2_pct`, both 100.** The two continuation
+  history planes are added to the plain history score at full weight because
+  that is what other engines do, not because it was measured here. Zero
+  switches a plane off, so SPSA can say whether the second plane earns its
+  dimensions.
+
 ## Known coverage gaps
 
 Buckets that live code reads but the test corpus does not reach, so the tuner

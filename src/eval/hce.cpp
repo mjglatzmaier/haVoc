@@ -82,6 +82,11 @@ template <Color c> inline bool is_wrong_rook_pawn_draw(const position& p) {
 
 /// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
 /// so a1-h8 is every ninth square from a1 and a8-h1 every seventh from h1.
+/// Where an outpost is worth having: the mover's own ranks 4 to 6, which are
+/// absolute ranks 4-6 for White and 5-3 for Black. Nearer than that and a minor
+/// is still in its own camp; further and it is usually just deep enough to lose.
+constexpr U64 kOutpostZone[2] = {0x0000FFFFFF000000ULL, 0x000000FFFFFF0000ULL};
+
 constexpr U64 kLongDiagonals = [] {
     U64 m = 0ULL;
     for (int i = 0; i < 8; ++i) {
@@ -213,8 +218,13 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
     ei.dark_sq_pawns[black] = p.get_pieces<black, pawn>() & bitboards::colored_sqs[black];
     ei.queen_sqs[white] = p.get_pieces<white, queen>();
     ei.queen_sqs[black] = p.get_pieces<black, queen>();
-    ei.pawn_holes[white] = ei.pe->backward[white] << 8;
-    ei.pawn_holes[black] = ei.pe->backward[black] >> 8;
+    // Holes: squares in a side's own half that its pawns can never attack, no
+    // matter how far they advance. This used to be only the single square in
+    // front of a backward pawn, which fired for 0.68% of the minors evaluated
+    // over a depth-15 bench -- a term with almost no gradient for a fit to
+    // find. The standard definition below fires for 6.2% of them.
+    ei.pawn_holes[white] = ~ei.pe->attack_span[black] & kOutpostZone[white];
+    ei.pawn_holes[black] = ~ei.pe->attack_span[white] & kOutpostZone[black];
 
     // Pawn material is a material term and goes in unscaled. The structural
     // terms are tapered (the pawn hash stores both ends, being keyed on
@@ -436,9 +446,15 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
                      ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
         }
 
-        // Outpost
-        if (sq_bb & ei.pawn_holes[them])
+        // Outpost. A knight on a hole is good; one a friendly pawn also
+        // defends cannot be driven off by anything cheaper than a piece
+        // exchange, which is what makes an outpost permanent rather than a
+        // stopover, and that was not distinguished at all.
+        if (sq_bb & ei.pawn_holes[c]) {
             score += params_.knight_outpost_bonus[util::col(s)];
+            if (sq_bb & ei.pe->attacks[c])
+                score += params_.outpost_defended_bonus[knight];
+        }
 
         // Edge penalty
         if (sq_bb & bitboards::edges)
@@ -565,9 +581,12 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         if (sq_bb & kLongDiagonals)
             score += params_.bishop_open_center_bonus;
 
-        // Outpost
-        if (sq_bb & ei.pawn_holes[them])
+        // Outpost, see eval_knights for the definition.
+        if (sq_bb & ei.pawn_holes[c]) {
             score += params_.bishop_outpost_bonus[util::col(s)];
+            if (sq_bb & ei.pe->attacks[c])
+                score += params_.outpost_defended_bonus[bishop];
+        }
 
         // Minor behind pawn
         auto fsq = (c == white ? s + 8 : s - 8);
@@ -625,7 +644,6 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
     constexpr Color them = Color(c ^ 1);
     U64 equeen_sq = ei.queen_sqs[them];
     U64 valuable_enemies = p.get_pieces<them, queen>() | p.get_pieces<them, king>();
-    U64 all_pawns = p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>();
 
     for (Square s = *rooks; s != no_square; s = *++rooks) {
         U64 sq_bb = bitboards::squares[s];
@@ -672,9 +690,22 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         // Queen attacks
         score += bits::count(mvs & equeen_sq) * params_.attk_queen_bonus[rook];
 
-        // Open file
-        if ((bitboards::col[util::col(s)] & all_pawns) == 0ULL)
-            score += params_.open_file_bonus;
+        // Open and half-open files.
+        //
+        // Only the fully open case was scored, and at a bonus of one
+        // centipawn. A rook behind a half-open file -- no pawn of its own in
+        // front of it, an enemy pawn to attack -- is most of what rook activity
+        // means in a middlegame, and it was worth exactly nothing. Both cases
+        // are now graded, and both defaults are guesses; see
+        // docs/revisit-after-tuning.md.
+        {
+            const U64 file = bitboards::col[util::col(s)];
+            if ((file & p.get_pieces<c, pawn>()) == 0ULL) {
+                score += ((file & p.get_pieces<them, pawn>()) == 0ULL)
+                             ? params_.open_file_bonus
+                             : params_.semiopen_file_bonus;
+            }
+        }
 
         // 7th rank
         if (sq_bb & (c == white ? bitboards::row[r7] : bitboards::row[r2]))

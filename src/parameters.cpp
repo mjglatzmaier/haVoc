@@ -268,6 +268,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("connected_rook_bonus", &connected_rook_bonus);
         result.emplace_back("doubled_bishop_bonus", &doubled_bishop_bonus);
         result.emplace_back("open_file_bonus", &open_file_bonus);
+        result.emplace_back("semiopen_file_bonus", &semiopen_file_bonus);
         result.emplace_back("bishop_open_center_bonus", &bishop_open_center_bonus);
         result.emplace_back("rook_7th_bonus", &rook_7th_bonus);
 
@@ -278,6 +279,11 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
             result.emplace_back("knight_outpost_" + std::to_string(i), &knight_outpost_bonus[i]);
         for (size_t i = 0; i < bishop_outpost_bonus.size(); ++i)
             result.emplace_back("bishop_outpost_" + std::to_string(i), &bishop_outpost_bonus[i]);
+        // Only the knight and bishop entries of outpost_defended_bonus are read
+        // by the evaluation; registering the rest would add four weights no
+        // position can reach.
+        result.emplace_back("outpost_defended_knight", &outpost_defended_bonus[knight]);
+        result.emplace_back("outpost_defended_bishop", &outpost_defended_bonus[bishop]);
 
         // Center influence is read once per piece type in eval_knights,
         // eval_bishops, eval_rooks and eval_queens. Pawns and kings never
