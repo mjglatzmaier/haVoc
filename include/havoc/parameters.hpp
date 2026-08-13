@@ -155,7 +155,6 @@ struct parameters {
     int backward_pawn_penalty_eg = 3;
     int isolated_pawn_penalty_mg = 4;
     int isolated_pawn_penalty_eg = 12;
-    static constexpr int passed_pawn_bonus = 2;
     static constexpr int semi_open_pawn_penalty = 1;
 
     // Material values
@@ -168,7 +167,12 @@ struct parameters {
     int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
-    std::array<int, 4> passed_pawn_rank_bonus = {0, 45, 90, 180};
+    /// Passed-pawn bonus by distance to promotion, indexed [4 - row_dist],
+    /// so entry 0 is a passer still four or more ranks away and entry 3 is one
+    /// step from queening. These values were hard-coded inside
+    /// eval_passed_pawns while this array sat registered with the tuner and
+    /// read by nothing.
+    std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
 
     // Search
     int fixed_depth = -1;
