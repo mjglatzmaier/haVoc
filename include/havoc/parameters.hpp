@@ -243,6 +243,29 @@ struct parameters {
     int backward_pawn_penalty_eg = 1;
     int isolated_pawn_penalty_mg = 4;
     int isolated_pawn_penalty_eg = 4;
+    /// A pawn no friendly pawn defends. This was a bare `score -= 1` applied
+    /// identically to both accumulators, so it could neither be tuned nor
+    /// tapered.
+    int undefended_pawn_penalty_mg = 1;
+    int undefended_pawn_penalty_eg = 1;
+    /// The extra charge for a weak pawn standing on a file the enemy has no
+    /// pawn on, where it cannot be defended by a pawn and is exposed to the
+    /// heavy pieces. Each of these was `2 * ` the corresponding base penalty,
+    /// which froze the aggravation at exactly double and left the tuner unable
+    /// to fit it at all: the whole term moved only when the base penalty
+    /// moved. The defaults reproduce the doubling, so nothing changes until a
+    /// fit says otherwise.
+    int backward_pawn_semiopen_mg = 2;
+    int backward_pawn_semiopen_eg = 2;
+    int isolated_pawn_semiopen_mg = 8;
+    int isolated_pawn_semiopen_eg = 8;
+    int doubled_pawn_semiopen_mg = 8;
+    int doubled_pawn_semiopen_eg = 8;
+    /// A doubled pawn that is also isolated -- no neighbour on either side and
+    /// a friend stacked in front of it. Also frozen at double the plain
+    /// doubled penalty.
+    int doubled_isolated_penalty_mg = 8;
+    int doubled_isolated_penalty_eg = 8;
 
     // Connected pawns, indexed by the pawn's rank relative to its own side.
     // Until these were added the pawn evaluation was made entirely of

@@ -1280,6 +1280,18 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // A bare endgame reaching the low ranks: b3/c3 is a phalanx on
         // relative rank 2 and d4 is supported by c3 on relative rank 3.
         "4k3/8/8/8/3P4/1PP5/8/4K3 w - - 0 1",
+        // A pawn that is both doubled and isolated. The two conditions are
+        // scored together -- a stacked pawn with no neighbour on either file
+        // is charged once for the pair rather than the plain doubled rate --
+        // so neither a doubled pawn with neighbours nor a lone isolated pawn
+        // reaches it. White's c2/c3 are stacked with no b or d pawn; Black
+        // keeps a pawn so the evaluation does not divert into the bare-king
+        // mating heuristic, which never reads the pawn structure at all.
+        "4k3/4p3/8/8/8/2P5/2P5/4K3 w - - 0 1",
+        // The same structure with both armies intact. The bare version above
+        // sits at the endgame end of the phase, so it moves the eg half only;
+        // the mg half needs a position with the non-pawn material still on.
+        "rnbqkbnr/pppppppp/8/8/8/2P5/2P5/RNBQKBNR w KQkq - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter

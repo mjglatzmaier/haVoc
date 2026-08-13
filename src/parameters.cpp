@@ -105,6 +105,16 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("backward_pawn_penalty_eg", &backward_pawn_penalty_eg);
         result.emplace_back("isolated_pawn_penalty_mg", &isolated_pawn_penalty_mg);
         result.emplace_back("isolated_pawn_penalty_eg", &isolated_pawn_penalty_eg);
+        result.emplace_back("undefended_pawn_penalty_mg", &undefended_pawn_penalty_mg);
+        result.emplace_back("undefended_pawn_penalty_eg", &undefended_pawn_penalty_eg);
+        result.emplace_back("backward_pawn_semiopen_mg", &backward_pawn_semiopen_mg);
+        result.emplace_back("backward_pawn_semiopen_eg", &backward_pawn_semiopen_eg);
+        result.emplace_back("isolated_pawn_semiopen_mg", &isolated_pawn_semiopen_mg);
+        result.emplace_back("isolated_pawn_semiopen_eg", &isolated_pawn_semiopen_eg);
+        result.emplace_back("doubled_pawn_semiopen_mg", &doubled_pawn_semiopen_mg);
+        result.emplace_back("doubled_pawn_semiopen_eg", &doubled_pawn_semiopen_eg);
+        result.emplace_back("doubled_isolated_penalty_mg", &doubled_isolated_penalty_mg);
+        result.emplace_back("doubled_isolated_penalty_eg", &doubled_isolated_penalty_eg);
         result.emplace_back("space_category_scale", &space_category_scale);
         result.emplace_back("king_danger_divisor", &king_danger_divisor);
         return result;
