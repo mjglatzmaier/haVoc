@@ -175,11 +175,15 @@ struct parameters {
     /// next rank and entry 5 is one still on its starting square. The count
     /// table above says how many pawns are coming; this says how close they
     /// have got.
-    /// Kept in family with the other king safety weights on purpose. The
-    /// largest of those is king_open_file_penalty at 9, and a first attempt at
-    /// this table peaked at 32 -- three times anything beside it -- which is a
-    /// large untested weight change wearing a structural fix as a disguise.
-    std::vector<int> king_storm_rank_penalty{12, 8, 4, 1, 0, 0};
+    /// Kept in family with the term it replaces, which is what matters here:
+    /// the entries are summed over up to three pawns, so what has to stay in
+    /// scale is the total, not the entry. The count table above tops out at 4
+    /// centipawns for a full storm. A first attempt peaked at 32 per pawn --
+    /// 96 for three, a twenty-fourfold change -- and measured -22 Elo; a second
+    /// at 12 per pawn, 36 for three, measured -37 over 228 games. At 6 a full
+    /// storm is worth 18 plus the count term, which is still four times the old
+    /// value but is an adjustment to it rather than a replacement of it.
+    std::vector<int> king_storm_rank_penalty{6, 4, 2, 1, 0, 0};
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
     /// Danger per square from which an enemy piece could give check without
