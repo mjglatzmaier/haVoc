@@ -382,6 +382,10 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("probcut_margin", &probcut_margin);
         result.emplace_back("probcut_depth_reduction", &probcut_depth_reduction);
         result.emplace_back("lmr_min_depth", &lmr_min_depth);
+        result.emplace_back("iir_min_depth", &iir_min_depth);
+        result.emplace_back("iir_cut_margin", &iir_cut_margin);
+        result.emplace_back("lmr_extra_max_depth", &lmr_extra_max_depth);
+        result.emplace_back("quiet_ext_max_depth", &quiet_ext_max_depth);
         result.emplace_back("lmr_hist_bad", &lmr_hist_bad);
         result.emplace_back("lmr_hist_good", &lmr_hist_good);
         result.emplace_back("best_move_bonus", &best_move_bonus);

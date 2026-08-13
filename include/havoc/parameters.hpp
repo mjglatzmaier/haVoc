@@ -368,6 +368,16 @@ struct parameters {
     int best_move_bonus = 2;        // best-move history bonus, times depth
     int history_bonus_scale = 1;    // history bonus is scale * depth^2
     int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)
+    /// Internal iterative reduction: with no hash move, search one ply shallower
+    /// so the next visit has one. Both of these were bare literals in search.cpp
+    /// and so invisible to SPSA, which is the whole reason this block exists.
+    int iir_min_depth = 4;          // IIR only at or above this depth
+    int iir_cut_margin = 200;       // ...and at a cut node only if eval + this >= beta
+    /// The two shallow-quiet rules near the bottom of the move loop: one extra
+    /// reduction for an uninteresting quiet, one extra ply for a quiet that
+    /// answers a threat or pushes a pawn. Both were spelled `depth <= 2`.
+    int lmr_extra_max_depth = 2;    // extra reduction for dull quiets at or below this
+    int quiet_ext_max_depth = 2;    // extension for dangerous quiets at or below this
 
     /// Continuation history weights, as a percentage of the raw table value.
     /// Plane 1 is keyed on the opponent's reply we are answering, plane 2 on
