@@ -632,8 +632,6 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         // switching off.
         if (trapped_rook<c>(p, ei, s)) {
             score -= ei.me->taper(params_.trapped_rook_penalty[0], params_.trapped_rook_penalty[1]);
-            if (!p.has_castled<c>())
-                score -= (2 * ei.me->mg_weight()) / material_entry::kPhaseMax;
         }
 
         // Center influence
@@ -868,9 +866,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             score += (shelter * mg) / material_entry::kPhaseMax;
         }
 
-        // Castling bonus
-        if (p.has_castled<c>())
-            score += (16 * mg) / material_entry::kPhaseMax;
+
 
         // Enemy pawn storm
         {
