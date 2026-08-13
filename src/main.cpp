@@ -1,4 +1,5 @@
 #include "havoc/bitboard.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/search.hpp"
 #include "havoc/uci.hpp"
@@ -14,6 +15,7 @@ int main() {
     havoc::bitboards::init();
     havoc::magics::init();
     havoc::zobrist::init();
+    havoc::kpk::init();
 
     havoc::SearchEngine engine;
     havoc::uci::loop(engine);

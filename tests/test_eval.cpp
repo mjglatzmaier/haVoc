@@ -1,4 +1,5 @@
 #include "havoc/bitboard.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/book.hpp"
 #include "havoc/eval/hce.hpp"
 #include "havoc/magics.hpp"
@@ -85,6 +86,7 @@ class EvalTest : public ::testing::Test {
         havoc::bitboards::init();
         havoc::magics::init();
         havoc::zobrist::init();
+        havoc::kpk::init();
     }
 };
 
@@ -370,6 +372,161 @@ TEST_F(EvalTest, OppositeColorBishops_Scaled) {
 //
 // Assert it by differencing against a run with the scale neutralized: with
 // other pieces on the board the knob must make no difference at all.
+TEST_F(EvalTest, KpkBitbaseAgreesWithMovegenOnEveryLegalPosition) {
+    // The bitbase is built by value iteration over its own successor function,
+    // so checking it against itself proves nothing. This walks a large sample
+    // of legal KPK positions with the real move generator instead and asks
+    // whether each verdict follows from the verdicts of its actual children,
+    // including the two moves that leave the table: capturing the pawn (bare
+    // kings, drawn) and promoting (KQ vs K, won unless the queen falls at once
+    // or the defender is stalemated).
+    auto legal_moves = [](havoc::position& p) {
+        havoc::Movegen mv(p);
+        mv.generate<havoc::pseudo_legal, havoc::pieces>();
+        std::vector<havoc::Move> out;
+        for (int i = 0; i < mv.size(); ++i)
+            if (p.is_legal(mv[i]))
+                out.push_back(mv[i]);
+        return out;
+    };
+    auto promoted_material = [](const havoc::position& p) {
+        return p.get_pieces<havoc::white, havoc::queen>() |
+               p.get_pieces<havoc::white, havoc::rook>() |
+               p.get_pieces<havoc::white, havoc::bishop>() |
+               p.get_pieces<havoc::white, havoc::knight>();
+    };
+
+    long checked = 0, mismatches = 0;
+    for (int pf = 0; pf < 4; ++pf)
+        for (int pr = 1; pr <= 6; ++pr) {
+            const int psq = pr * 8 + pf;
+            for (int wk = 0; wk < 64; ++wk)
+                for (int bk = 0; bk < 64; ++bk) {
+                    if (wk == psq || bk == psq || wk == bk)
+                        continue;
+                    if (std::max(std::abs((wk >> 3) - (bk >> 3)), std::abs((wk & 7) - (bk & 7))) <= 1)
+                        continue;
+                    // Keep the runtime sane: every ninth position, which still
+                    // covers every pawn square and both sides to move.
+                    if ((wk * 64 + bk) % 9 != 0)
+                        continue;
+                    for (int s = 0; s < 2; ++s) {
+                        const bool wtm = (s == 0);
+                        havoc::U64 patt = 0ULL;
+                        if ((psq & 7) > 0)
+                            patt |= 1ULL << (psq + 7);
+                        if ((psq & 7) < 7)
+                            patt |= 1ULL << (psq + 9);
+                        if (wtm && (patt & (1ULL << bk)))
+                            continue;  // black already in check on white's turn
+
+                        char b[64] = {0};
+                        b[wk] = 'K';
+                        b[psq] = 'P';
+                        b[bk] = 'k';
+                        std::string fen;
+                        for (int r = 7; r >= 0; --r) {
+                            int run = 0;
+                            for (int c = 0; c < 8; ++c) {
+                                const char pc = b[r * 8 + c];
+                                if (!pc)
+                                    ++run;
+                                else {
+                                    if (run) {
+                                        fen += static_cast<char>('0' + run);
+                                        run = 0;
+                                    }
+                                    fen += pc;
+                                }
+                            }
+                            if (run)
+                                fen += static_cast<char>('0' + run);
+                            if (r)
+                                fen += '/';
+                        }
+                        fen += wtm ? " w - - 0 1" : " b - - 0 1";
+
+                        auto pos = make_pos(fen);
+                        const bool want =
+                            havoc::kpk::probe(wk, psq, bk, wtm ? havoc::white : havoc::black);
+
+                        const auto moves = legal_moves(pos);
+                        bool got = false;
+                        if (!moves.empty()) {
+                            got = !wtm;  // white needs one winning move, black needs them all
+                            for (const auto& m : moves) {
+                                havoc::position child = pos;
+                                child.do_move(m);
+                                const havoc::U64 cp = child.get_pieces<havoc::white, havoc::pawn>();
+                                const havoc::U64 cq = promoted_material(child);
+                                bool child_won;
+                                if (cp == 0ULL && cq == 0ULL) {
+                                    child_won = false;  // bare kings
+                                } else if (cq != 0ULL) {
+                                    const auto replies = legal_moves(child);
+                                    child_won = !replies.empty();
+                                    for (const auto& r2 : replies) {
+                                        havoc::position g = child;
+                                        g.do_move(r2);
+                                        if (promoted_material(g) == 0ULL) {
+                                            child_won = false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    child_won = havoc::kpk::probe(
+                                        child.king_square(havoc::white), havoc::bits::lsb(cp),
+                                        child.king_square(havoc::black),
+                                        child.to_move() == havoc::white ? havoc::white
+                                                                        : havoc::black);
+                                }
+                                if (wtm ? child_won : !child_won) {
+                                    got = wtm;
+                                    break;
+                                }
+                            }
+                        }
+                        ++checked;
+                        if (want != got && mismatches++ < 5)
+                            ADD_FAILURE() << "bitbase says " << want << " but successors say " << got
+                                          << " for " << fen;
+                    }
+                }
+        }
+    EXPECT_EQ(mismatches, 0);
+    EXPECT_GT(checked, 15000) << "sampling stride skipped too much of the table";
+}
+
+TEST_F(EvalTest, DrawnKingAndPawnEndingsScoreZero) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    // Textbook draws that haVoc used to score as a clean extra pawn.
+    const char* drawn[] = {
+        "7k/8/7K/7P/8/8/8/8 w - - 0 1",     // rook pawn, defender holds the corner
+        "8/8/8/3k4/8/3K4/3P4/8 w - - 0 1",  // defender has the opposition
+        "8/8/8/8/8/1k6/1p6/1K6 w - - 0 1",  // black pawn, white king stalemated
+        "8/8/8/8/8/k7/p7/K7 w - - 0 1",     // black rook pawn, white king blockading
+    };
+    for (const char* fen : drawn) {
+        auto pos = make_pos(fen);
+        EXPECT_EQ(eval.evaluate(pos), 0) << "drawn KPK should score zero: " << fen;
+    }
+
+    // Won versions, so the rule cannot pass by flattening every KPK ending.
+    const char* won[] = {
+        "8/8/8/2k5/8/3K4/3P4/8 w - - 0 1",  // attacker has the opposition
+        "8/6k1/8/8/8/8/6PK/8 w - - 0 1",    // king escorting the pawn
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",  // king leads the pawn up the board
+    };
+    for (const char* fen : won) {
+        auto pos = make_pos(fen);
+        EXPECT_GT(eval.evaluate(pos), 50) << "won KPK should still score as a win: " << fen;
+    }
+}
+
 TEST_F(EvalTest, WrongRookPawnAndWrongBishopIsDrawn) {
     havoc::parameters params;
     havoc::pawn_table pt(params);

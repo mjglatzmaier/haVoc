@@ -1,4 +1,5 @@
 /// @file datagen.cpp
+#include "havoc/kpk.hpp"
 /// @brief Training data generator: parallel self-play games → quiet position EPD file.
 
 #include "havoc/bitboard.hpp"
@@ -199,6 +200,7 @@ int main(int argc, char* argv[]) {
     bitboards::init();
     magics::init();
     zobrist::init();
+    kpk::init();
 
     auto t0 = std::chrono::steady_clock::now();
 

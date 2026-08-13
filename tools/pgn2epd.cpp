@@ -1,4 +1,5 @@
 /// @file pgn2epd.cpp
+#include "havoc/kpk.hpp"
 /// @brief Convert PGN files to EPD training data for Texel tuning.
 /// Plays through each game, extracts quiet position FENs with game results.
 
@@ -310,6 +311,7 @@ int main(int argc, char* argv[]) {
     bitboards::init();
     magics::init();
     zobrist::init();
+    kpk::init();
 
     std::ofstream out(output, append ? std::ios::app : std::ios::trunc);
     if (!out.is_open()) {

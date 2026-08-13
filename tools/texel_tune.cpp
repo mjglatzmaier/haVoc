@@ -1,4 +1,5 @@
 /// @file texel_tune.cpp
+#include "havoc/kpk.hpp"
 /// @brief Texel tuner with pre-parsed positions, multi-threaded eval, checkpointing.
 
 #include "havoc/bitboard.hpp"
@@ -295,7 +296,7 @@ int main(int argc, char* argv[]) {
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine
                 : stg==4 ? TuneStage::pst : TuneStage::shape);
-    bitboards::init(); magics::init(); zobrist::init();
+    bitboards::init(); magics::init(); zobrist::init(); kpk::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
     tuner.lr_override = lr_ov; tuner.pert_override = pert_ov;
     if (!pfile.empty() && tuner.params.load(pfile))

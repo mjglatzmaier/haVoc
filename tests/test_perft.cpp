@@ -1,4 +1,5 @@
 #include "havoc/bitboard.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/movegen.hpp"
 #include "havoc/position.hpp"
@@ -35,6 +36,7 @@ class PerftTest : public ::testing::Test {
         bitboards::init();
         magics::init();
         zobrist::init();
+        kpk::init();
     }
 };
 
