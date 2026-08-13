@@ -1111,6 +1111,89 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
 //
 // Stated as an invariant that holds for any cache: evaluating a position must
 // not depend on what was evaluated before it.
+// The generalisation of the test below. That one names three position pairs by
+// hand, which only catches a cache-key hole if someone already guessed where it
+// is. This walks random games and checks every position twice: once with the
+// pawn and material tables emptied first, and once with them full of whatever
+// the rest of the walk left behind.
+//
+// A pure evaluation cannot tell the difference. If it can, some input to a
+// cached term is not part of that cache's key, and the entry a position finds
+// depends on which positions came before it. That is exactly the defect found
+// in the material key, in the pawn hash king mask, and in has_castled, three
+// separate times, each time only after it had already cost playing strength.
+// This test does not need to know which term is wrong to fail.
+TEST_F(EvalTest, EvaluationIsIndependentOfCacheContentsOverRandomPlay) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    std::mt19937 rng(20260813u); // fixed seed: a failure must be reproducible
+
+    std::vector<std::string> fens;
+    for (int game = 0; game < 30; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        for (int ply = 0; ply < 70; ++ply) {
+            std::vector<havoc::Move> legal;
+            havoc::Movegen mvs(pos);
+            mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+            pos.do_move(legal[rng() % legal.size()]);
+            if (ply >= 6)
+                fens.push_back(pos.to_fen());
+        }
+    }
+    ASSERT_GT(fens.size(), 1000u) << "the walk did not cover enough positions to mean anything";
+
+    // Cold: every position sees empty tables, so nothing can leak into it.
+    std::vector<float> cold;
+    cold.reserve(fens.size());
+    for (const auto& fen : fens) {
+        pt.clear();
+        mt.clear();
+        auto pos = make_pos(fen);
+        cold.push_back(eval.evaluate(pos, -1.0f));
+    }
+
+    // Warm, forwards: the tables now carry every earlier position in the walk.
+    pt.clear();
+    mt.clear();
+    int mismatches = 0;
+    for (size_t i = 0; i < fens.size() && mismatches < 5; ++i) {
+        auto pos = make_pos(fens[i]);
+        const float warm = eval.evaluate(pos, -1.0f);
+        if (warm != cold[i]) {
+            ++mismatches;
+            ADD_FAILURE() << "evaluation depends on cache contents (forward walk)\n  " << fens[i]
+                          << "\n  cold " << cold[i] << "  warm " << warm;
+        }
+    }
+
+    // Warm, backwards: a different set of entries is resident when each
+    // position is reached, so a hole that the forward order happened to miss
+    // still has a second chance to show.
+    pt.clear();
+    mt.clear();
+    for (size_t n = fens.size(); n > 0 && mismatches < 5; --n) {
+        const size_t i = n - 1;
+        auto pos = make_pos(fens[i]);
+        const float warm = eval.evaluate(pos, -1.0f);
+        if (warm != cold[i]) {
+            ++mismatches;
+            ADD_FAILURE() << "evaluation depends on cache contents (reverse walk)\n  " << fens[i]
+                          << "\n  cold " << cold[i] << "  warm " << warm;
+        }
+    }
+
+    std::cout << "[          ] checked " << fens.size() << " positions cold and warm"
+              << std::endl;
+}
+
 TEST_F(EvalTest, EvaluationDoesNotDependOnWhatWasEvaluatedBefore) {
     havoc::parameters params;
     havoc::pawn_table pt(params);
