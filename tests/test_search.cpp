@@ -721,5 +721,47 @@ TEST_F(SearchTest, SearchIsDeterministic) {
     EXPECT_EQ(nondet, 0);
 }
 
+// Static exchange evaluation orders captures and prunes losing ones, so it is
+// making claims about material that the evaluation also makes. The two tables
+// used to be written out independently -- position.cpp held its own copy of
+// {100, 300, 315, 480, 910} next to parameters::material_value -- and nothing
+// connected them, so the first tuning run to move a piece value would have left
+// SEE ordering and pruning by the old numbers while the evaluation used the new
+// ones.
+TEST_F(SearchTest, SeeUsesTheTunedMaterialValues) {
+    parameters p;
+    p.material_value = {111, 333, 344, 555, 999, 20000};
+    p.sync_see_values();
+
+    const auto v = position::see_values();
+    for (int pc = 0; pc < 5; ++pc)
+        EXPECT_EQ(v[static_cast<std::size_t>(pc)], p.material_value[static_cast<std::size_t>(pc)])
+            << "SEE did not pick up tuned material value " << pc;
+
+    // A knight is now worth 333 and a rook 555. Rxd3 with the knight undefended
+    // wins exactly a knight; with the black king defending d3 it is Rxd3 Kxd3,
+    // a knight for a rook. Both numbers have to come from the tuned table.
+    auto see_of_capture_on_d3 = [](position& pos) {
+        Movegen mvs(pos);
+        mvs.generate<capture, pieces>();
+        for (int i = 0; i < mvs.size(); ++i)
+            if (mvs[i].t == static_cast<U8>(D3) && pos.is_legal(mvs[i]))
+                return pos.see(mvs[i]);
+        ADD_FAILURE() << "expected a capture on d3 in " << pos.to_fen();
+        return 0;
+    };
+
+    auto undefended = make_pos("4k3/8/8/8/8/3n4/8/3RK3 w - - 0 1");
+    EXPECT_EQ(see_of_capture_on_d3(undefended), 333) << "winning a knight is worth a knight";
+
+    auto defended = make_pos("8/8/8/8/2k5/3n4/8/3RK3 w - - 0 1");
+    EXPECT_EQ(see_of_capture_on_d3(defended), 333 - 555)
+        << "a knight for a rook, using both tuned values";
+
+    parameters restore;
+    restore.sync_see_values();
+    EXPECT_EQ(position::see_values()[1], restore.material_value[1]);
+}
+
 } // namespace
 } // namespace havoc

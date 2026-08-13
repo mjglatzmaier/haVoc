@@ -78,6 +78,11 @@ public:
     int pert_override = 0;
 
     bool load_data(const std::string& filename) {
+        // is_quiet_position() filters the training set with static exchange
+        // evaluation, so SEE has to be holding the same piece values the
+        // evaluation is. parameters::load() syncs them, but the tuner is also
+        // allowed to run from defaults with no parameter file at all.
+        params.sync_see_values();
         auto t0 = std::chrono::steady_clock::now();
         std::ifstream in(filename);
         if (!in.is_open()) return false;

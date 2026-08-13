@@ -240,6 +240,11 @@ struct parameters {
 
     // Parameter serialization
     bool load(const std::string& filename);
+
+    /// Push material_value into static exchange evaluation. load() calls this;
+    /// anything that writes the parameters directly -- the Texel tuner does --
+    /// has to call it too, or SEE keeps ordering captures by the old values.
+    void sync_see_values() const;
     bool save(const std::string& filename) const;
 
     /// Returns all tunable params as name/pointer pairs for the tuner.
