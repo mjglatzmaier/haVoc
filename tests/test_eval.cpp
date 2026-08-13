@@ -720,6 +720,11 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // Cramped, to reach the bottom of the mobility tables
         "rnbqkbnr/pppppppp/8/8/8/PPPPPPPP/RNBQKBNR/8 w kq - 0 1",
         "1nb1kb2/1ppppp2/8/8/8/8/PPPPPP2/1NB1KB2 w - - 0 1",
+        // A knight safe check: black Kg8 is checked from f6, the white
+        // knight on e4 attacks f6, and nothing black owns defends it -- the
+        // h7 pawn covers g6, not f6. Without this the knight safe-check
+        // weight is never exercised by any position in this list.
+        "r5k1/7p/8/8/4N3/8/5PPP/4K2R w K - 0 1",
         // Material imbalances, so the material values do not cancel
         "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r1bqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
