@@ -135,8 +135,31 @@ inline void Movegen::initialize(const position& p) {
     all_pieces = p.all_pieces();
     empty = ~all_pieces;
 
-    can_castle_ks_ = p.can_castle_ks();
-    can_castle_qs_ = p.can_castle_qs();
+    // Castling rights alone are not enough to generate a castle move: the
+    // squares between king and rook must be empty and the rook must actually
+    // be there. Both were previously left to is_legal(), so every node with
+    // rights still on generated one or two castle moves that were scored,
+    // sorted and then thrown away -- in the opening that is almost all of
+    // them. Testing here is two bitboard ANDs and prunes them at the source.
+    // is_legal() still owns the check and transit-square-attacked rules, so
+    // the surviving move list is unchanged.
+    constexpr U64 wks_between = (1ULL << F1) | (1ULL << G1);
+    constexpr U64 wqs_between = (1ULL << B1) | (1ULL << C1) | (1ULL << D1);
+    constexpr U64 bks_between = (1ULL << F8) | (1ULL << G8);
+    constexpr U64 bqs_between = (1ULL << B8) | (1ULL << C8) | (1ULL << D8);
+    if (us == white) {
+        const U64 wr = p.get_pieces<white, rook>();
+        can_castle_ks_ = p.can_castle_ks() && (all_pieces & wks_between) == 0ULL &&
+                         (wr & (1ULL << H1)) != 0ULL;
+        can_castle_qs_ = p.can_castle_qs() && (all_pieces & wqs_between) == 0ULL &&
+                         (wr & (1ULL << A1)) != 0ULL;
+    } else {
+        const U64 br = p.get_pieces<black, rook>();
+        can_castle_ks_ = p.can_castle_ks() && (all_pieces & bks_between) == 0ULL &&
+                         (br & (1ULL << H8)) != 0ULL;
+        can_castle_qs_ = p.can_castle_qs() && (all_pieces & bqs_between) == 0ULL &&
+                         (br & (1ULL << A8)) != 0ULL;
+    }
 
     check_target = p.checkers();
     evasion_target = 0ULL;
