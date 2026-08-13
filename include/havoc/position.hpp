@@ -31,7 +31,6 @@ struct info {
     Color stm = white;
     Square eps = no_square;
     Square ks[2] = {no_square, no_square};
-    bool has_castled[2] = {};
     Piece captured = no_piece;
     bool incheck = false;
 };
@@ -158,7 +157,6 @@ class position {
     template <Color c> [[nodiscard]] inline bool can_castle() const {
         return can_castle_ks<c>() || can_castle_qs<c>();
     }
-    template <Color c> [[nodiscard]] inline bool has_castled() const { return ifo.has_castled[c]; }
     template <Color c> [[nodiscard]] inline U64 pinned() const { return ifo.pinned[c]; }
 
     [[nodiscard]] inline bool pawns_near_promotion() const {

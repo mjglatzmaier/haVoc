@@ -269,11 +269,9 @@ void position::do_move(const Move& m) {
     } else if (t == castle_ks) {
         pcs.do_castle_ks(us, from, to, ifo);
         ifo.cmask &= (us == white ? clearw : clearb);
-        ifo.has_castled[us] = true;
     } else if (t == castle_qs) {
         pcs.do_castle_qs(us, from, to, ifo);
         ifo.cmask &= (us == white ? clearw : clearb);
-        ifo.has_castled[us] = true;
     }
 
     if (ifo.cmask != old_cmask) {
