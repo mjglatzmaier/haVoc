@@ -234,6 +234,9 @@ struct parameters {
     int qs_delta_pawn7th = 775;     // ...widened by this with a pawn near promotion
     int singular_min_depth = 8;     // singular extension minimum depth
     int singular_margin = 2;        // singular beta = ttvalue - margin*depth
+    int probcut_min_depth = 5;      // ProbCut needs at least this much depth
+    int probcut_margin = 180;       // probcut beta = beta + this
+    int probcut_depth_reduction = 4; // verification search depth = depth - this
     int lmr_min_depth = 3;          // late move reductions minimum depth
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
     int lmr_hist_good = 4000;       // reduce one less ply above this

@@ -686,6 +686,80 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         }
     }
 
+    // ProbCut. If a capture, searched shallowly, already beats beta by a wide
+    // margin, it is very likely that a full-depth search would also fail high,
+    // so the whole node can be cut. The margin is what makes this safe: a
+    // shallow search that only just reaches beta proves nothing, but one that
+    // clears beta + margin has room for the shallow search to be wrong by a
+    // piece and still be right about the cutoff.
+    //
+    // Only captures are tried. Quiet moves rarely swing a score by a margin
+    // this large in a few plies, so searching them here would cost nodes
+    // without producing cutoffs.
+    const int probcut_beta = beta + params_.probcut_margin;
+    if (!pvNode && !in_check && !singular_search && hasStaticValue &&
+        depth >= params_.probcut_min_depth && std::abs(beta) < score::kMateMaxPly &&
+        probcut_beta < score::kMateMaxPly &&
+        // If the table already knows, from a search deep enough to be worth
+        // more than the verification search below, that this node does not
+        // reach probcut_beta, the verification cannot be trusted over it.
+        !(ttvalue != score::kNegInf && tt_depth >= depth - params_.probcut_depth_reduction &&
+          ttvalue < probcut_beta)) {
+
+        // A capture can only reach probcut_beta if the material it wins covers
+        // the gap between the static eval and that bound.
+        const int see_threshold = probcut_beta - static_eval_val;
+        const int probcut_depth = static_cast<int>(depth) - params_.probcut_depth_reduction;
+
+        Moveorder pc_mvs(pos, ttm, stack, &history_);
+        Move pc_move;
+        Move pc_prev = (stack - 1)->curr_move;
+        Move pc_prevprev = (stack - 2)->curr_move;
+
+        while (pc_mvs.next_move(pos, pc_move, pc_prev, pc_prevprev, stack->threat_move,
+                                /*skipQuiets=*/true, /*rootMvs=*/false)) {
+            if (signals_.stop.load())
+                return score::kDraw;
+            if (pc_move.type == static_cast<U8>(no_type) || pc_move == excluded_move)
+                continue;
+            // skipQuiets still lets the hash move and the killers through, and
+            // those are usually quiet, so the capture test cannot be skipped.
+            const bool pc_is_capture = (pc_move.type == static_cast<U8>(capture)) ||
+                                       (pc_move.type == static_cast<U8>(ep)) ||
+                                       pos.is_cap_promotion(static_cast<Movetype>(pc_move.type));
+            if (!pc_is_capture || !pos.is_legal(pc_move))
+                continue;
+            if (pos.see(pc_move) < see_threshold)
+                continue;
+
+            pos.do_move(pc_move);
+            stack->curr_move = pc_move;
+
+            // Qsearch first: it is nearly free and rejects most candidates, so
+            // the expensive verification only runs on moves that survive it.
+            int pc_score =
+                -qsearch<non_pv>(pos, -probcut_beta, -probcut_beta + 1, 0, stack + 1, thread_id);
+            if (pc_score >= probcut_beta && probcut_depth > 0) {
+                pc_score = -search<non_pv>(pos, -probcut_beta, -probcut_beta + 1,
+                                           static_cast<U16>(probcut_depth), stack + 1, thread_id);
+            }
+            pos.undo_move(pc_move);
+
+            if (signals_.stop.load())
+                return score::kDraw;
+
+            if (pc_score >= probcut_beta) {
+                // The verification searched probcut_depth plies below this
+                // node, plus the one this move consumed, so the entry is worth
+                // that much depth -- not `depth`, which was never searched.
+                tt_.save(pos.key(), static_cast<U8>(std::max(0, probcut_depth) + 1),
+                         static_cast<U8>(bound_low), pc_move, score_to_tt(pc_score, stack->ply),
+                         pvNode);
+                return pc_score;
+            }
+        }
+    }
+
     // Main search
     U16 moves_searched = 0;
     Moveorder mvs(pos, ttm, stack, &history_);

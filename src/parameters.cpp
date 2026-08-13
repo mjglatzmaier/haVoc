@@ -309,6 +309,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
     result.emplace_back("qs_delta_pawn7th", &qs_delta_pawn7th);
         result.emplace_back("singular_min_depth", &singular_min_depth);
         result.emplace_back("singular_margin", &singular_margin);
+        result.emplace_back("probcut_min_depth", &probcut_min_depth);
+        result.emplace_back("probcut_margin", &probcut_margin);
+        result.emplace_back("probcut_depth_reduction", &probcut_depth_reduction);
         result.emplace_back("lmr_min_depth", &lmr_min_depth);
         result.emplace_back("lmr_hist_bad", &lmr_hist_bad);
         result.emplace_back("lmr_hist_good", &lmr_hist_good);
