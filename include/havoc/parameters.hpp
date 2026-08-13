@@ -314,12 +314,18 @@ struct parameters {
     int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
-    /// Passed-pawn bonus by distance to promotion, indexed [4 - row_dist],
-    /// so entry 0 is a passer still four or more ranks away and entry 3 is one
-    /// step from queening. These values were hard-coded inside
-    /// eval_passed_pawns while this array sat registered with the tuner and
-    /// read by nothing.
-    std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
+    /// Passed-pawn bonus by distance to promotion, indexed [6 - row_dist], so
+    /// entry 0 is a passer on its starting rank and entry 5 is one step from
+    /// queening.
+    ///
+    /// This used to be four entries covering only the last three ranks, with
+    /// everything further out collapsed into entry 0 at 2 centipawns -- and
+    /// eval_passed_pawns took an early exit at that point, so a passer on
+    /// rank 4 was not merely worth two centipawns, it was also not credited
+    /// with a rook behind it, a connected neighbour, or control of the square
+    /// in front. The bottom three entries continue the existing ladder's
+    /// roughly doubling shape downward rather than inventing a new scale.
+    std::array<int, 6> passed_pawn_rank_bonus = {5, 11, 22, 45, 90, 180};
 
     /// The rest of eval_passed_pawns, which carried these as bare literals.
     /// A passed pawn is the single most decisive structural feature on the

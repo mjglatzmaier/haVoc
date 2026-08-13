@@ -1194,10 +1194,10 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         Square f = Square(bits::pop_lsb(passers));
         int row_dist = (c == white ? 7 - util::row(f) : util::row(f));
 
-        if (row_dist > 3 || row_dist <= 0) {
-            score += params_.passed_pawn_rank_bonus[0];
+        // A pawn cannot be passed on the rank it promotes on, so row_dist is
+        // always 1..6 and every entry of the ladder below is reachable.
+        if (row_dist <= 0)
             continue;
-        }
 
         Square front = (c == white ? Square(f + 8) : Square(f - 8));
 
@@ -1250,10 +1250,13 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
             score += params_.passed_pawn_connected;
 
         // 5. Closer to promotion
-        score += params_.passed_pawn_rank_bonus[4 - row_dist];
+        score += params_.passed_pawn_rank_bonus[6 - row_dist];
 
+        // The blocked penalty only ever had entries for the last three ranks.
+        // A passer further out that loses the square in front is charged the
+        // furthest-out rate rather than reading off the end of the table.
         if (crudeControl < 0)
-            score -= params_.passed_pawn_blocked_penalty[3 - row_dist];
+            score -= params_.passed_pawn_blocked_penalty[std::max(0, 3 - row_dist)];
     }
     return score;
 }
