@@ -16,7 +16,9 @@ class IEvaluator {
 
     /// Evaluate the position from the side-to-move perspective.
     /// @param pos The position to evaluate.
-    /// @param lazy_margin If > 0, return early if material score exceeds margin.
+    /// @param lazy_margin Vestigial and ignored. The evaluation is always
+    ///        exact; see the note in HCEEvaluator::evaluate for why the lazy
+    ///        cutoff that used to read this was removed.
     /// @return Score in centipawns (positive = good for side to move).
     [[nodiscard]] virtual int evaluate(const position& pos, int lazy_margin = -1) = 0;
 

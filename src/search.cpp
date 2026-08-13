@@ -135,18 +135,6 @@ int SearchEngine::static_eval(position& p, int thread_id) {
     return static_cast<int>(std::lround(sthread->evaluator->evaluate(p, -1.0f)));
 }
 
-float SearchEngine::lazy_eval_margin_search(int depth, bool advanced_pawn) {
-    return advanced_pawn ? -1.0f
-                         : static_cast<float>(params_.lazy_margin) *
-                               (1.0f - std::exp((depth - 64.0f) / 20.0f));
-}
-
-float SearchEngine::lazy_eval_margin(int depth, bool advanced_pawn) {
-    return advanced_pawn ? -1.0f
-                         : static_cast<float>(params_.lazy_margin) *
-                               (1.0f - std::exp((depth - 64.0f) / 20.0f));
-}
-
 // ─── Start search ───────────────────────────────────────────────────────────
 
 void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
@@ -618,8 +606,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         static_eval_val = score::kNegInf;
     } else {
         auto* sthread = search_threads_[thread_id];
-        float lm = lazy_eval_margin_search(depth, anyPawnsOn7th);
-        static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos, lm)));
+        static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos)));
     }
 
     // A TT score is a better estimate of the position than a static evaluation
@@ -1067,8 +1054,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
     if (!in_check) {
         auto* sthread = search_threads_[thread_id];
-        float lm = lazy_eval_margin(qsdepth, anyPawnsOn7th);
-        best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p, lm)));
+        best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p)));
 
         // As in search(): a TT score has a search behind it and is the better
         // estimate, but only in the direction its bound supports. This was an

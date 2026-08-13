@@ -161,7 +161,7 @@ static inline int to_stm(const position& p, int score, int tempo) {
     return (p.to_move() == white ? score : -score) + tempo;
 }
 
-int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
+int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
     // A dead position is worth exactly nothing to either side. Without this the
     // material term happily reports a bishop or knight up in a king-and-minor
     // ending, which is how the search traded into one: the stand pat in qsearch,
@@ -221,9 +221,35 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
              params_.pawn_structure_category_scale / 100;
     score += ei.me->score;
 
-    // Lazy eval cutoff
-    if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
-        return to_stm(p, score, params_.tempo);
+    // The lazy evaluation cutoff used to sit here, and a second copy of it
+    // below, both firing on std::abs(score) >= lazy_margin with no reference to
+    // the caller's search window at all.
+    //
+    // That is not a lazy cutoff. A lazy cutoff returns an approximation only
+    // where the approximation cannot change the caller's decision, which means
+    // it has to know the window. This one truncated the evaluation in any
+    // lopsided position and handed the partial score to the search as though it
+    // were the real one. Measured over 4,392 positions from random play it
+    // fired in 62.6% of them and was a median of 71 cp away from the full
+    // evaluation -- p90 191, p99 368, worst 568 -- and 8% of the cutoffs were
+    // wrong by more than the margin that had authorised them.
+    //
+    // Everything downstream ran on that number: futility and razoring margins,
+    // improving, the null-move decision, and the quiescence stand pat.
+    //
+    // It also put the search and the tuner on two different functions. The
+    // Texel tuner calls evaluate() with lazy_margin = -1 and so fits the full
+    // evaluation, while the search saw the truncated one in six positions out
+    // of ten. Fitting parameters to a function the search does not use is
+    // enough on its own to stop tuning gains from reaching playing strength.
+    //
+    // The window-aware version was written and measured too. It works, but it
+    // makes the returned score depend on the window the node happened to be
+    // searched with, and therefore on move ordering and on history left over
+    // from earlier searches. That broke QuiescenceIsMirrorSymmetricOverRandomPlay:
+    // a position and its mirror scored 404 and 442. The evaluation stops being a
+    // function of the position, which is the same defect that has_castled was.
+    // Not worth trading that away, so the evaluation is simply always exact.
 
     // Endgame specialization
     if (ei.me->is_endgame()) {
@@ -296,9 +322,6 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     score += (passed_score * ei.me->taper(params_.passed_pawn_category_scale,
                                           params_.passed_pawn_endgame_scale)) /
              100;
-
-    if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
-        return to_stm(p, score, params_.tempo);
 
     int threat_score = eval_threats<white>(p, ei) - eval_threats<black>(p, ei);
     int space_score = eval_space<white>(p, ei) - eval_space<black>(p, ei);

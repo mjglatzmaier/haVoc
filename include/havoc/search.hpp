@@ -130,8 +130,6 @@ class SearchEngine {
     int futility_move_count(bool improving, U16 depth);
     int history_bonus(int depth) const;
     int static_eval(position& p, int thread_id);
-    float lazy_eval_margin_search(int depth, bool advanced_pawn);
-    float lazy_eval_margin(int depth, bool advanced_pawn);
 };
 
 } // namespace havoc
