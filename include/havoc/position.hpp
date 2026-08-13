@@ -124,6 +124,18 @@ class position {
     [[nodiscard]] int see_move(const Move& m) const;
     [[nodiscard]] int see(const Move& m) const;
 
+    /// Piece values used by static exchange evaluation.
+    ///
+    /// SEE decides capture ordering and prunes losing captures, so it is
+    /// making claims about material that the evaluation also makes. These were
+    /// a hard-coded table in position.cpp that happened to hold the same
+    /// numbers as parameters::material_value; nothing linked them, so the first
+    /// tuning run to move a piece value would have left SEE ordering and
+    /// pruning captures by the old one. parameters::load() and the tuner both
+    /// push the current values through here.
+    static void set_see_values(const std::array<int, 5>& pawn_through_queen);
+    [[nodiscard]] static std::array<int, 6> see_values();
+
     [[nodiscard]] bool is_attacked(const Square& s, const Color& us, const Color& them,
                                    U64 m = 0ULL) const;
     [[nodiscard]] U64 attackers_of2(const Square& s, const Color& c) const;
