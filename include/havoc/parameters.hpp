@@ -240,7 +240,6 @@ struct parameters {
     int best_move_bonus = 2;        // best-move history bonus, times depth
     int history_bonus_scale = 1;    // history bonus is scale * depth^2
     int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)
-    int lazy_margin = 225;          // lazy evaluation cutoff margin
 
     // Parameter serialization
     bool load(const std::string& filename);

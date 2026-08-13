@@ -831,22 +831,61 @@ TEST_F(EvalTest, TempoFavoursWhicheverSideIsToMove) {
 
 // The lazy-eval cutoffs return early from the same function, so they must use
 // the same sign convention as the full path.
-TEST_F(EvalTest, LazyEvalAgreesWithTheFullEvalOnSign) {
-    havoc::parameters lazy;
-    lazy.tempo = 25;
-    havoc::pawn_table lazy_pt(lazy);
-    havoc::material_table lazy_mt(lazy);
-    havoc::HCEEvaluator lazy_eval(lazy_pt, lazy_mt, lazy);
+// The evaluation is exact for every caller. There used to be a lazy cutoff that
+// returned a partial score whenever the position was lopsided, without ever
+// consulting the caller's window; it fired in 62.6% of positions from random
+// play and was a median of 71 cp -- worst 568 -- away from the truth. This
+// pins the property that replaced it: the margin argument is vestigial and
+// changing it cannot change what comes back.
+TEST_F(EvalTest, EvaluationIsExactForEveryMargin) {
+    havoc::parameters params;
+    params.tempo = 25;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
 
-    // A whole extra queen for white: lopsided enough that the sign is not in
-    // doubt regardless of which path produced it.
+    std::mt19937 rng(20260814u);
+    int checked = 0;
+    for (int game = 0; game < 12; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        for (int ply = 0; ply < 60; ++ply) {
+            std::vector<havoc::Move> legal;
+            havoc::Movegen mvs(pos);
+            mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+            pos.do_move(legal[rng() % legal.size()]);
+            if (ply < 6)
+                continue;
+            auto p2 = make_pos(pos.to_fen());
+            const int exact = eval.evaluate(p2, -1);
+            for (int margin : {1, 50, 225, 1000}) {
+                ASSERT_EQ(eval.evaluate(p2, margin), exact)
+                    << "margin " << margin << " changed the evaluation of " << pos.to_fen();
+            }
+            ++checked;
+        }
+    }
+    EXPECT_GT(checked, 400);
+}
+
+// A whole extra queen: the sign must not be in doubt, and the two sides must
+// agree once the score is taken from the point of view of whoever is to move.
+TEST_F(EvalTest, AnExtraQueenIsWorthTheSameToEitherSide) {
+    havoc::parameters params;
+    params.tempo = 25;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
     auto white_up = make_pos("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     auto black_up = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1");
-
-    // lazy_margin of 1 cuts out at the earliest opportunity.
-    EXPECT_GT(lazy_eval.evaluate(white_up, 1), 0) << "white is up a queen and to move";
-    EXPECT_GT(lazy_eval.evaluate(black_up, 1), 0) << "black is up a queen and to move";
-    EXPECT_EQ(lazy_eval.evaluate(white_up, 1), lazy_eval.evaluate(black_up, 1));
+    EXPECT_GT(eval.evaluate(white_up), 0) << "white is up a queen and to move";
+    EXPECT_GT(eval.evaluate(black_up), 0) << "black is up a queen and to move";
+    EXPECT_EQ(eval.evaluate(white_up), eval.evaluate(black_up));
 }
 
 // Every piece with a non-zero default piece-square table must actually have

@@ -315,7 +315,6 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("best_move_bonus", &best_move_bonus);
         result.emplace_back("history_bonus_scale", &history_bonus_scale);
         result.emplace_back("history_malus_pct", &history_malus_pct);
-        result.emplace_back("lazy_margin", &lazy_margin);
         return result;
     }
 
