@@ -331,6 +331,19 @@ struct parameters {
     /// A passed pawn is the single most decisive structural feature on the
     /// board, and every term below the rank ladder was fixed at a number
     /// nobody could fit. Defaults reproduce the previous literals exactly.
+    /// The five terms below are flat: they say the same thing about a passer on
+    /// rank 2 as about one on rank 7. That was harmless while eval_passed_pawns
+    /// only looked at the last three ranks, and became wrong the moment it
+    /// looked at all of them -- a rank 2 passer with a rook behind it collected
+    /// passed_pawn_rook_support, which is 30, against a rank bonus of 5.
+    ///
+    /// Rather than give each of them its own ladder, they are scaled together
+    /// by distance to promotion, indexed [6 - row_dist] like the two tables
+    /// above. The last three entries are 100 on purpose: those are the ranks
+    /// the old code evaluated, and this change must leave them untouched and
+    /// only add to the ranks that were previously scored at 2 centipawns and
+    /// skipped.
+    std::array<int, 6> passed_pawn_support_scale = {10, 25, 50, 100, 100, 100};
     int passed_pawn_unblocked = 1;      ///< square in front is empty
     int passed_pawn_control = 3;        ///< per attacker of the square in front, each side
     int passed_pawn_rook_behind = 1;    ///< own rook anywhere behind on the file
