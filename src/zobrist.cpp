@@ -371,6 +371,10 @@ U64 piece(Square sq, Color c, Piece p) {
 U64 castle(Color c, U16 rights) {
     return castle_rands[c][rights];
 }
+
+U64 castle_rights(U16 mask) {
+    return castle_rands[0][mask & 15];
+}
 U64 ep(int file) {
     return ep_rands[file];
 }
