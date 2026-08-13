@@ -4,8 +4,55 @@ A UCI chess engine written in C++20.
 
 haVoc is a hobby project that has been worked on on and off over several years.
 It uses bitboard move generation with magic bitboards, an alpha-beta search, and
-a hand-written evaluation function. It has not been rated against other engines,
-so no strength claims are made here.
+a hand-written evaluation function.
+
+## Strength
+
+Estimated **~2473 Elo** (CCRL Blitz scale, 95% CI ±60), measured 13 August 2026.
+
+| Date | Rating | 95% CI | Games | Notes |
+|------|--------|--------|-------|-------|
+| 2026-08-13 | **2473** | ±60 | 224 | Correctness batch: zobrist/material keys, phase interpolation, aspiration window, king safety |
+| (earlier) | 2413 | ±82 | 150 | Prior baseline, same anchors and hardware |
+
+### Method
+
+The rating is a maximum-likelihood fit of the standard logistic Elo model. The
+opponents' ratings are held fixed at their published values and haVoc's rating
+is the value of `r` solving
+
+```
+sum_i N_i * E(r - R_i) = sum_i S_i        where  E(d) = 1 / (1 + 10^(-d/400))
+```
+
+Draws score a half point, which is what the Elo model assumes; no separate draw
+parameter is fitted.
+
+- **Anchors.** Fruit 2.1 (2694) and Glaurung 2.2 (2793), CCRL 40/15 single-CPU
+  64-bit entries, list dated 7 August 2026. Both have very large CCRL sample
+  sizes and decades of scrutiny, so their published ratings carry small error
+  bars. Obscure hobby engines were tried as anchors and discarded: two of them
+  produced implied ratings 223 points apart for the same candidate, which is
+  what a lumpy evaluation surface and a thinly-played published rating do to a
+  fit that assumes a single strength scale.
+- **Conditions.** 20+0.2 on one thread with a 64 MB hash, `OwnBook=false` and
+  `Ponder=false` forced on every engine, from a fixed opening book with colours
+  reversed on each pair. All engines run on the same machine at the same time
+  control.
+- **Caveats.** This is an *estimate on the CCRL scale*, not a CCRL rating: it
+  comes from a two-opponent gauntlet on one machine, not from CCRL's own pool.
+  The confidence interval is statistical only and does not cover anchor error
+  or the non-transitivity of engine matchups. Treat the trend across rows as
+  more meaningful than any single absolute figure.
+
+Every change that could plausibly affect playing strength is gated behind a
+self-play SPRT against the previous revision before it is merged.
+
+To reproduce a rating from a gauntlet PGN:
+
+```sh
+python3 scripts/rate.py gauntlet.pgn --only fruit,glaurung
+```
 
 ## Building
 
