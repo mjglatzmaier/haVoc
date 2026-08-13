@@ -268,6 +268,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("connected_rook_bonus", &connected_rook_bonus);
         result.emplace_back("doubled_bishop_bonus", &doubled_bishop_bonus);
         result.emplace_back("open_file_bonus", &open_file_bonus);
+        result.emplace_back("semiopen_file_bonus", &semiopen_file_bonus);
         result.emplace_back("bishop_open_center_bonus", &bishop_open_center_bonus);
         result.emplace_back("rook_7th_bonus", &rook_7th_bonus);
 

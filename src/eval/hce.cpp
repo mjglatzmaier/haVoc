@@ -625,7 +625,6 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
     constexpr Color them = Color(c ^ 1);
     U64 equeen_sq = ei.queen_sqs[them];
     U64 valuable_enemies = p.get_pieces<them, queen>() | p.get_pieces<them, king>();
-    U64 all_pawns = p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>();
 
     for (Square s = *rooks; s != no_square; s = *++rooks) {
         U64 sq_bb = bitboards::squares[s];
@@ -672,9 +671,22 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         // Queen attacks
         score += bits::count(mvs & equeen_sq) * params_.attk_queen_bonus[rook];
 
-        // Open file
-        if ((bitboards::col[util::col(s)] & all_pawns) == 0ULL)
-            score += params_.open_file_bonus;
+        // Open and half-open files.
+        //
+        // Only the fully open case was scored, and at a bonus of one
+        // centipawn. A rook behind a half-open file -- no pawn of its own in
+        // front of it, an enemy pawn to attack -- is most of what rook activity
+        // means in a middlegame, and it was worth exactly nothing. Both cases
+        // are now graded, and both defaults are guesses; see
+        // docs/revisit-after-tuning.md.
+        {
+            const U64 file = bitboards::col[util::col(s)];
+            if ((file & p.get_pieces<c, pawn>()) == 0ULL) {
+                score += ((file & p.get_pieces<them, pawn>()) == 0ULL)
+                             ? params_.open_file_bonus
+                             : params_.semiopen_file_bonus;
+            }
+        }
 
         // 7th rank
         if (sq_bb & (c == white ? bitboards::row[r7] : bitboards::row[r2]))
