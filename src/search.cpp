@@ -632,8 +632,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     bool hasStaticValue = static_eval_val != score::kNegInf;
 
     // IIR: If we have no hash move at a PV or cut node, reduce depth.
-    if (!singular_search && depth >= 4 && ttm.type == static_cast<U8>(no_type) &&
-        (pvNode || (!pvNode && static_eval_val + 200 >= beta))) {
+    if (!singular_search && depth >= params_.iir_min_depth &&
+        ttm.type == static_cast<U8>(no_type) &&
+        (pvNode || (!pvNode && static_eval_val + params_.iir_cut_margin >= beta))) {
         depth -= 1;
     }
 
@@ -871,14 +872,16 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
         // Reduce uninteresting quiet moves
         if (!pvNode && !improving && !hashOrKiller && !isCapture && !isEvasion && !givesCheck &&
-            !isPromotion && !advancedPawnPush && depth <= 2 && bestScore <= alpha)
+            !isPromotion && !advancedPawnPush && depth <= params_.lmr_extra_max_depth &&
+            bestScore <= alpha)
             reductions_val += 1;
 
         // Extend likely interesting quiet moves
         auto threatResponse = (stack->threat_move.type != static_cast<U8>(no_type) &&
                                stack->threat_move.f == move.t) &&
                               isCapture;
-        if (!pvNode && !improving && !hashOrKiller && !isCapture && depth <= 2 &&
+        if (!pvNode && !improving && !hashOrKiller && !isCapture &&
+            depth <= params_.quiet_ext_max_depth &&
             bestScore < alpha && bestScore > score::kMatedMaxPly &&
             (dangerousQuietCheck || advancedPawnPush || threatResponse))
             extensions += 1;
