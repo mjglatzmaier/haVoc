@@ -195,10 +195,22 @@ bool position::is_draw() {
     if (is_material_draw())
         return true;
 
+    // A repetition cannot reach back past an irreversible move: a capture or a
+    // pawn move changes the piece placement, and repkey covers piece placement,
+    // so no position before one of them can equal this one. move50 counts
+    // exactly the plies since the last such move, so it is the correct bound
+    // and stopping there loses no match.
+    //
+    // This used to walk the whole game every time. is_draw() runs at nearly
+    // every search node, so the cost grew with the move number: by move 60 each
+    // node was reading about 60 history entries to prove something that could
+    // not be true past the first few.
     U64 kcurrent = ifo.repkey;
     unsigned same_count = 0;
-    int idx = static_cast<int>(history_.size()) - 2;
-    while (same_count == 0 && idx >= 0) {
+    const int size = static_cast<int>(history_.size());
+    const int limit = std::max(0, size - static_cast<int>(ifo.move50));
+    int idx = size - 2;
+    while (same_count == 0 && idx >= limit) {
         same_count += (kcurrent == history_[idx].repkey);
         idx -= 2;
     }
