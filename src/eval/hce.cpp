@@ -1005,10 +1005,12 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     auto enemyPieceAttacks = (ei.piece_attacks[them][knight] | ei.piece_attacks[them][bishop] |
                               ei.piece_attacks[them][rook] | ei.piece_attacks[them][queen]);
 
-    // 1. Pieces under attack by pawns
+    // 1. Pieces under attack by pawns. Counted, not flagged: a pawn fork
+    // attacking two pieces is worth about twice a pawn attacking one, and the
+    // weak-pawn term below already counts its victims the same way. As a bare
+    // flag this could not tell a fork from a single nudge.
     auto attackedByPawns = enemies & pawnAttacks;
-    if (attackedByPawns != 0ULL)
-        score += params_.threat_by_pawn;
+    score += params_.threat_by_pawn * bits::count(attackedByPawns);
 
     // 2. Hanging pieces under attack
     auto defendendEnemies = enemies & (enemyPawnAttacks | enemyPieceAttacks);
