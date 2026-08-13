@@ -10,6 +10,7 @@
 #include "havoc/position.hpp"
 #include "havoc/tablebase.hpp"
 #include "havoc/tt.hpp"
+#include "havoc/uci.hpp"
 #include "havoc/zobrist.hpp"
 
 #include <algorithm>
@@ -102,6 +103,65 @@ TEST_F(EvalTest, StartposIsApproximatelyZero) {
     int score = eval.evaluate(pos);
     EXPECT_GE(score, -50) << "Startpos eval too low: " << score;
     EXPECT_LE(score, 50) << "Startpos eval too high: " << score;
+}
+
+// ─── Evaluation must be a function of the position ─────────────────────────
+
+// has_castled is set only by do_move when a castling move is played, and is
+// never derived from a FEN. It is not part of the zobrist key either. So the
+// same position, with the same key, evaluates differently depending on how it
+// was reached -- and the transposition table, which is keyed on that key,
+// hands one path's score to the other.
+//
+// This walks a king and rook from e1/h1 to g1/f1 the long way round, which
+// reaches exactly the position kingside castling reaches, and compares it
+// against the castled path.
+TEST_F(EvalTest, EvaluationDoesNotDependOnHowThePositionWasReached) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    auto play = [](havoc::position& pos, const std::string& uci) {
+        havoc::Movegen mvs(pos);
+        mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+        for (int i = 0; i < mvs.size(); ++i) {
+            if (!pos.is_legal(mvs[i]))
+                continue;
+            if (havoc::uci::move_to_string(mvs[i]) == uci) {
+                pos.do_move(mvs[i]);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Enough material on both sides that is_endgame() stays false, otherwise
+    // the endgame specialisation can return before the castling terms run.
+    // f2, g2 and d7 are empty so both kings have a route off their back rank.
+    const std::string start = "r3k1n1/ppp1pppp/8/8/8/8/PPPPP2P/4K2R w K - 0 1";
+
+    // Path A: castle kingside. King e1 -> g1, rook h1 -> f1.
+    auto a = make_pos(start);
+    ASSERT_TRUE(play(a, "e1g1"));
+
+    // Path B: the same placement, walked there. The rook has to go first,
+    // because once the king stands on g1 the rook can no longer cross it, and
+    // the king then has to detour over f2 and g2 for the same reason. Black
+    // shuffles on a three-move cycle so that it is Black to move at the end of
+    // both paths with its king back on e8.
+    auto b = make_pos(start);
+    for (const char* mv : {"h1f1", "e8d8", "e1f2", "d8d7", "f2g2", "d7e8", "g2g1"})
+        ASSERT_TRUE(play(b, mv)) << "could not play " << mv;
+
+    ASSERT_EQ(a.key(), b.key())
+        << "the two paths must reach the same position for this test to mean anything";
+    ASSERT_EQ(a.to_move(), b.to_move());
+
+    EXPECT_EQ(eval.evaluate(a), eval.evaluate(b))
+        << "the same position evaluates differently depending on the move order "
+           "that reached it. Both share a zobrist key, so the transposition "
+           "table will serve one of these scores for the other.";
 }
 
 // ─── Extra queen → large advantage ─────────────────────────────────────────
