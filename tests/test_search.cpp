@@ -6,12 +6,17 @@
 #include "havoc/uci.hpp"
 #include "havoc/zobrist.hpp"
 
+#include <iostream>
+#include <random>
 #include <sstream>
+#include <vector>
 
 #include <functional>
 #include <limits>
 #include <utility>
 #include <set>
+
+#include "mirror.hpp"
 
 #include <gtest/gtest.h>
 
@@ -515,6 +520,114 @@ TEST_F(SearchTest, EverySearchParameterReachesTheSearch) {
                                        }();
 }
 
+
+// ─── Search symmetry ────────────────────────────────────────────────────────
+// The counterpart of the evaluation mirror tests, one level up: a depth-1
+// search of a position and of its color-and-rank mirror must return exactly
+// the same score.
+//
+// Depth 1 is the deepest exact-equality invariant available. It still reaches
+// quiescence search at every leaf, so it covers stand-pat, delta pruning, SEE
+// move filtering, capture ordering and check evasion -- none of which the
+// static evaluation mirror tests can see. Anything in that machinery that
+// prefers one end of the board over the other shows up here.
+//
+// Deeper searches are deliberately *not* required to match. From depth 2 up,
+// pruning and reduction decisions depend on the order moves happen to be
+// generated in, and mirroring reverses rank order, so equally-scored moves are
+// tried in a different sequence. The resulting differences flip sign with
+// depth and wash out again by depth 8, which is ordering luck rather than a
+// color bias. Measured on 2rq1rk1/pp1bppbp/3p1np1/8/3NP3/1BN1BP2/PPPQ2PP/
+// 2KR3R: depth 1 agrees exactly, depths 4-6 differ by 95, depth 8 agrees
+// again. Asserting equality there would test the move generator's iteration
+// order, not correctness.
+//
+// Each search runs in its own SearchEngine so the transposition table, the
+// killers and the history tables all start empty; otherwise the second search
+// would inherit state from the first and the comparison would be meaningless.
+TEST_F(SearchTest, QuiescenceIsMirrorSymmetric) {
+    const std::vector<std::string> positions = {
+        "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+        "r1bq1rk1/pp2ppbp/2np1np1/8/2PNP3/2N1B3/PP2BPPP/R2QK2R w KQ - 0 9",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "4rrk1/pp1n1ppp/2p1bn2/q7/3P4/2NBPN2/PP3PPP/R2Q1RK1 w - - 0 1",
+        "8/5ppp/8/5PPP/8/6k1/8/6K1 w - - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/8/4k3/8/2p5/8/B2P2KP/8 w - - 0 1",
+        "2rq1rk1/pp1bppbp/3p1np1/8/3NP3/1BN1BP2/PPPQ2PP/2KR3R w - - 0 1",
+        "r2q1rk1/1b1nbppp/p2ppn2/1p6/3NPP2/1BN1B3/PPPQ2PP/2KR3R w - - 0 1",
+        "8/p7/1p6/1P6/P7/8/6k1/6K1 w - - 0 1",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 1",
+        "8/3k4/8/8/8/8/3PK3/8 w - - 0 1",
+    };
+
+    int asymmetric = 0;
+    for (const auto& fen : positions) {
+        const std::string mirrored_fen = havoc::testing::mirror_fen(fen);
+        ASSERT_EQ(havoc::testing::mirror_fen(mirrored_fen), fen)
+            << "mirror_fen is not an involution on " << fen;
+
+        auto a_pos = make_pos(fen);
+        auto b_pos = make_pos(mirrored_fen);
+        const int a = search_score(a_pos, 1);
+        const int b = search_score(b_pos, 1);
+        if (a != b) {
+            ++asymmetric;
+            ADD_FAILURE() << "asymmetric depth-1 search\n"
+                          << "  fen      " << fen << " -> " << a << "\n"
+                          << "  mirrored " << mirrored_fen << " -> " << b << "\n"
+                          << "  difference " << (a - b);
+        }
+    }
+    EXPECT_EQ(asymmetric, 0);
+}
+
+// The same invariant over positions nobody chose by hand. Random legal play
+// reaches material and structural shapes a curated list never will, which is
+// exactly where the evaluation mirror bugs found so far have been hiding.
+TEST_F(SearchTest, QuiescenceIsMirrorSymmetricOverRandomPlay) {
+    std::mt19937 rng(20260812u);
+    int checked = 0;
+    int asymmetric = 0;
+
+    for (int game = 0; game < 12 && asymmetric < 5; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        for (int ply = 0; ply < 70; ++ply) {
+            Movegen mvs(pos);
+            mvs.generate<pseudo_legal, pieces>();
+            std::vector<Move> legal;
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+            pos.do_move(legal[rng() % legal.size()]);
+
+            // Skip the opening, then sample rather than test every ply: a
+            // depth-1 search is far more expensive than a static evaluation.
+            if (ply < 5 || (ply % 4) != 0)
+                continue;
+
+            const std::string fen = pos.to_fen();
+            auto original = make_pos(fen);
+            auto mirrored = make_pos(havoc::testing::mirror_fen(fen));
+            const int a = search_score(original, 1);
+            const int b = search_score(mirrored, 1);
+            ++checked;
+            if (a != b) {
+                ++asymmetric;
+                ADD_FAILURE() << "asymmetric depth-1 search\n"
+                              << "  fen      " << fen << " -> " << a << "\n"
+                              << "  mirrored " << havoc::testing::mirror_fen(fen) << " -> " << b
+                              << "\n  difference " << (a - b);
+            }
+        }
+    }
+
+    std::cerr << "[          ] checked " << checked << " random positions\n";
+    EXPECT_GT(checked, 150);
+    EXPECT_EQ(asymmetric, 0);
+}
 
 } // namespace
 } // namespace havoc
