@@ -26,6 +26,12 @@ struct parameters {
     // All at 100 = original eval scale. Tune individual params directly.
     int sq_score_category_scale = 100;
     int mobility_category_scale = 100;
+    /// Endgame counterpart to mobility_category_scale. Mobility had no phase
+    /// dependence at all, so a mobile knight was worth the same with a full
+    /// board as with four pieces left. Unlike the passed-pawn taper the right
+    /// direction here is not obvious, so this defaults equal to the middlegame
+    /// endpoint: the change is inert until the tuner fits it.
+    int mobility_endgame_scale = 100;
     int king_safety_category_scale = 100;
     int threat_category_scale = 100;
     int passed_pawn_category_scale = 100;
