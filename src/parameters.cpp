@@ -225,6 +225,47 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("open_file_bonus", &open_file_bonus);
         result.emplace_back("bishop_open_center_bonus", &bishop_open_center_bonus);
         result.emplace_back("rook_7th_bonus", &rook_7th_bonus);
+
+        // Outpost bonuses are indexed by the file of the outpost square, so
+        // all eight entries are reachable: any file can contain a hole in the
+        // enemy pawn structure.
+        for (size_t i = 0; i < knight_outpost_bonus.size(); ++i)
+            result.emplace_back("knight_outpost_" + std::to_string(i), &knight_outpost_bonus[i]);
+        for (size_t i = 0; i < bishop_outpost_bonus.size(); ++i)
+            result.emplace_back("bishop_outpost_" + std::to_string(i), &bishop_outpost_bonus[i]);
+
+        // Center influence is read once per piece type in eval_knights,
+        // eval_bishops, eval_rooks and eval_queens. Pawns and kings never
+        // score it, so entries 0 and 5 are shape, not weights.
+        for (size_t i = knight; i <= queen; ++i)
+            result.emplace_back("center_influence_" + std::to_string(i),
+                                &center_influence_bonus[i]);
+
+        // The bonus for attacking the enemy queen is only read by the knight,
+        // bishop and rook evaluations -- a queen attacking a queen is a plain
+        // exchange, handled by SEE and the threat tables, so entry 4 is never
+        // read. Entry 0 (pawn) has no reader either.
+        for (size_t i = knight; i <= rook; ++i)
+            result.emplace_back("attk_queen_" + std::to_string(i), &attk_queen_bonus[i]);
+
+        // Both halves of the trapped rook penalty are live: it is applied
+        // through taper(), which blends the two by game phase.
+        result.emplace_back("trapped_rook_mg", &trapped_rook_penalty[0]);
+        result.emplace_back("trapped_rook_eg", &trapped_rook_penalty[1]);
+
+        // Deliberately NOT registered, and not oversights:
+        //
+        //   sq_score_scaling, attack_scaling, mobility_scaling -- all-ones
+        //   multipliers sitting in front of terms that are themselves tuned
+        //   (the piece-square tables, the threat tables, the per-piece
+        //   mobility scales). Fitting a product of two free weights is rank
+        //   deficient: the tuner could trade one against the other without
+        //   changing the evaluation, which wastes gradient and makes a tuned
+        //   file harder to interpret.
+        //
+        //   pinned_scaling -- a *divisor* on the mobility score. Exposing it
+        //   would let the tuner try zero and divide by zero, and integer
+        //   division makes its gradient a staircase rather than a slope.
         return result;
     }
 

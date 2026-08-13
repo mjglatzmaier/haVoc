@@ -1122,6 +1122,17 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // A queen bearing on exactly four squares of a centralised king's
         // ring, along the e-file and the e2-c4 diagonal.
         "r7/pp6/8/3k4/8/8/PP2Q3/6K1 w - - 0 1",
+        // Outposts, indexed by the file of the outpost square. A hole is the
+        // square directly in front of an enemy backward pawn, and a pawn whose
+        // neighbouring files are both empty counts as backward, so pawns on
+        // alternating files are all backward at once and one position covers
+        // four files. Two positions per piece therefore reach all eight
+        // entries. Black has no minor piece to place on a hole of White's, so
+        // the term cannot cancel between the two sides.
+        "7k/8/8/p1p1p1p1/N1N1N1N1/8/8/7K w - - 0 1",
+        "k7/8/8/1p1p1p1p/1N1N1N1N/8/8/K7 w - - 0 1",
+        "7k/8/8/p1p1p1p1/B1B1B1B1/8/8/7K w - - 0 1",
+        "k7/8/8/1p1p1p1p/1B1B1B1B/8/8/K7 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
