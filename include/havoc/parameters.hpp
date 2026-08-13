@@ -189,6 +189,30 @@ struct parameters {
     int discovered_check_bonus = 10;
     int restriction_weight = 1;
     std::vector<int> skewer_bonus{4, 6, 8}; // minor, rook, queen skewered
+    /// Per-piece evaluation weights that were bare literals. Every one of
+    /// these fires in ordinary middlegame positions -- protection counts, king
+    /// distance, x-rays -- so unlike the endgame constants they carry real
+    /// gradient and were simply invisible to the tuner. The defaults reproduce
+    /// the values that were hardcoded.
+    ///
+    /// `pawn_attacks_undefended` keeps the `/ 2` it always had so the default
+    /// of 1 reproduces the old score exactly. The division is the reason it
+    /// needs a parameter at all: as a bare count halved by integer division it
+    /// had no gradient below one point per two attacks, and the tuner can now
+    /// reach the odd multiples the truncation used to swallow.
+    int pawn_attacks_undefended = 1;
+    int knight_edge_penalty = 12;
+    int knight_king_distance_penalty = 1;
+    int knight_behind_pawn_bonus = 12;
+    int knight_protection_bonus = 1;
+    int bishop_xray_bonus = 1;
+    int bishop_king_distance_penalty = 1;
+    int bishop_behind_pawn_bonus = 12;
+    int bishop_protection_bonus = 1;
+    int rook_xray_bonus = 1;
+    int rook_protection_bonus = 1;
+    int weak_queen_penalty = 1;
+    int space_bonus = 1;
     int connected_rook_bonus = 1;
     int doubled_bishop_bonus = 4;
     int open_file_bonus = 1;
