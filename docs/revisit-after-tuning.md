@@ -30,15 +30,20 @@ course.
 
 ## Evaluation defaults introduced with no evidence behind them
 
-- **`open_file_bonus` (1 -> 12) and `semiopen_file_bonus` (new, 6).** A rook's
+- **`open_file_bonus` (1 -> 8) and `semiopen_file_bonus` (new, 4).** A rook's
   half-open file was not scored at all, and the fully open case was worth one
   centipawn. Both numbers are now guesses in the right ballpark rather than one
   guess in the wrong one. They are strongly collinear with the rook mobility
   table -- an open file is mostly why a rook has moves -- so expect a fit to
   move all three together, and do not read either in isolation.
-- **`king_storm_rank_penalty` {32, 20, 8, 2, 0, 0}.** A new six-entry table
+- **`king_storm_rank_penalty` {12, 8, 4, 1, 0, 0}.** A new six-entry table
   replacing an ungraded count. The shape (steeply decaying with distance) is
-  the confident part; the magnitudes are not. It overlaps `king_storm_penalty`,
+  the confident part; the magnitudes are not. The first attempt peaked at 32,
+  three times the largest king safety weight beside it, and measured -22 Elo
+  over 141 games as part of a two-change batch. Introducing a term far out of
+  scale with its neighbours is a large untested weight change wearing a
+  structural fix as a disguise; both tables here are now in family with what
+  surrounds them. It overlaps `king_storm_penalty`,
   which still charges for the number of storming pawns, and both overlap the
   shelter and king-zone open-file terms.
 - **`cont_hist1_pct` and `cont_hist2_pct`, both 100.** The two continuation

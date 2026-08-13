@@ -175,7 +175,11 @@ struct parameters {
     /// next rank and entry 5 is one still on its starting square. The count
     /// table above says how many pawns are coming; this says how close they
     /// have got.
-    std::vector<int> king_storm_rank_penalty{32, 20, 8, 2, 0, 0};
+    /// Kept in family with the other king safety weights on purpose. The
+    /// largest of those is king_open_file_penalty at 9, and a first attempt at
+    /// this table peaked at 32 -- three times anything beside it -- which is a
+    /// large untested weight change wearing a structural fix as a disguise.
+    std::vector<int> king_storm_rank_penalty{12, 8, 4, 1, 0, 0};
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
     /// Danger per square from which an enemy piece could give check without
