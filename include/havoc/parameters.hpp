@@ -29,6 +29,11 @@ struct parameters {
     int king_safety_category_scale = 100;
     int threat_category_scale = 100;
     int passed_pawn_category_scale = 100;
+    /// Endgame counterpart to passed_pawn_category_scale. The passed-pawn
+    /// evaluation used to be a single phase-independent scalar, so a passer
+    /// was worth exactly as much in the opening as in a king-and-pawn ending.
+    /// The score is now tapered between these two endpoints by game phase.
+    int passed_pawn_endgame_scale = 150;
     int pawn_structure_category_scale = 100;
     int space_category_scale = 100;
     int king_danger_divisor = 256;

@@ -293,7 +293,9 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     score += (pawn_score * params_.pawn_structure_category_scale) / 100;
     score += (piece_score * params_.sq_score_category_scale) / 100;
     score += (king_score * params_.king_safety_category_scale) / 100;
-    score += (passed_score * params_.passed_pawn_category_scale) / 100;
+    score += (passed_score * ei.me->taper(params_.passed_pawn_category_scale,
+                                          params_.passed_pawn_endgame_scale)) /
+             100;
 
     if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
         return to_stm(p, score, params_.tempo);
