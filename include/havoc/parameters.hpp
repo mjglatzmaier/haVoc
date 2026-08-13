@@ -81,6 +81,19 @@ struct parameters {
                                                  20,  22,  24,  25, 26, 27, 28};
     std::array<int, 15> rook_mobility_table = {0, 1, 2, 3, 5, 6, 8, 9, 10, 11, 13, 14, 15, 17, 18};
 
+    // The queen had no mobility term at all: eval_queens computed its attack
+    // set and stored it into piece_attacks, but never scored how many squares
+    // it actually had. Knight, bishop and rook each had a table and a scale.
+    // A queen on an open board reaches up to 27 squares, so the table is
+    // sized to the widest fan-out any single piece can have. The curve is
+    // deliberately flatter than the rook's: a queen is already worth so much
+    // that being slightly cramped should not read as a large loss, and the
+    // shape is a starting point for tuning rather than a fitted answer.
+    int queen_mobility_scale = 98;
+    std::array<int, 28> queen_mobility_table = {-20, -16, -12, -9, -6, -4, -2, 0, 1,  2,
+                                                3,   4,   5,   6,  7,  8,  9,  9, 10, 10,
+                                                11,  11,  12,  12, 13, 13, 14, 14};
+
     // Square attack bonuses (pawn, knight, bishop, rook, queen)
     std::vector<int> square_attks{7, 4, 3, 2, 1};
 

@@ -51,6 +51,7 @@ using havoc::testing::mirror_fen;
 /// opposite-colored bishops and a range of endgames.
 const std::vector<std::string>& mirror_test_positions() {
     static const std::vector<std::string> fens = {
+        "r1bq1rk1/pp2ppbp/2np1np1/8/2PNP3/2N1B3/PP2BPPP/R2QK2R w KQ - 0 9",
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         // Direct proof that this position's evaluation is symmetric. It is the
@@ -1301,6 +1302,14 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "knight_mobility_0", "knight_mobility_6", "knight_mobility_7", "knight_mobility_8",
         "bishop_mobility_5", "bishop_mobility_9", "bishop_mobility_11", "bishop_mobility_12",
         "bishop_mobility_14", "rook_mobility_3", "rook_mobility_11", "rook_mobility_13",
+        // The queen's buckets gap the same way the other three pieces do. The
+        // wide end is the interesting part: reaching bucket 23 and above needs
+        // a queen with that many *safe* empty squares at once, and adding
+        // open-board positions specifically to chase it moved none of them,
+        // because the king and the remaining pawns keep the real count lower.
+        "queen_mobility_5", "queen_mobility_10", "queen_mobility_11", "queen_mobility_15",
+        "queen_mobility_17", "queen_mobility_23", "queen_mobility_24", "queen_mobility_25",
+        "queen_mobility_26", "queen_mobility_27",
         "attacker_weight_1", "king_shelter_0", "king_shelter_3", "king_safe_sqs_0",
         "king_safe_sqs_4", "king_safe_sqs_5", "king_safe_sqs_6", "king_safe_sqs_7",
         "no_pawn_scale", "minor_advantage_no_pawn_scale",

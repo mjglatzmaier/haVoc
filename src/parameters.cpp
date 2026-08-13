@@ -119,6 +119,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("knight_mobility_scale", &knight_mobility_scale);
         result.emplace_back("bishop_mobility_scale", &bishop_mobility_scale);
         result.emplace_back("rook_mobility_scale", &rook_mobility_scale);
+        result.emplace_back("queen_mobility_scale", &queen_mobility_scale);
 
         // Mobility curve entries
         for (size_t i = 0; i < knight_mobility_table.size(); ++i)
@@ -130,6 +131,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         for (size_t i = 0; i < rook_mobility_table.size(); ++i)
             result.emplace_back("rook_mobility_" + std::to_string(i),
                                 &rook_mobility_table[i]);
+        for (size_t i = 0; i < queen_mobility_table.size(); ++i)
+            result.emplace_back("queen_mobility_" + std::to_string(i),
+                                &queen_mobility_table[i]);
 
         // Endgame scaling
         result.emplace_back("opposite_bishop_scale", &opposite_bishop_scale);

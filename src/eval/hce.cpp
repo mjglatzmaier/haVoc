@@ -731,6 +731,26 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
             magics::attacks<bishop>(ei.all_pieces, s) | magics::attacks<rook>(ei.all_pieces, s);
         ei.piece_attacks[c][queen] |= mvs;
 
+        // The attack set above was computed and stored but never scored, so
+        // the queen was the one piece whose mobility did not count. Safe
+        // squares are the empty ones the enemy pawns do not cover, the same
+        // definition the rook uses.
+        {
+            U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+            int free_sqs = bits::count(mobility);
+            int mob_q = (static_cast<unsigned>(free_sqs) < params_.queen_mobility_table.size())
+                            ? params_.queen_mobility_table[free_sqs]
+                            : params_.queen_mobility_table.back();
+            int mobility_score =
+                ((params_.queen_mobility_scale * params_.mobility_scaling[queen] * mob_q) / 100) *
+                ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
+
+            if (bitboards::squares[s] & p.pinned<c>())
+                mobility_score /= params_.pinned_scaling[queen];
+
+            score += mobility_score;
+        }
+
         // Weak queen penalty
         U64 attackers = p.attackers_of2(s, them) & weakEnemies;
         score -= bits::count(attackers);
