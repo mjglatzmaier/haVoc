@@ -545,9 +545,15 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
                 score += 12;
         }
 
-        // Penalty for bishops on same color as own pawns
-        int same_color_penalty = (ei.me->is_endgame() ? params_.bishop_own_pawn_penalty_eg
-                                                      : params_.bishop_own_pawn_penalty_mg);
+        // Penalty for bishops on same color as own pawns.
+        //
+        // Blended by game phase. Selecting on is_endgame() picked the endgame
+        // value only once the board was down to two non-pawn pieces, which is
+        // 8.5% of positions, so bishop_own_pawn_penalty_eg was very nearly a
+        // dead parameter and a bad bishop was charged the middlegame rate
+        // through three quarters of all real endgames.
+        int same_color_penalty =
+            ei.me->taper(params_.bishop_own_pawn_penalty_mg, params_.bishop_own_pawn_penalty_eg);
         U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
@@ -617,11 +623,15 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
 
         score += mobility_score;
 
-        // Trapped rook
+        // Trapped rook. Blended by phase for the same reason as the bishop
+        // penalty above: index 1 of trapped_rook_penalty was reachable only in
+        // the barest positions. The extra charge for having not yet castled is
+        // a middlegame idea, so it fades with the middlegame weight instead of
+        // switching off.
         if (trapped_rook<c>(p, ei, s)) {
-            score -= params_.trapped_rook_penalty[ei.me->is_endgame()];
-            if (!ei.me->is_endgame() && !p.has_castled<c>())
-                score -= 2;
+            score -= ei.me->taper(params_.trapped_rook_penalty[0], params_.trapped_rook_penalty[1]);
+            if (!p.has_castled<c>())
+                score -= (2 * ei.me->mg_weight()) / material_entry::kPhaseMax;
         }
 
         // Center influence
