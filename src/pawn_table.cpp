@@ -147,17 +147,24 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
 
         // Isolated pawns
         U64 neighbors_bb = bitboards::neighbor_cols[col_idx] & pawns;
-        if (neighbors_bb == 0ULL) {
+        const bool is_isolated = (neighbors_bb == 0ULL);
+        if (is_isolated) {
             e.isolated[c] |= fbb;
             score.sub(par.isolated_pawn_penalty_mg, par.isolated_pawn_penalty_eg);
-
         }
 
-        // Backward pawns
-        if (backward_pawn<c>(row, col_idx, pawns)) {
+        // Backward pawns. An isolated pawn trivially satisfies the backward
+        // test (no neighbour can ever defend it), so charging both would levy
+        // two penalties for one weakness and make the two weights collinear --
+        // a tuner can then only ever fit their sum. The bitboard still records
+        // it, because the square in front of an isolated pawn is just as much
+        // a hole as the one in front of a backward pawn and the outpost code
+        // reads that; only the penalty is made exclusive.
+        const bool is_backward = backward_pawn<c>(row, col_idx, pawns);
+        if (is_backward) {
             e.backward[c] |= fbb;
-            score.sub(par.backward_pawn_penalty_mg, par.backward_pawn_penalty_eg);
-
+            if (!is_isolated)
+                score.sub(par.backward_pawn_penalty_mg, par.backward_pawn_penalty_eg);
         }
 
         // Square color
@@ -179,7 +186,7 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         // Semi-open files
         U64 column = bitboards::col[col_idx];
         if ((column & epawns) == 0ULL) {
-            if (fbb & e.backward[c])
+            if ((fbb & e.backward[c]) && !is_isolated)
                 score.sub(2 * par.backward_pawn_penalty_mg, 2 * par.backward_pawn_penalty_eg);
             if (fbb & e.isolated[c])
                 score.sub(2 * par.isolated_pawn_penalty_mg, 2 * par.isolated_pawn_penalty_eg);
