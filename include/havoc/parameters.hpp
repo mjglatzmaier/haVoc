@@ -149,12 +149,18 @@ struct parameters {
     /// middlegame and endgame accumulators. A pawn weakness is worth far more
     /// in an endgame, where it cannot be covered by pieces and becomes a
     /// fixed target, so the endgame endpoints default higher.
+    // Endgame endpoints deliberately equal the middlegame ones, which makes
+    // the split exactly inert: sub(v, v) is the old operator-=(v) bit for bit.
+    // Raising them (doubled 4->12, isolated 4->12, backward 1->3) was measured
+    // at -85 +/- 35 Elo over 274 games, LLR -2.96, H0 accepted. The parameters
+    // exist so Texel can fit the endgame endpoints from data; guessing them by
+    // hand is what failed.
     int doubled_pawn_penalty_mg = 4;
-    int doubled_pawn_penalty_eg = 12;
+    int doubled_pawn_penalty_eg = 4;
     int backward_pawn_penalty_mg = 1;
-    int backward_pawn_penalty_eg = 3;
+    int backward_pawn_penalty_eg = 1;
     int isolated_pawn_penalty_mg = 4;
-    int isolated_pawn_penalty_eg = 12;
+    int isolated_pawn_penalty_eg = 4;
     static constexpr int semi_open_pawn_penalty = 1;
 
     // Material values
