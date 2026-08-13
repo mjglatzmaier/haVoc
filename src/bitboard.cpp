@@ -22,8 +22,6 @@ U64 pawnmaskleft[2];
 U64 pawnmaskright[2];
 U64 nmask[64];
 U64 kmask[64];
-U64 kchecks[5][64];
-U64 kzone[64];
 U64 kflanks[8];
 U64 rmask[64];
 U64 kpawnstorm[2][2];
@@ -86,10 +84,6 @@ void bitboards::init() {
         {},                                 // queen
         {-1, 1, 8, -8, -9, -7, 9, 7}        // king
     };
-
-    std::vector<int> zsteps = {-1,     1,      8,      -8,     -9,      -7,      9,       7,
-                               -2,     2,      -2 + 8, -2 - 8, 2 + 8,   2 - 8,   -2 - 16, -2 + 16,
-                               2 - 16, 2 + 16, -16,    16,     -16 - 1, -16 + 1, 16 + 1,  16 - 1};
 
     for (Square s = A1; s <= H8; ++s) {
         squares[s] = (1ULL << s);
@@ -203,16 +197,6 @@ void bitboards::init() {
         }
         kmask[s] = bm;
 
-        // King zone (for eval)
-        bm = 0ULL;
-        for (auto& step : zsteps) {
-            int to = s + step;
-            if (on_board(to) && col_dist(s, to) <= 2 && row_dist(s, to) <= 2) {
-                bm |= squares[to];
-            }
-        }
-        kzone[s] = bm;
-
         // Pawn attack masks for each color
         int pawn_steps[2][2] = {{9, 7}, {-7, -9}};
         for (Color c = white; c <= black; ++c) {
@@ -318,12 +302,6 @@ void bitboards::init() {
                squares[sq_col(s)] | squares[sq_col(s) + 56];
         bm ^= trim;
         rmask[s] = bm;
-
-        // King check masks
-        kchecks[knight][s] = nmask[s];
-        kchecks[bishop][s] = battks[s];
-        kchecks[rook][s] = rattks[s];
-        kchecks[queen][s] = battks[s] | rattks[s];
     }
 
     // King pawn storm detection
