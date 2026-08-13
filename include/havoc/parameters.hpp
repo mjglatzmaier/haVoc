@@ -148,10 +148,25 @@ struct parameters {
     static constexpr int rook_7th_bonus = 2;
 
     // Pawn structure
-    static constexpr int doubled_pawn_penalty = 4;
-    static constexpr int backward_pawn_penalty = 1;
-    static constexpr int isolated_pawn_penalty = 4;
-    static constexpr int passed_pawn_bonus = 2;
+    /// Pawn-structure penalties, split by game phase.
+    ///
+    /// These used to be static constexpr, so they were invisible to the
+    /// tuner, and pawn_score applied every penalty identically to the
+    /// middlegame and endgame accumulators. A pawn weakness is worth far more
+    /// in an endgame, where it cannot be covered by pieces and becomes a
+    /// fixed target, so the endgame endpoints default higher.
+    // Endgame endpoints deliberately equal the middlegame ones, which makes
+    // the split exactly inert: sub(v, v) is the old operator-=(v) bit for bit.
+    // Raising them (doubled 4->12, isolated 4->12, backward 1->3) was measured
+    // at -85 +/- 35 Elo over 274 games, LLR -2.96, H0 accepted. The parameters
+    // exist so Texel can fit the endgame endpoints from data; guessing them by
+    // hand is what failed.
+    int doubled_pawn_penalty_mg = 4;
+    int doubled_pawn_penalty_eg = 4;
+    int backward_pawn_penalty_mg = 1;
+    int backward_pawn_penalty_eg = 1;
+    int isolated_pawn_penalty_mg = 4;
+    int isolated_pawn_penalty_eg = 4;
     static constexpr int semi_open_pawn_penalty = 1;
 
     // Material values
@@ -164,7 +179,12 @@ struct parameters {
     int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
-    std::array<int, 4> passed_pawn_rank_bonus = {0, 45, 90, 180};
+    /// Passed-pawn bonus by distance to promotion, indexed [4 - row_dist],
+    /// so entry 0 is a passer still four or more ranks away and entry 3 is one
+    /// step from queening. These values were hard-coded inside
+    /// eval_passed_pawns while this array sat registered with the tuner and
+    /// read by nothing.
+    std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
 
     // Search
     int fixed_depth = -1;

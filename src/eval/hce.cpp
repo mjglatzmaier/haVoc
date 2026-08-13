@@ -1083,7 +1083,7 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         int row_dist = (c == white ? 7 - util::row(f) : util::row(f));
 
         if (row_dist > 3 || row_dist <= 0) {
-            score += parameters::passed_pawn_bonus;
+            score += params_.passed_pawn_rank_bonus[0];
             continue;
         }
 
@@ -1138,7 +1138,7 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
             score += 30;
 
         // 5. Closer to promotion
-        score += (row_dist == 3 ? 45 : row_dist == 2 ? 90 : row_dist == 1 ? 180 : 0);
+        score += params_.passed_pawn_rank_bonus[4 - row_dist];
 
         if (crudeControl < 0)
             score -= (row_dist == 3 ? 30 : row_dist == 2 ? 55 : row_dist == 1 ? 120 : 0);

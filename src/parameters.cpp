@@ -87,6 +87,12 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("passed_pawn_category_scale", &passed_pawn_category_scale);
         result.emplace_back("passed_pawn_endgame_scale", &passed_pawn_endgame_scale);
         result.emplace_back("pawn_structure_category_scale", &pawn_structure_category_scale);
+        result.emplace_back("doubled_pawn_penalty_mg", &doubled_pawn_penalty_mg);
+        result.emplace_back("doubled_pawn_penalty_eg", &doubled_pawn_penalty_eg);
+        result.emplace_back("backward_pawn_penalty_mg", &backward_pawn_penalty_mg);
+        result.emplace_back("backward_pawn_penalty_eg", &backward_pawn_penalty_eg);
+        result.emplace_back("isolated_pawn_penalty_mg", &isolated_pawn_penalty_mg);
+        result.emplace_back("isolated_pawn_penalty_eg", &isolated_pawn_penalty_eg);
         result.emplace_back("space_category_scale", &space_category_scale);
         result.emplace_back("king_danger_divisor", &king_danger_divisor);
         return result;

@@ -960,6 +960,19 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "8/3k4/8/8/3P4/3K4/8/8 w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
         "6k1/5ppp/8/8/8/8/1P6/1K6 w - - 0 1",
+        // Doubled pawns, asymmetric so the two sides cannot cancel: white has
+        // a doubled c-file, black does not. Without this the corpus never
+        // reaches the doubled-pawn penalty at all.
+        "6k1/pp3ppp/8/8/8/2P5/PPP2PPP/6K1 w - - 0 1",
+        // Doubled and isolated together, which takes the other branch of the
+        // doubled-pawn test, plus a tripled file.
+        "6k1/1p3pp1/8/8/2P5/2P5/2P2PP1/6K1 w - - 0 1",
+        // The same weakness with a full board, so the middlegame endpoint of
+        // the doubled-pawn penalty is exercised and not just the endgame one.
+        "r1bqkbnr/pp1ppppp/2n5/8/8/2P5/PPP2PPP/RNBQKBNR w KQkq - 0 1",
+        // A passer two ranks from promotion, which is the one rung of the
+        // passed_pawn_rank_bonus ladder the rest of the set never reaches.
+        "6k1/pp6/4P3/8/8/8/5PPP/6K1 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
@@ -1049,12 +1062,10 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "material_value_0", "material_value_5",
         // (b) genuinely dead: declared, tuned and saved, but read by nothing.
         // attacker_weight_0 is the pawn entry of the king-danger sum, whose
-        // loop starts at knight. passed_pawn_rank_bonus and uncastled_penalty
-        // are features that were never implemented -- eval_passed_pawns uses
-        // its own hard-coded constants and eval_king has a hard-coded castling
-        // bonus with no matching penalty.
-        "attacker_weight_0", "passed_pawn_rank_bonus_0", "passed_pawn_rank_bonus_1",
-        "passed_pawn_rank_bonus_2", "passed_pawn_rank_bonus_3", "uncastled_penalty",
+        // loop starts at knight. uncastled_penalty is a feature that was never
+        // implemented -- eval_king has a hard-coded castling bonus with no
+        // matching penalty.
+        "attacker_weight_0", "uncastled_penalty",
     };
 
     std::vector<std::string> unexpected;
