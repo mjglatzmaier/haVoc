@@ -1346,6 +1346,14 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // 0.34% of the minors evaluated over a depth-15 bench -- so no
         // ordinary position in this corpus reaches it.
         "r2qkb1r/pp1p3p/2n5/3NpB2/2P1P3/8/PP3PPP/RNBQK2R w KQkq - 0 1",
+        // Passed pawns far from promotion whose square in front is controlled
+        // by the enemy. eval_passed_pawns used to stop looking at a passer more
+        // than three ranks out, so the blocked penalty only ever needed three
+        // entries; now that it has six, the bottom three need a passer on
+        // ranks 2, 3 and 4 with a knight covering the square ahead of it.
+        "4k2r/4pp2/8/n7/8/8/1P6/R2K4 w k - 0 1",
+        "4k2r/4pp2/n7/8/8/1P6/8/R2K4 w k - 0 1",
+        "4k2r/n3pp2/8/8/1P6/8/8/R2K4 w k - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter

@@ -314,26 +314,54 @@ struct parameters {
     int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
-    /// Passed-pawn bonus by distance to promotion, indexed [4 - row_dist],
-    /// so entry 0 is a passer still four or more ranks away and entry 3 is one
-    /// step from queening. These values were hard-coded inside
-    /// eval_passed_pawns while this array sat registered with the tuner and
-    /// read by nothing.
-    std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
+    /// Passed-pawn bonus by distance to promotion, indexed [6 - row_dist], so
+    /// entry 0 is a passer on its starting rank and entry 5 is one step from
+    /// queening.
+    ///
+    /// This used to be four entries covering only the last three ranks, with
+    /// everything further out collapsed into entry 0 at 2 centipawns -- and
+    /// eval_passed_pawns took an early exit at that point, so a passer on
+    /// rank 4 was not merely worth two centipawns, it was also not credited
+    /// with a rook behind it, a connected neighbour, or control of the square
+    /// in front. The bottom three entries continue the existing ladder's
+    /// roughly doubling shape downward rather than inventing a new scale.
+    std::array<int, 6> passed_pawn_rank_bonus = {5, 11, 22, 45, 90, 180};
 
     /// The rest of eval_passed_pawns, which carried these as bare literals.
     /// A passed pawn is the single most decisive structural feature on the
     /// board, and every term below the rank ladder was fixed at a number
     /// nobody could fit. Defaults reproduce the previous literals exactly.
+    /// The five terms below are flat: they say the same thing about a passer on
+    /// rank 2 as about one on rank 7. That was harmless while eval_passed_pawns
+    /// only looked at the last three ranks, and became wrong the moment it
+    /// looked at all of them -- a rank 2 passer with a rook behind it collected
+    /// passed_pawn_rook_support, which is 30, against a rank bonus of 5.
+    ///
+    /// Rather than give each of them its own ladder, they are scaled together
+    /// by distance to promotion, indexed [6 - row_dist] like the two tables
+    /// above. The last three entries are 100 on purpose: those are the ranks
+    /// the old code evaluated, and this change must leave them untouched and
+    /// only add to the ranks that were previously scored at 2 centipawns and
+    /// skipped.
+    std::array<int, 6> passed_pawn_support_scale = {10, 25, 50, 100, 100, 100};
     int passed_pawn_unblocked = 1;      ///< square in front is empty
     int passed_pawn_control = 3;        ///< per attacker of the square in front, each side
     int passed_pawn_rook_behind = 1;    ///< own rook anywhere behind on the file
     int passed_pawn_rook_support = 30;  ///< own rook behind with a clear path
     int passed_pawn_connected = 30;     ///< another passer on a neighbouring file
     /// Penalty when the square in front is controlled by the opponent, by
-    /// distance to promotion, indexed [3 - row_dist]: entry 0 is three ranks
-    /// out and entry 2 is one step from queening.
-    std::array<int, 3> passed_pawn_blocked_penalty = {30, 55, 120};
+    /// distance to promotion, indexed [6 - row_dist] to match the rank ladder
+    /// above: entry 0 is a passer on its starting rank and entry 5 is one step
+    /// from queening.
+    ///
+    /// This had three entries covering the last three ranks, because that was
+    /// all eval_passed_pawns looked at. Widening the ladder without widening
+    /// this would charge a passer six ranks from promotion the same 30 that a
+    /// passer three ranks out pays, against a rank bonus of 5 -- a pawn worth
+    /// five centipawns losing thirty for a square it was never going to reach
+    /// this move. The three new entries stay in proportion to the bonuses they
+    /// sit beside.
+    std::array<int, 6> passed_pawn_blocked_penalty = {3, 7, 15, 30, 55, 120};
 
     // Search
     int fixed_depth = -1;

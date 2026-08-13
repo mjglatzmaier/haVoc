@@ -169,3 +169,39 @@ Elo; at 12, which is 36 centipawns summed over three pawns against a previous
 maximum of 4, it measured -37 over 228 games. Fix the shape, keep the magnitude
 in family with whatever sits beside it, and let the tuner raise the whole block
 together.
+
+## Passed pawn ladder and blocked penalty
+
+`eval_passed_pawns` used to stop at `row_dist > 3`, so a passer four or more
+ranks from promotion collected 2 centipawns and skipped the rest of the
+function entirely -- no rook-behind credit, no connected-passer bonus, no
+control of the square in front, and no penalty for losing it. Both tables are
+now six entries covering every rank a passer can stand on.
+
+| | old | new |
+| --- | --- | --- |
+| `passed_pawn_rank_bonus` | `{2, 45, 90, 180}` | `{5, 11, 22, 45, 90, 180}` |
+| `passed_pawn_blocked_penalty` | `{30, 55, 120}` | `{3, 7, 15, 30, 55, 120}` |
+
+The three new entries in each continue the existing ladder's roughly doubling
+shape downward. That is a guess about shape, not a fitted answer, and the
+shape is the part worth re-examining: it assumes the value of a passer grows
+geometrically with advancement, which is the usual assumption but not a
+measured one.
+
+The first version of this change widened only the bonus table and left the
+penalty at three entries with a clamped index, which charged a passer six ranks
+out the same 30 centipawns that a passer three ranks out pays -- against a
+bonus of 5. That measured -30 Elo over 127 games. Widening both tables together
+brought it back to neutral. Worth remembering as the same lesson in a different
+costume: extending a term's *scope* is as much a weight change as editing its
+value, because every constant that term touches now applies to positions it
+never applied to before.
+
+## Outpost defended bonus
+
+`outpost_defended_bonus` is `{0, 4, 3, 0, 0, 0}` -- a knight or bishop on a hole
+that one of its own pawns defends. The case is rare (0.34% of minors over a
+depth-15 bench) and the two values were chosen to sit beside
+`knight_outpost_bonus`, which tops out at 3, rather than from any evidence that
+a defended outpost is worth about as much again as the outpost itself.

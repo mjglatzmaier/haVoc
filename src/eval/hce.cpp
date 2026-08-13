@@ -1194,16 +1194,23 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         Square f = Square(bits::pop_lsb(passers));
         int row_dist = (c == white ? 7 - util::row(f) : util::row(f));
 
-        if (row_dist > 3 || row_dist <= 0) {
-            score += params_.passed_pawn_rank_bonus[0];
+        // A pawn cannot be passed on the rank it promotes on, so row_dist is
+        // always 1..6 and every entry of the ladder below is reachable.
+        if (row_dist <= 0)
             continue;
-        }
 
         Square front = (c == white ? Square(f + 8) : Square(f - 8));
 
+        // Everything from here to the rank ladder is flat -- it says the same
+        // thing about a passer on rank 2 as about one on rank 7 -- so it is
+        // accumulated separately and scaled by distance to promotion at the
+        // end. The scale is 100 for the last three ranks, which are the only
+        // ones this function used to reach at all.
+        int support = 0;
+
         // 1. Is next square blocked?
         if (p.piece_on(front) == no_piece)
-            score += params_.passed_pawn_unblocked;
+            support += params_.passed_pawn_unblocked;
 
         // 2. Control of front square
         U64 our_attackers = 0ULL;
@@ -1217,11 +1224,11 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
 
         if (our_attackers != 0ULL) {
             crudeControl += bits::count(our_attackers);
-            score += params_.passed_pawn_control * bits::count(our_attackers);
+            support += params_.passed_pawn_control * bits::count(our_attackers);
         }
         if (their_attackers != 0ULL) {
             crudeControl -= bits::count(their_attackers);
-            score -= params_.passed_pawn_control * bits::count(their_attackers);
+            support -= params_.passed_pawn_control * bits::count(their_attackers);
         }
 
         // 3. Rooks behind passed pawns
@@ -1235,10 +1242,10 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
                     auto supports = ((bitboards::between[rf][f] & p.all_pieces()) ^
                                      (bitboards::squares[rf] | bitboards::squares[f])) == 0ULL;
                     if (isBehind)
-                        score += params_.passed_pawn_rook_behind;
+                        support += params_.passed_pawn_rook_behind;
                     if (isBehind && supports) {
                         crudeControl += 1;
-                        score += params_.passed_pawn_rook_support;
+                        support += params_.passed_pawn_rook_support;
                     }
                 }
             }
@@ -1247,13 +1254,16 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         // 4. Connected passers
         auto connectedPassed = (bitboards::neighbor_cols[util::col(f)] & ei.pe->passed[c]) != 0ULL;
         if (connectedPassed)
-            score += params_.passed_pawn_connected;
+            support += params_.passed_pawn_connected;
 
-        // 5. Closer to promotion
-        score += params_.passed_pawn_rank_bonus[4 - row_dist];
+        score += (support * params_.passed_pawn_support_scale[6 - row_dist]) / 100;
+
+        // 5. Closer to promotion. The ladder and the blocked penalty are graded
+        // by rank in their own right, so they are not scaled again.
+        score += params_.passed_pawn_rank_bonus[6 - row_dist];
 
         if (crudeControl < 0)
-            score -= params_.passed_pawn_blocked_penalty[3 - row_dist];
+            score -= params_.passed_pawn_blocked_penalty[6 - row_dist];
     }
     return score;
 }
