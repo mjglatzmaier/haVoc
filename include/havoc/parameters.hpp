@@ -229,10 +229,17 @@ struct parameters {
     //
     // Entries 0 and 7 are unreachable: relative rank 0 is a side's own back
     // rank and 7 is the promotion square, and no pawn ever stands on either.
-    std::array<int, 8> phalanx_pawn_mg = {0, 2, 3, 5, 9, 16, 26, 0};
-    std::array<int, 8> phalanx_pawn_eg = {0, 2, 4, 7, 13, 24, 40, 0};
-    std::array<int, 8> supported_pawn_mg = {0, 2, 3, 4, 6, 10, 16, 0};
-    std::array<int, 8> supported_pawn_eg = {0, 2, 3, 5, 8, 14, 24, 0};
+    // Scaled to haVoc's own pawn structure magnitudes, not to the values these
+    // tables conventionally carry elsewhere. haVoc charges 4 for an isolated
+    // pawn, 4 for a doubled one and 1 for a backward one, so a phalanx bonus
+    // peaking at 40 would have been an order of magnitude larger than every
+    // other pawn term and would simply have overridden them. Measured: at the
+    // conventional scale the term was worth -12.6 +/- 22.9 Elo over 581 games.
+    // The shape is unchanged; only the scale is haVoc's.
+    std::array<int, 8> phalanx_pawn_mg = {0, 0, 1, 1, 2, 4, 6, 0};
+    std::array<int, 8> phalanx_pawn_eg = {0, 1, 1, 2, 3, 6, 10, 0};
+    std::array<int, 8> supported_pawn_mg = {0, 0, 1, 1, 2, 3, 4, 0};
+    std::array<int, 8> supported_pawn_eg = {0, 1, 1, 1, 2, 4, 6, 0};
 
     // Material values
     std::array<int, 6> material_value = {100, 300, 315, 480, 910, 20000};
