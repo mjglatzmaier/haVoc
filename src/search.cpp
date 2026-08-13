@@ -347,9 +347,15 @@ double SearchEngine::estimate_max_time(position& p) const {
 void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int thread_id) {
     int alpha = score::kNegInf;
     int beta = score::kInf;
-    int delta = 65;
+    const int baseDelta = 65;
+    int delta = baseDelta;
     int smallDelta = 33;
     int eval = score::kNegInf;
+    // The score of the last *completed* iteration. The aspiration window has to
+    // be anchored on this and not on `eval`, because between the two `eval`
+    // holds the value a failed search returned, and that is a bound, not an
+    // estimate of the score.
+    int last_completed = score::kNegInf;
 
     if (params_.fixed_depth > 0)
         depth = static_cast<U16>(params_.fixed_depth);
@@ -382,24 +388,29 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
         for (auto& rm : p.root_moves)
             rm.prevScore = rm.score;
 
-        bool failLow = false;
-        bool failHigh = false;
+        // Reset the widening step for every iteration. This was declared once
+        // outside the loop, so a depth that needed several re-searches left
+        // `delta` permanently enlarged for every depth that followed. Measured
+        // over bench 12 (144 iterations): mean delta at iteration start 91.3
+        // against a base of 65, peaking at 306.
+        delta = baseDelta;
+
+        // Only aspirate once a completed iteration has produced a score to
+        // aspirate around. The old guard was `id >= 2`, which is true on the
+        // *first* iteration of every helper thread, since thread n starts at
+        // depth n + 1. Those threads then built their window out of the initial
+        // eval of -inf and searched [-inf, -inf + 33], which fails high on
+        // essentially any position.
+        if (last_completed != score::kNegInf) {
+            alpha = std::max(last_completed - smallDelta, static_cast<int>(score::kNegInf));
+            beta = std::min(last_completed + smallDelta, static_cast<int>(score::kInf));
+        } else {
+            alpha = score::kNegInf;
+            beta = score::kInf;
+        }
 
         // Aspiration window search
         while (true) {
-            if (id >= 2) {
-                alpha = std::max(eval - smallDelta, static_cast<int>(score::kNegInf));
-                beta = std::min(eval + smallDelta, static_cast<int>(score::kInf));
-                if (failLow) {
-                    beta = std::min(beta + delta, static_cast<int>(score::kInf));
-                    failLow = false;
-                }
-                if (failHigh) {
-                    alpha = std::max(alpha - delta, static_cast<int>(score::kNegInf));
-                    failHigh = false;
-                }
-            }
-
             sel_depth_ = 0;
             eval = search<root>(p, alpha, beta, static_cast<U16>(id), stack + 2, thread_id);
 
@@ -425,19 +436,31 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
             if (is_main && !silent && (eval <= alpha || eval >= beta))
                 readout_pv(stack, p.root_moves, eval, alpha, beta, static_cast<U16>(id));
 
+            // Widen only the bound that actually failed, and leave the other
+            // one where it is. The old code recomputed *both* bounds from
+            // `eval` on every re-search, which re-centred the window on the
+            // score of the search that had just failed. On a fail low that
+            // score is only an upper bound and under fail-soft it can sit far
+            // below alpha, so beta was dragged down with it -- sometimes below
+            // the alpha we had just failed under -- and the re-search then
+            // failed high against a window that had moved past the score in
+            // the opposite direction.
             if (eval <= alpha) {
+                alpha = std::max(eval - delta, static_cast<int>(score::kNegInf));
                 delta += delta / 4;
-                failHigh = true;
             } else if (eval >= beta) {
+                beta = std::min(eval + delta, static_cast<int>(score::kInf));
                 delta += delta / 4;
-                failLow = true;
             } else {
                 break;
             }
         }
 
-        if (!signals_.stop.load() && thread_id < static_cast<int>(completed_depth_.size()))
-            completed_depth_[thread_id] = static_cast<int>(id);
+        if (!signals_.stop.load()) {
+            last_completed = eval;
+            if (thread_id < static_cast<int>(completed_depth_.size()))
+                completed_depth_[thread_id] = static_cast<int>(id);
+        }
 
         // Print PV
         if (is_main && !signals_.stop.load()) {
@@ -814,7 +837,13 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // -- so the argument no longer applies, but the conclusion is unchanged
         // and !pvNode remains untested here.)
         if (!root_node && !in_check && bestScore > score::kMatedMaxPly)
-            skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
+            // Compared as int. The cast to U16 truncated: futility_move_count
+            // returns (futility_base + depth^2) / (2 - improving), and any
+            // value that is a multiple of 65536 -- reachable by setting the
+            // registered futility_base parameter, which is exactly what a tuner
+            // or a UCI client is invited to do -- wrapped to 0 and turned "skip
+            // no quiets" into "skip every quiet".
+            skipQuiets = moves_searched >= futility_move_count(improving, depth);
 
         // Depth for the child node: one ply is always consumed here.
         int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
@@ -1071,9 +1100,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
         // 189 sampled positions symmetric again. The asymmetry is only hidden
         // today because the lazy evaluation cutoff above usually returns before
         // the difference can show.
-        int deltaCut = 910;
+        int deltaCut = params_.qs_delta_margin;
         if (anyPawnsOn7th)
-            deltaCut += 775;
+            deltaCut += params_.qs_delta_pawn7th;
         if (best_score < alpha - deltaCut)
             return best_score;
 
