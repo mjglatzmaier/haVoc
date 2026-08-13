@@ -1043,13 +1043,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // Every quiet tried at a node that failed low is evidence against that
     // move. Without this the table only learns from beta cutoffs, and since a
     // cutoff node has tried a mean of 0.34 quiets before it cuts, the negative
-    // side of the table never develops: over a depth-15 bench it bottoms out
-    // at -1769 against a history pruning threshold of -12288, so that pruning
-    // fired 0 times in 4240374 opportunities.
-    if (bestScore <= alpha_orig && !quiets.empty())
-        history_.malus(to_mv, history_bonus(depth) * params_.history_malus_pct / 100, quiets);
-        history_.malus_continuation(pos, stack, history_bonus(depth) * params_.history_malus_pct / 100,
-                                    quiets);
+    // side of the table never develops -- see docs/revisit-after-tuning.md for
+    // the measured distribution and why history_malus_pct is still 0.
+    //
+    // The braces matter: malus_continuation sat outside the condition and ran
+    // at every node, including the ones that cut. It is only harmless today
+    // because history_malus_pct is 0, which makes the malus itself 0 -- so the
+    // first thing an SPSA fit does when it raises that parameter is corrupt the
+    // continuation tables at every cutoff node in the search.
+    if (bestScore <= alpha_orig && !quiets.empty()) {
+        const int malus = history_bonus(depth) * params_.history_malus_pct / 100;
+        history_.malus(to_mv, malus, quiets);
+        history_.malus_continuation(pos, stack, malus, quiets);
+    }
 
     // Best move bonus
     if (bestScore >= alpha && bestScore < beta && best_move.f != best_move.t) {
