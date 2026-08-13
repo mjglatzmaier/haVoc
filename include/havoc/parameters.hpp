@@ -150,6 +150,7 @@ struct parameters {
     int opposite_bishop_scale = 24;
     int no_pawn_scale = 32;
     int minor_advantage_no_pawn_scale = 8;
+    int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
     std::array<int, 4> passed_pawn_rank_bonus = {0, 45, 90, 180};
