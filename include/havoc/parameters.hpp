@@ -139,7 +139,17 @@ struct parameters {
     int bishop_own_pawn_penalty_mg = 1;
     int bishop_own_pawn_penalty_eg = 3;
 
-    std::vector<int> king_shelter{-3, -2, 2, 3}; // 0,1,2,3 pawns
+    /// Shelter bonus by the number of own pawns in the king's zone, capped at
+    /// three. These used to be halved at the point of use, which truncated:
+    /// -3 and -2 both became -1, so two distinct parameter values produced an
+    /// identical evaluation and the tuner had no gradient between them. The
+    /// halving is gone and these are the values it produced.
+    std::vector<int> king_shelter{-1, -1, 1, 1}; // 0,1,2,3 pawns
+    /// Charged when the king's flank holds no friendly pawn at all.
+    int pawnless_flank_penalty = 2;
+    /// Charged by the number of enemy pawns bearing down on the king's side of
+    /// the board, capped at three.
+    std::vector<int> king_storm_penalty{0, 0, 2, 4};
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
     /// Danger per square from which an enemy piece could give check without

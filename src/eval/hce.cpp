@@ -879,12 +879,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             // against wherever the king stood when that entry was filled.
             U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
-            int shelter = params_.king_shelter[n] / 2;
+            int shelter = params_.king_shelter[n];
 
             // Pawnless flank penalty
             U64 kflank = bitboards::kflanks[util::col(s)] & p.get_pieces<c, pawn>();
             if (!kflank)
-                shelter -= 2;
+                shelter -= params_.pawnless_flank_penalty;
 
             score += (shelter * mg) / material_entry::kPhaseMax;
         }
@@ -896,12 +896,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             auto pawnStormMask = bitboards::kpawnstorm[c][!(util::col(s) >= Col::E)];
             auto pawnStorm = pawnStormMask & enemyPawns;
             auto numAttackers = bits::count(pawnStorm);
-            int storm = 0;
-            if (numAttackers >= 2) {
-                storm -= 2;
-                if (numAttackers >= 3)
-                    storm -= 2;
-            }
+            int storm = -params_.king_storm_penalty[std::min(3, numAttackers)];
             score += (storm * mg) / material_entry::kPhaseMax;
         }
     }

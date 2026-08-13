@@ -1172,6 +1172,14 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "k7/8/8/1p1p1p1p/1N1N1N1N/8/8/K7 w - - 0 1",
         "7k/8/8/p1p1p1p1/B1B1B1B1/8/8/7K w - - 0 1",
         "k7/8/8/1p1p1p1p/1B1B1B1B/8/8/K7 w - - 0 1",
+        // Three enemy pawns storming the king's flank, the top entry of
+        // king_storm_penalty. White's king is on the kingside with Black's f,
+        // g and h pawns advancing on it, while Black's king sits on the
+        // opposite flank where White has nothing storming, so the two sides do
+        // not cancel. The queens and rooks are there to keep the middlegame
+        // weight high enough for the term, which tapers to nothing in the
+        // endgame, to survive the phase interpolation.
+        "k6r/7q/8/8/5ppp/8/PP3PPP/R2Q2K1 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
