@@ -668,6 +668,13 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // in the slot, so clear it: a threat should only be adopted when this
         // null search actually produced one.
         (stack + 1)->best_move = Move{};
+        // A null move is not a move, but this slot is what the child reads as
+        // "the move my parent just played". Leaving the real move that was
+        // searched here earlier in this node's own move loop makes the child
+        // key its counter-move bonus, and every history term derived from the
+        // predecessor, off a move that was never played on the board it is
+        // looking at. Record the null explicitly.
+        stack->curr_move = Move{};
         pos.do_null_move();
         int null_eval =
             (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
