@@ -837,7 +837,13 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // -- so the argument no longer applies, but the conclusion is unchanged
         // and !pvNode remains untested here.)
         if (!root_node && !in_check && bestScore > score::kMatedMaxPly)
-            skipQuiets = moves_searched >= static_cast<U16>(futility_move_count(improving, depth));
+            // Compared as int. The cast to U16 truncated: futility_move_count
+            // returns (futility_base + depth^2) / (2 - improving), and any
+            // value that is a multiple of 65536 -- reachable by setting the
+            // registered futility_base parameter, which is exactly what a tuner
+            // or a UCI client is invited to do -- wrapped to 0 and turned "skip
+            // no quiets" into "skip every quiet".
+            skipQuiets = moves_searched >= futility_move_count(improving, depth);
 
         // Depth for the child node: one ply is always consumed here.
         int newdepth = static_cast<int>(depth) - 1 + extensions - reductions_val;
@@ -1094,9 +1100,9 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
         // 189 sampled positions symmetric again. The asymmetry is only hidden
         // today because the lazy evaluation cutoff above usually returns before
         // the difference can show.
-        int deltaCut = 910;
+        int deltaCut = params_.qs_delta_margin;
         if (anyPawnsOn7th)
-            deltaCut += 775;
+            deltaCut += params_.qs_delta_pawn7th;
         if (best_score < alpha - deltaCut)
             return best_score;
 
