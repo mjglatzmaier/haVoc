@@ -1207,6 +1207,19 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "7n/p7/8/8/3k4/8/6K1/B7 b - - 0 1",
         "7r/8/8/8/3k4/8/6K1/B7 b - - 0 1",
         "7q/8/8/8/3k4/8/6K1/B7 b - - 0 1",
+        // Connected pawns, reached by rank relative to the mover. Black has no
+        // pawns in any of these, so the term cannot cancel between the sides.
+        // The first has both sides' full non-pawn material, so the phase sits
+        // at the middlegame end and the mg halves of the tables are what move;
+        // the second is the same pawn structure with the pieces stripped, so
+        // the phase sits at the endgame end and the eg halves move instead.
+        // a5/b5, c6/d6 and e7/f7 are phalanxes on relative ranks 4, 5 and 6;
+        // h5 is supported by g4, c6 by b5 and e7 by d6.
+        "rnbqkbnr/4PP2/2PP4/PP5P/6P1/8/8/RNBQKBNR w KQkq - 0 1",
+        "4k3/4PP2/2PP4/PP5P/6P1/8/8/4K3 w - - 0 1",
+        // A bare endgame reaching the low ranks: b3/c3 is a phalanx on
+        // relative rank 2 and d4 is supported by c3 on relative rank 3.
+        "4k3/8/8/8/3P4/1PP5/8/4K3 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter

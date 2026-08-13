@@ -201,6 +201,26 @@ struct parameters {
     int isolated_pawn_penalty_mg = 4;
     int isolated_pawn_penalty_eg = 4;
 
+    // Connected pawns, indexed by the pawn's rank relative to its own side.
+    // Until these were added the pawn evaluation was made entirely of
+    // penalties -- doubled, isolated, backward, undefended -- with no term
+    // that rewarded a healthy structure. That left the tuner able to express
+    // only "less bad" and never "good", and it biased the evaluation against
+    // having pawns at all.
+    //
+    // Two separate cases rather than one bonus with a hardcoded multiplier,
+    // so that every number here is something Texel can fit:
+    //   phalanx   -- a friendly pawn abreast on an adjacent file
+    //   supported -- a friendly pawn defending this one from behind
+    // A pawn can be both, and then it collects both.
+    //
+    // Entries 0 and 7 are unreachable: relative rank 0 is a side's own back
+    // rank and 7 is the promotion square, and no pawn ever stands on either.
+    std::array<int, 8> phalanx_pawn_mg = {0, 2, 3, 5, 9, 16, 26, 0};
+    std::array<int, 8> phalanx_pawn_eg = {0, 2, 4, 7, 13, 24, 40, 0};
+    std::array<int, 8> supported_pawn_mg = {0, 2, 3, 4, 6, 10, 16, 0};
+    std::array<int, 8> supported_pawn_eg = {0, 2, 3, 5, 8, 14, 24, 0};
+
     // Material values
     std::array<int, 6> material_value = {100, 300, 315, 480, 910, 20000};
 

@@ -266,6 +266,24 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("trapped_rook_mg", &trapped_rook_penalty[0]);
         result.emplace_back("trapped_rook_eg", &trapped_rook_penalty[1]);
 
+        // Connected pawns, by rank relative to the pawn's own side. Relative
+        // rank 0 is that side's back rank and 7 is the promotion square; a
+        // pawn stands on neither, so those two entries have no reader.
+        //
+        // The supported tables start at 2 rather than 1 for a second reason: a
+        // pawn on relative rank 1 is on its own second rank, and the pawns
+        // that would defend it would have to stand on the first rank, where no
+        // pawn can ever be. Relative rank 1 is reachable for a phalanx, which
+        // only needs a neighbour abreast.
+        for (size_t r = 1; r < 7; ++r) {
+            result.emplace_back("phalanx_pawn_mg_" + std::to_string(r), &phalanx_pawn_mg[r]);
+            result.emplace_back("phalanx_pawn_eg_" + std::to_string(r), &phalanx_pawn_eg[r]);
+            if (r >= 2) {
+                result.emplace_back("supported_pawn_mg_" + std::to_string(r), &supported_pawn_mg[r]);
+                result.emplace_back("supported_pawn_eg_" + std::to_string(r), &supported_pawn_eg[r]);
+            }
+        }
+
         // Deliberately NOT registered, and not oversights:
         //
         //   sq_score_scaling, attack_scaling, mobility_scaling -- all-ones

@@ -101,6 +101,11 @@ struct pawn_score {
         mg = static_cast<int16_t>(mg - v_mg);
         eg = static_cast<int16_t>(eg - v_eg);
     }
+    /// Add a bonus that differs between the middlegame and the endgame.
+    void add(int v_mg, int v_eg) {
+        mg = static_cast<int16_t>(mg + v_mg);
+        eg = static_cast<int16_t>(eg + v_eg);
+    }
 };
 
 template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, const parameters& par) {
@@ -137,6 +142,20 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         if (defenders == 0ULL) {
             score -= 1;
             e.undefended[c] |= fbb;
+        }
+
+        // Connected pawns. `defenders` above is exactly the set of friendly
+        // pawns defending this square, so support costs nothing extra to
+        // detect; a phalanx is a friendly pawn on an adjacent file and the
+        // same rank. Both are scored by the pawn's rank relative to its own
+        // side, since a connected pair matters more the further it has
+        // advanced. A pawn that is both defended and abreast collects both.
+        {
+            int rel_rank = (c == white ? row : 7 - row);
+            if (bitboards::neighbor_cols[col_idx] & pawns & bitboards::row[row])
+                score.add(par.phalanx_pawn_mg[rel_rank], par.phalanx_pawn_eg[rel_rank]);
+            if (defenders)
+                score.add(par.supported_pawn_mg[rel_rank], par.supported_pawn_eg[rel_rank]);
         }
 
         // Passed pawns
