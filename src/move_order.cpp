@@ -73,6 +73,11 @@ int Movehistory::score(const Move& m, const Color& c, const Move& previous, cons
         s += kCounterMoveBonus;
     if (followup.type != static_cast<U8>(no_type) && followup.f == m.t && followup.t == m.f)
         s -= kCounterMoveBonus;
+    // threat is the opponent capture that refuted our null move, so the piece
+    // it lands on is ours and is the one under threat. Moving that piece is
+    // the most likely refutation of the threat, so it is worth trying early.
+    if (threat.type != static_cast<U8>(no_type) && m.f == threat.t)
+        s += kCounterMoveBonus;
     return s;
 }
 
