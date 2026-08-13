@@ -102,6 +102,13 @@ constexpr U64 kLongDiagonals = [] {
 /// starting position at any depth. Giving the score a gradient -- drive the
 /// defending king to the edge, and walk the attacking king in behind it --
 /// turns the plateau into a hill, which is all the search needs to find mate.
+/// Squares strictly between two aligned squares. bitboards::between includes
+/// both endpoints, so every caller that wants to know whether a line is clear
+/// has to strip them first.
+inline U64 strictly_between(int a, int b) {
+    return bitboards::between[a][b] & ~bitboards::squares[a] & ~bitboards::squares[b];
+}
+
 inline int eval_bare_king(const position& p, Color strong, const parameters& params) {
     const int sk = static_cast<int>(p.king_square(strong));
     const int wk = static_cast<int>(p.king_square(strong == white ? black : white));
@@ -724,6 +731,26 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
             magics::attacks<bishop>(ei.all_pieces, s) | magics::attacks<rook>(ei.all_pieces, s);
         ei.piece_attacks[c][queen] |= mvs;
 
+        // The attack set above was computed and stored but never scored, so
+        // the queen was the one piece whose mobility did not count. Safe
+        // squares are the empty ones the enemy pawns do not cover, the same
+        // definition the rook uses.
+        {
+            U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+            int free_sqs = bits::count(mobility);
+            int mob_q = (static_cast<unsigned>(free_sqs) < params_.queen_mobility_table.size())
+                            ? params_.queen_mobility_table[free_sqs]
+                            : params_.queen_mobility_table.back();
+            int mobility_score =
+                ((params_.queen_mobility_scale * params_.mobility_scaling[queen] * mob_q) / 100) *
+                ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
+
+            if (bitboards::squares[s] & p.pinned<c>())
+                mobility_score /= params_.pinned_scaling[queen];
+
+            score += mobility_score;
+        }
+
         // Weak queen penalty
         U64 attackers = p.attackers_of2(s, them) & weakEnemies;
         score -= bits::count(attackers);
@@ -879,12 +906,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             // against wherever the king stood when that entry was filled.
             U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
-            int shelter = params_.king_shelter[n] / 2;
+            int shelter = params_.king_shelter[n];
 
             // Pawnless flank penalty
             U64 kflank = bitboards::kflanks[util::col(s)] & p.get_pieces<c, pawn>();
             if (!kflank)
-                shelter -= 2;
+                shelter -= params_.pawnless_flank_penalty;
 
             score += (shelter * mg) / material_entry::kPhaseMax;
         }
@@ -896,12 +923,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             auto pawnStormMask = bitboards::kpawnstorm[c][!(util::col(s) >= Col::E)];
             auto pawnStorm = pawnStormMask & enemyPawns;
             auto numAttackers = bits::count(pawnStorm);
-            int storm = 0;
-            if (numAttackers >= 2) {
-                storm -= 2;
-                if (numAttackers >= 3)
-                    storm -= 2;
-            }
+            int storm = -params_.king_storm_penalty[std::min(3, numAttackers)];
             score += (storm * mg) / material_entry::kPhaseMax;
         }
     }
@@ -956,7 +978,7 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     // 1. Pieces under attack by pawns
     auto attackedByPawns = enemies & pawnAttacks;
     if (attackedByPawns != 0ULL)
-        score += 1;
+        score += params_.threat_by_pawn;
 
     // 2. Hanging pieces under attack
     auto defendendEnemies = enemies & (enemyPawnAttacks | enemyPieceAttacks);
@@ -980,14 +1002,14 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     auto defendendWeakPawns = weakPawns & (enemyPawnAttacks | enemyPieceAttacks);
     auto undefendendWeakPawns = weakPawns ^ defendendWeakPawns;
     if (undefendendWeakPawns) {
-        if (undefendendWeakPawns & ei.piece_attacks[c][knight])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][knight]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][bishop])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][bishop]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][rook])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][rook]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][queen])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][queen]);
+        score += params_.threat_weak_pawn[0] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][knight]);
+        score += params_.threat_weak_pawn[1] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][bishop]);
+        score += params_.threat_weak_pawn[2] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][rook]);
+        score += params_.threat_weak_pawn[3] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][queen]);
     }
 
     // 4. Pieces pinned to queen
@@ -1000,24 +1022,32 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         auto bishopPinners = bitboards::battks[queenSq] & ourBishops;
         while (rookPinners) {
             auto rookSq = bits::pop_lsb(rookPinners);
-            auto betweenMask = bitboards::between[rookSq][queenSq];
-            auto pinnedByRook = (enemies & betweenMask) ^ bitboards::squares[queenSq];
-            if (pinnedByRook && bits::count(pinnedByRook) == 1) {
-                auto pp = p.piece_on(Square(bits::pop_lsb(pinnedByRook)));
-                if (pp == bishop || pp == knight)
-                    score += 6;
+            // Every piece on the line matters, not just the enemy's non-pawn
+            // pieces. Masking with `enemies` alone made a pawn of either
+            // colour, or one of our own pieces, invisible, so the term fired
+            // on lines that were not pins at all.
+            U64 blockers = strictly_between(rookSq, queenSq) & ei.all_pieces;
+            if (bits::count(blockers) == 1) {
+                auto sq = Square(bits::lsb(blockers));
+                if (bitboards::squares[sq] & ei.pieces[them]) {
+                    auto pp = p.piece_on(sq);
+                    if (pp == bishop || pp == knight)
+                        score += params_.queen_pin_minor;
+                }
             }
         }
         while (bishopPinners) {
             auto bishopSq = bits::pop_lsb(bishopPinners);
-            auto betweenMask = bitboards::between[bishopSq][queenSq];
-            auto pinnedByBishop = (enemies & betweenMask) ^ bitboards::squares[queenSq];
-            if (pinnedByBishop && bits::count(pinnedByBishop) == 1) {
-                auto pp = p.piece_on(Square(bits::pop_lsb(pinnedByBishop)));
-                if (pp == knight)
-                    score += 6;
-                if (pp == rook)
-                    score += 18;
+            U64 blockers = strictly_between(bishopSq, queenSq) & ei.all_pieces;
+            if (bits::count(blockers) == 1) {
+                auto sq = Square(bits::lsb(blockers));
+                if (bitboards::squares[sq] & ei.pieces[them]) {
+                    auto pp = p.piece_on(sq);
+                    if (pp == knight)
+                        score += params_.queen_pin_minor;
+                    if (pp == rook)
+                        score += params_.queen_pin_rook;
+                }
             }
         }
     }
@@ -1031,34 +1061,34 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     auto ourKnights = p.get_pieces<c, knight>();
     while (bishopCheckers && !hasDiscovery) {
         auto bishopSq = bits::pop_lsb(bishopCheckers);
-        auto between = bitboards::between[bishopSq][enemyKing] & (ourRooks | ourKnights);
-        if (between && bits::count(between) == 1) {
+        U64 blockers = strictly_between(bishopSq, enemyKing) & ei.all_pieces;
+        if (bits::count(blockers) == 1 && (blockers & (ourRooks | ourKnights))) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
     while (rookCheckers && !hasDiscovery) {
         auto rookSq = bits::pop_lsb(rookCheckers);
-        auto between = bitboards::between[rookSq][enemyKing] & (ourBishops | ourKnights);
-        if (between && bits::count(between) == 1) {
+        U64 blockers = strictly_between(rookSq, enemyKing) & ei.all_pieces;
+        if (bits::count(blockers) == 1 && (blockers & (ourBishops | ourKnights))) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
     auto queenCheckers = (bitboards::rattks[enemyKing] | bitboards::battks[enemyKing]) & ourQueens;
     while (queenCheckers && !hasDiscovery) {
         auto queenSq = bits::pop_lsb(queenCheckers);
-        auto between = bitboards::between[queenSq][enemyKing] & ourKnights;
-        if (between && bits::count(between) == 1) {
+        U64 blockers = strictly_between(queenSq, enemyKing) & ei.all_pieces;
+        if (bits::count(blockers) == 1 && (blockers & ourKnights)) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
 
     // 6. Restriction
     auto ourAttacks = pawnAttacks | ourPieceAttacks;
     auto theirAttacks = enemyPawnAttacks | enemyPieceAttacks;
-    score += bits::count(ourAttacks) - bits::count(theirAttacks);
+    score += params_.restriction_weight * (bits::count(ourAttacks) - bits::count(theirAttacks));
 
     // 7. Skewer detection
     bishopCheckers = bitboards::battks[enemyKing] & ourBishops;
@@ -1073,15 +1103,15 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         U64 ep_copy = enemyPieces;
         while (ep_copy) {
             auto enemy = bits::pop_lsb(ep_copy);
-            auto between = bitboards::between[bishopSq][enemy] & enemyKingSq;
-            if (between && bits::count(between) == 1) {
+            U64 blockers = strictly_between(bishopSq, enemy) & ei.all_pieces;
+            if (bits::count(blockers) == 1 && (blockers & enemyKingSq)) {
                 auto pp = p.piece_on(Square(enemy));
                 if (pp == bishop || pp == knight)
-                    score += 4;
+                    score += params_.skewer_bonus[0];
                 if (pp == rook)
-                    score += 6;
+                    score += params_.skewer_bonus[1];
                 if (pp == queen)
-                    score += 8;
+                    score += params_.skewer_bonus[2];
             }
         }
     }

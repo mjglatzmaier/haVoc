@@ -81,6 +81,19 @@ struct parameters {
                                                  20,  22,  24,  25, 26, 27, 28};
     std::array<int, 15> rook_mobility_table = {0, 1, 2, 3, 5, 6, 8, 9, 10, 11, 13, 14, 15, 17, 18};
 
+    // The queen had no mobility term at all: eval_queens computed its attack
+    // set and stored it into piece_attacks, but never scored how many squares
+    // it actually had. Knight, bishop and rook each had a table and a scale.
+    // A queen on an open board reaches up to 27 squares, so the table is
+    // sized to the widest fan-out any single piece can have. The curve is
+    // deliberately flatter than the rook's: a queen is already worth so much
+    // that being slightly cramped should not read as a large loss, and the
+    // shape is a starting point for tuning rather than a fitted answer.
+    int queen_mobility_scale = 98;
+    std::array<int, 28> queen_mobility_table = {-20, -16, -12, -9, -6, -4, -2, 0, 1,  2,
+                                                3,   4,   5,   6,  7,  8,  9,  9, 10, 10,
+                                                11,  11,  12,  12, 13, 13, 14, 14};
+
     // Square attack bonuses (pawn, knight, bishop, rook, queen)
     std::vector<int> square_attks{7, 4, 3, 2, 1};
 
@@ -139,7 +152,17 @@ struct parameters {
     int bishop_own_pawn_penalty_mg = 1;
     int bishop_own_pawn_penalty_eg = 3;
 
-    std::vector<int> king_shelter{-3, -2, 2, 3}; // 0,1,2,3 pawns
+    /// Shelter bonus by the number of own pawns in the king's zone, capped at
+    /// three. These used to be halved at the point of use, which truncated:
+    /// -3 and -2 both became -1, so two distinct parameter values produced an
+    /// identical evaluation and the tuner had no gradient between them. The
+    /// halving is gone and these are the values it produced.
+    std::vector<int> king_shelter{-1, -1, 1, 1}; // 0,1,2,3 pawns
+    /// Charged when the king's flank holds no friendly pawn at all.
+    int pawnless_flank_penalty = 2;
+    /// Charged by the number of enemy pawns bearing down on the king's side of
+    /// the board, capped at three.
+    std::vector<int> king_storm_penalty{0, 0, 2, 4};
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
     /// Danger per square from which an enemy piece could give check without
@@ -148,6 +171,18 @@ struct parameters {
     std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
 
     int uncastled_penalty = 5;
+    /// eval_threats weights. Every one of these was a bare literal in the
+    /// evaluation, so none of them could be tuned. The defaults reproduce the
+    /// values that were hardcoded. The three tables are indexed
+    /// 0 = knight, 1 = bishop, 2 = rook, 3 = queen rather than by Piece, so
+    /// that no entry is structurally unreachable.
+    int threat_by_pawn = 1;
+    std::vector<int> threat_weak_pawn{1, 1, 1, 1};
+    int queen_pin_minor = 6;
+    int queen_pin_rook = 18;
+    int discovered_check_bonus = 10;
+    int restriction_weight = 1;
+    std::vector<int> skewer_bonus{4, 6, 8}; // minor, rook, queen skewered
     int connected_rook_bonus = 1;
     int doubled_bishop_bonus = 4;
     int open_file_bonus = 1;
@@ -178,6 +213,33 @@ struct parameters {
     int backward_pawn_penalty_eg = 1;
     int isolated_pawn_penalty_mg = 4;
     int isolated_pawn_penalty_eg = 4;
+
+    // Connected pawns, indexed by the pawn's rank relative to its own side.
+    // Until these were added the pawn evaluation was made entirely of
+    // penalties -- doubled, isolated, backward, undefended -- with no term
+    // that rewarded a healthy structure. That left the tuner able to express
+    // only "less bad" and never "good", and it biased the evaluation against
+    // having pawns at all.
+    //
+    // Two separate cases rather than one bonus with a hardcoded multiplier,
+    // so that every number here is something Texel can fit:
+    //   phalanx   -- a friendly pawn abreast on an adjacent file
+    //   supported -- a friendly pawn defending this one from behind
+    // A pawn can be both, and then it collects both.
+    //
+    // Entries 0 and 7 are unreachable: relative rank 0 is a side's own back
+    // rank and 7 is the promotion square, and no pawn ever stands on either.
+    // Scaled to haVoc's own pawn structure magnitudes, not to the values these
+    // tables conventionally carry elsewhere. haVoc charges 4 for an isolated
+    // pawn, 4 for a doubled one and 1 for a backward one, so a phalanx bonus
+    // peaking at 40 would have been an order of magnitude larger than every
+    // other pawn term and would simply have overridden them. Measured: at the
+    // conventional scale the term was worth -12.6 +/- 22.9 Elo over 581 games.
+    // The shape is unchanged; only the scale is haVoc's.
+    std::array<int, 8> phalanx_pawn_mg = {0, 0, 1, 1, 2, 4, 6, 0};
+    std::array<int, 8> phalanx_pawn_eg = {0, 1, 1, 2, 3, 6, 10, 0};
+    std::array<int, 8> supported_pawn_mg = {0, 0, 1, 1, 2, 3, 4, 0};
+    std::array<int, 8> supported_pawn_eg = {0, 1, 1, 1, 2, 4, 6, 0};
 
     // Material values
     std::array<int, 6> material_value = {100, 300, 315, 480, 910, 20000};
@@ -234,6 +296,9 @@ struct parameters {
     int qs_delta_pawn7th = 775;     // ...widened by this with a pawn near promotion
     int singular_min_depth = 8;     // singular extension minimum depth
     int singular_margin = 2;        // singular beta = ttvalue - margin*depth
+    int probcut_min_depth = 5;      // ProbCut needs at least this much depth
+    int probcut_margin = 180;       // probcut beta = beta + this
+    int probcut_depth_reduction = 4; // verification search depth = depth - this
     int lmr_min_depth = 3;          // late move reductions minimum depth
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
     int lmr_hist_good = 4000;       // reduce one less ply above this

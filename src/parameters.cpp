@@ -119,6 +119,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("knight_mobility_scale", &knight_mobility_scale);
         result.emplace_back("bishop_mobility_scale", &bishop_mobility_scale);
         result.emplace_back("rook_mobility_scale", &rook_mobility_scale);
+        result.emplace_back("queen_mobility_scale", &queen_mobility_scale);
 
         // Mobility curve entries
         for (size_t i = 0; i < knight_mobility_table.size(); ++i)
@@ -130,6 +131,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         for (size_t i = 0; i < rook_mobility_table.size(); ++i)
             result.emplace_back("rook_mobility_" + std::to_string(i),
                                 &rook_mobility_table[i]);
+        for (size_t i = 0; i < queen_mobility_table.size(); ++i)
+            result.emplace_back("queen_mobility_" + std::to_string(i),
+                                &queen_mobility_table[i]);
 
         // Endgame scaling
         result.emplace_back("opposite_bishop_scale", &opposite_bishop_scale);
@@ -158,6 +162,19 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // King shelter
         for (size_t i = 0; i < king_shelter.size(); ++i)
             result.emplace_back("king_shelter_" + std::to_string(i), &king_shelter[i]);
+        result.emplace_back("pawnless_flank_penalty", &pawnless_flank_penalty);        for (size_t i = 0; i < king_storm_penalty.size(); ++i)
+            result.emplace_back("king_storm_penalty_" + std::to_string(i), &king_storm_penalty[i]);
+
+        // eval_threats weights, all of which used to be bare literals.
+        result.emplace_back("threat_by_pawn", &threat_by_pawn);
+        for (size_t i = 0; i < threat_weak_pawn.size(); ++i)
+            result.emplace_back("threat_weak_pawn_" + std::to_string(i), &threat_weak_pawn[i]);
+        result.emplace_back("queen_pin_minor", &queen_pin_minor);
+        result.emplace_back("queen_pin_rook", &queen_pin_rook);
+        result.emplace_back("discovered_check_bonus", &discovered_check_bonus);
+        result.emplace_back("restriction_weight", &restriction_weight);
+        for (size_t i = 0; i < skewer_bonus.size(); ++i)
+            result.emplace_back("skewer_bonus_" + std::to_string(i), &skewer_bonus[i]);
 
         // King safe squares
         for (size_t i = 0; i < king_safe_sqs.size(); ++i)
@@ -253,6 +270,24 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("trapped_rook_mg", &trapped_rook_penalty[0]);
         result.emplace_back("trapped_rook_eg", &trapped_rook_penalty[1]);
 
+        // Connected pawns, by rank relative to the pawn's own side. Relative
+        // rank 0 is that side's back rank and 7 is the promotion square; a
+        // pawn stands on neither, so those two entries have no reader.
+        //
+        // The supported tables start at 2 rather than 1 for a second reason: a
+        // pawn on relative rank 1 is on its own second rank, and the pawns
+        // that would defend it would have to stand on the first rank, where no
+        // pawn can ever be. Relative rank 1 is reachable for a phalanx, which
+        // only needs a neighbour abreast.
+        for (size_t r = 1; r < 7; ++r) {
+            result.emplace_back("phalanx_pawn_mg_" + std::to_string(r), &phalanx_pawn_mg[r]);
+            result.emplace_back("phalanx_pawn_eg_" + std::to_string(r), &phalanx_pawn_eg[r]);
+            if (r >= 2) {
+                result.emplace_back("supported_pawn_mg_" + std::to_string(r), &supported_pawn_mg[r]);
+                result.emplace_back("supported_pawn_eg_" + std::to_string(r), &supported_pawn_eg[r]);
+            }
+        }
+
         // Deliberately NOT registered, and not oversights:
         //
         //   sq_score_scaling, attack_scaling, mobility_scaling -- all-ones
@@ -309,6 +344,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
     result.emplace_back("qs_delta_pawn7th", &qs_delta_pawn7th);
         result.emplace_back("singular_min_depth", &singular_min_depth);
         result.emplace_back("singular_margin", &singular_margin);
+        result.emplace_back("probcut_min_depth", &probcut_min_depth);
+        result.emplace_back("probcut_margin", &probcut_margin);
+        result.emplace_back("probcut_depth_reduction", &probcut_depth_reduction);
         result.emplace_back("lmr_min_depth", &lmr_min_depth);
         result.emplace_back("lmr_hist_bad", &lmr_hist_bad);
         result.emplace_back("lmr_hist_good", &lmr_hist_good);

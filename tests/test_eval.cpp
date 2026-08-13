@@ -51,8 +51,16 @@ using havoc::testing::mirror_fen;
 /// opposite-colored bishops and a range of endgames.
 const std::vector<std::string>& mirror_test_positions() {
     static const std::vector<std::string> fens = {
+        "r1bq1rk1/pp2ppbp/2np1np1/8/2PNP3/2N1B3/PP2BPPP/R2QK2R w KQ - 0 9",
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        // Direct proof that this position's evaluation is symmetric. It is the
+        // one ExactSearchIsMirrorSymmetric currently disagrees on, and that
+        // test documents its own residual: the transposition table, the
+        // aspiration window and the qsearch SEE filter all survive the knobs
+        // it turns off. Keeping the FEN here means that if a real asymmetry is
+        // ever introduced, this test catches it rather than the search one.
+        "2rq1rk1/pp1bppbp/3p1np1/8/3NP3/1BN1BP2/PPPQ2PP/2KR3R w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
         "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
         "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
@@ -1172,6 +1180,47 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "k7/8/8/1p1p1p1p/1N1N1N1N/8/8/K7 w - - 0 1",
         "7k/8/8/p1p1p1p1/B1B1B1B1/8/8/7K w - - 0 1",
         "k7/8/8/1p1p1p1p/1B1B1B1B/8/8/K7 w - - 0 1",
+        // Three enemy pawns storming the king's flank, the top entry of
+        // king_storm_penalty. White's king is on the kingside with Black's f,
+        // g and h pawns advancing on it, while Black's king sits on the
+        // opposite flank where White has nothing storming, so the two sides do
+        // not cancel. The queens and rooks are there to keep the middlegame
+        // weight high enough for the term, which tapers to nothing in the
+        // endgame, to survive the phase interpolation.
+        "k6r/7q/8/8/5ppp/8/PP3PPP/R2Q2K1 w - - 0 1",
+        // eval_threats tactical motifs. Each gives the motif to White only,
+        // and in every case Black lacks the piece that would let it score the
+        // mirror image, so the weight cannot cancel across the subtraction.
+        // A rook pinning a knight against the enemy queen.
+        "k3q3/8/8/4n3/8/8/8/4R1K1 w - - 0 1",
+        // A bishop pinning a rook against the enemy queen, which is scored
+        // more heavily than a pinned minor.
+        "k6q/8/8/8/3r4/8/8/B5K1 w - - 0 1",
+        // A discovered check: the knight stands between the bishop and the
+        // enemy king, so moving it uncovers the check. Black needs the a7
+        // pawn -- a bare enemy king diverts the evaluation into the mating
+        // heuristic, which never runs eval_threats at all.
+        "7k/p7/8/8/3N4/8/6K1/B7 w - - 0 1",
+        // Skewers, by the value of the piece standing behind the king. The
+        // diagonal has to be genuinely clear -- a blocker on it means there
+        // is no skewer -- which puts the enemy king in check, so these are
+        // Black to move rather than White.
+        "7n/p7/8/8/3k4/8/6K1/B7 b - - 0 1",
+        "7r/8/8/8/3k4/8/6K1/B7 b - - 0 1",
+        "7q/8/8/8/3k4/8/6K1/B7 b - - 0 1",
+        // Connected pawns, reached by rank relative to the mover. Black has no
+        // pawns in any of these, so the term cannot cancel between the sides.
+        // The first has both sides' full non-pawn material, so the phase sits
+        // at the middlegame end and the mg halves of the tables are what move;
+        // the second is the same pawn structure with the pieces stripped, so
+        // the phase sits at the endgame end and the eg halves move instead.
+        // a5/b5, c6/d6 and e7/f7 are phalanxes on relative ranks 4, 5 and 6;
+        // h5 is supported by g4, c6 by b5 and e7 by d6.
+        "rnbqkbnr/4PP2/2PP4/PP5P/6P1/8/8/RNBQKBNR w KQkq - 0 1",
+        "4k3/4PP2/2PP4/PP5P/6P1/8/8/4K3 w - - 0 1",
+        // A bare endgame reaching the low ranks: b3/c3 is a phalanx on
+        // relative rank 2 and d4 is supported by c3 on relative rank 3.
+        "4k3/8/8/8/3P4/1PP5/8/4K3 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
@@ -1253,6 +1302,14 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "knight_mobility_0", "knight_mobility_6", "knight_mobility_7", "knight_mobility_8",
         "bishop_mobility_5", "bishop_mobility_9", "bishop_mobility_11", "bishop_mobility_12",
         "bishop_mobility_14", "rook_mobility_3", "rook_mobility_11", "rook_mobility_13",
+        // The queen's buckets gap the same way the other three pieces do. The
+        // wide end is the interesting part: reaching bucket 23 and above needs
+        // a queen with that many *safe* empty squares at once, and adding
+        // open-board positions specifically to chase it moved none of them,
+        // because the king and the remaining pawns keep the real count lower.
+        "queen_mobility_5", "queen_mobility_10", "queen_mobility_11", "queen_mobility_15",
+        "queen_mobility_17", "queen_mobility_23", "queen_mobility_24", "queen_mobility_25",
+        "queen_mobility_26", "queen_mobility_27",
         "attacker_weight_1", "king_shelter_0", "king_shelter_3", "king_safe_sqs_0",
         "king_safe_sqs_4", "king_safe_sqs_5", "king_safe_sqs_6", "king_safe_sqs_7",
         "no_pawn_scale", "minor_advantage_no_pawn_scale",
