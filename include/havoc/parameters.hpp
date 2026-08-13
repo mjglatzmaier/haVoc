@@ -359,6 +359,13 @@ struct parameters {
     int history_bonus_scale = 1;    // history bonus is scale * depth^2
     int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)
 
+    /// Continuation history weights, as a percentage of the raw table value.
+    /// Plane 1 is keyed on the opponent's reply we are answering, plane 2 on
+    /// our own move two plies back. They are separate because the two planes
+    /// carry different amounts of signal and only a fit can say how much.
+    int cont_hist1_pct = 100;
+    int cont_hist2_pct = 100;
+
     // Parameter serialization
     bool load(const std::string& filename);
 

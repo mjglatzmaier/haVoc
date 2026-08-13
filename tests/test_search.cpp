@@ -306,6 +306,68 @@ TEST_F(SearchTest, MoveOrderYieldsEveryLegalMove) {
 }
 
 
+// The plain history table is keyed on (colour, from, to) alone, so a quiet
+// move carries one score averaged over every context it was ever played in.
+// Continuation history exists to separate those contexts: evidence gathered
+// while answering one predecessor must not leak into an unrelated one.
+//
+// This also pins the ownership rule that makes the table safe. A node reads its
+// predecessors from fields its parent wrote into it, never by walking back to
+// stack - 1 and stack - 2. Only the search guarantees those frames exist; the
+// first version of this code walked back and crashed here, on a four-element
+// stack, which is exactly the kind of caller that must keep working.
+TEST_F(SearchTest, ContinuationHistoryIsKeyedOnThePredecessor) {
+    std::istringstream fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    position pos(fen);
+
+    SearchNode stack[4];
+    for (auto& n : stack)
+        n.ply = 1;
+    SearchNode* node = &stack[1];
+
+    // A quiet move by a piece that is actually on the board: the a1 rook to b1.
+    Move quiet;
+    quiet.set(A1, B1, Movetype::quiet);
+    ASSERT_EQ(pos.piece_on(A1), rook);
+
+    Movehistory hist;
+    hist.set_continuation_weights(100, 100);
+
+    // Nothing has been played into this node yet, so there is no context to key
+    // on and the table must stay silent rather than index off some default.
+    EXPECT_EQ(hist.continuation_score(pos, quiet, node), 0)
+        << "a node with no predecessor must not read the continuation table";
+
+    // Now say the opponent answered with a knight landing on f6, and reward the
+    // rook move as the refutation of it.
+    stack[0].push_context(knight, F6);
+    std::vector<Move> none;
+    hist.update_continuation(pos, node, quiet, kMaxHistory / 4, none);
+
+    int in_context = hist.continuation_score(pos, quiet, node);
+    EXPECT_GT(in_context, 0) << "the cutoff move gained nothing in its own context";
+
+    // Same move, same node, different predecessor: a bishop landing on f6. The
+    // evidence above says nothing about this position and must not be read.
+    stack[0].push_context(bishop, F6);
+    EXPECT_EQ(hist.continuation_score(pos, quiet, node), 0)
+        << "continuation evidence leaked across predecessors";
+
+    // ...nor across the square the predecessor landed on.
+    stack[0].push_context(knight, D7);
+    EXPECT_EQ(hist.continuation_score(pos, quiet, node), 0)
+        << "continuation evidence leaked across predecessor destinations";
+
+    // Restoring the original context restores the score.
+    stack[0].push_context(knight, F6);
+    EXPECT_EQ(hist.continuation_score(pos, quiet, node), in_context);
+
+    // A weight of zero has to switch the plane off completely, or SPSA cannot
+    // ever tell us the plane was not worth its dimensions.
+    hist.set_continuation_weights(0, 0);
+    EXPECT_EQ(hist.continuation_score(pos, quiet, node), 0);
+}
+
 // ─── Time management ────────────────────────────────────────────────────────
 
 TEST(TimeManagement, SpentClockStillReturnsABudget) {

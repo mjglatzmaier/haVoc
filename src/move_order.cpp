@@ -3,15 +3,92 @@
 #include "havoc/position.hpp"
 
 #include <cmath>
+#include <cstring>
 
 namespace havoc {
 
 // ─── Movehistory ────────────────────────────────────────────────────────────
 
+Movehistory::Movehistory() : continuation_(std::make_unique<ContinuationHistory>()) {
+    clear();
+}
+
 Movehistory& Movehistory::operator=(const Movehistory& mh) {
     std::copy(std::begin(mh.history_), std::end(mh.history_), std::begin(history_));
     countermoves = mh.countermoves;
+    *continuation_ = *mh.continuation_;
+    cont_pct1_ = mh.cont_pct1_;
+    cont_pct2_ = mh.cont_pct2_;
     return *this;
+}
+
+// ─── Continuation history ───────────────────────────────────────────────────
+//
+// The plain history table is keyed on (color, from, to) alone, so every quiet
+// carries a single score averaged over every context it was ever tried in. A
+// knight retreat that refutes one particular bishop sortie is indistinguishable
+// from the same retreat played into an unrelated structure.
+//
+// Continuation history keys the same evidence on the move that preceded it:
+// plane 0 on the opponent's reply we are answering, plane 1 on our own move two
+// plies back. The two are kept apart because a predecessor played by the
+// opponent and one played by us mean opposite things about the position.
+
+const int* Movehistory::continuation_slot(int plane, const SearchNode* stack, Color c, Piece moved,
+                                          const Move& m) const {
+    Piece prev = plane == 0 ? stack->prev_piece : stack->prev2_piece;
+    U8 to = plane == 0 ? stack->prev_to : stack->prev2_to;
+    if (prev == no_piece || moved == no_piece)
+        return nullptr;
+    return &continuation_->table[plane][prev][to][c][moved][m.t];
+}
+
+int* Movehistory::continuation_slot(int plane, const SearchNode* stack, Color c, Piece moved,
+                                    const Move& m) {
+    return const_cast<int*>(
+        static_cast<const Movehistory*>(this)->continuation_slot(plane, stack, c, moved, m));
+}
+
+int Movehistory::continuation_score(const position& p, const Move& m, const SearchNode* stack) const {
+    if (m.type != static_cast<U8>(Movetype::quiet))
+        return 0;
+    Color c = p.to_move();
+    Piece moved = p.piece_on(static_cast<Square>(m.f));
+    int s = 0;
+    if (const int* a = continuation_slot(0, stack, c, moved, m))
+        s += *a * cont_pct1_ / 100;
+    if (const int* b = continuation_slot(1, stack, c, moved, m))
+        s += *b * cont_pct2_ / 100;
+    return s;
+}
+
+void Movehistory::update_continuation(const position& p, const SearchNode* stack, const Move& best,
+                                      int bonus, const std::vector<Move>& quiets) {
+    if (best.type != static_cast<U8>(Movetype::quiet))
+        return;
+    Color c = p.to_move();
+    for (int plane = 0; plane < 2; ++plane) {
+        if (int* h = continuation_slot(plane, stack, c, p.piece_on(static_cast<Square>(best.f)),
+                                       best))
+            apply_history_bonus(*h, bonus);
+        for (const auto& q : quiets) {
+            if (q == best)
+                continue;
+            if (int* h =
+                    continuation_slot(plane, stack, c, p.piece_on(static_cast<Square>(q.f)), q))
+                apply_history_bonus(*h, -bonus);
+        }
+    }
+}
+
+void Movehistory::malus_continuation(const position& p, const SearchNode* stack, int bonus,
+                                     const std::vector<Move>& quiets) {
+    Color c = p.to_move();
+    for (int plane = 0; plane < 2; ++plane)
+        for (const auto& q : quiets)
+            if (int* h =
+                    continuation_slot(plane, stack, c, p.piece_on(static_cast<Square>(q.f)), q))
+                apply_history_bonus(*h, -bonus);
 }
 
 void Movehistory::update(const Color& c, const Move& m, const Move& previous, int bonus,
@@ -53,6 +130,9 @@ void Movehistory::clear() {
     for (auto& v : history_)
         for (auto& w : v)
             std::fill(w.begin(), w.end(), 0);
+
+    if (continuation_)
+        std::memset(continuation_->table, 0, sizeof(continuation_->table));
 
     Move empty;
     empty.set(0, 0, no_type);
@@ -98,7 +178,7 @@ int score_quiets(const position& p, const Move& m, const Move& prev, const Move&
     auto tomove = p.to_move();
     int s = 0;
     if (hist)
-        s = hist->score(m, tomove, prev, followup, threat);
+        s = hist->score(m, tomove, prev, followup, threat) + hist->continuation_score(p, m, stack);
     return s + stack->best_move_history()[tomove][m.f][m.t];
 }
 
