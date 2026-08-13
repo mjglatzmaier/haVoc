@@ -224,8 +224,8 @@ struct parameters {
     /// Rook on a file with no pawn of its own in front of it. `open` means no
     /// pawns of either colour, `semiopen` means only the enemy's -- the second
     /// case was not scored at all, and the first was worth one centipawn.
-    int open_file_bonus = 12;
-    int semiopen_file_bonus = 6;
+    int open_file_bonus = 6;
+    int semiopen_file_bonus = 3;
     /// Applied with a positive sign to a knight and a negative one to a bishop
     /// when the centre is locked, so the name describes the bishop's side of
     /// the trade only. A knight gains what the bishop loses.
