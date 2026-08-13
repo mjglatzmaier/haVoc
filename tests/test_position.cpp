@@ -493,6 +493,7 @@ TEST_F(PositionTest, IncrementalKeysAgreeWithKeysBuiltFromScratch) {
             ASSERT_EQ(p.pawnkey(), rebuilt.pawnkey()) << "pawn key drifted at " << fen;
             ASSERT_EQ(p.material_key(), rebuilt.material_key())
                 << "material key drifted at " << fen;
+            ASSERT_EQ(p.repkey(), rebuilt.repkey()) << "repetition key drifted at " << fen;
         }
     }
 
