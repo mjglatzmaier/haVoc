@@ -143,10 +143,31 @@ using MoveFilters = std::array<Move, kNumFilters>;
 // ─── Scored moves array ─────────────────────────────────────────────────────
 
 class ScoredMoves {
-    std::array<ScoredMove, kMaxMoves> m_moves;
+    /// Uninitialised storage for the move list.
+    ///
+    /// `Move` carries default member initialisers, so `ScoredMove` is not
+    /// trivially default-constructible and a plain `std::array` of them cannot
+    /// be left alone: every construction writes all kMaxMoves entries. A
+    /// Moveorder holds two of these and one is built at essentially every
+    /// search node, which made this initialisation alone the single largest
+    /// entry in the profile -- more self time than the whole evaluation.
+    ///
+    /// The union suppresses it. Entries are constructed on write in
+    /// load_and_score(), and every read is bounded by m_start/m_end, which
+    /// never exceed m_size -- the count actually written. ScoredMove is
+    /// trivially destructible, so the entries need no cleanup.
+    union Storage {
+        Storage() {}
+        ~Storage() {}
+        std::array<ScoredMove, kMaxMoves> moves;
+    };
+    Storage m_store;
     unsigned m_size = 0;
     unsigned m_start = 0;
     unsigned m_end = 0;
+
+    std::array<ScoredMove, kMaxMoves>& m_moves() { return m_store.moves; }
+    const std::array<ScoredMove, kMaxMoves>& m_moves() const { return m_store.moves; }
 
     void load_and_score(const position& p, Movegen* moves, const MoveFilters& filters,
                         const Move& previous, const Move& followup, const Move& threat,
@@ -165,7 +186,7 @@ class ScoredMoves {
     void clear() { m_size = m_start = m_end = 0; }
 
     int operator++() { return m_start++; }
-    const ScoredMove& front() const { return m_moves[m_start]; }
+    const ScoredMove& front() const { return m_moves()[m_start]; }
     bool end() const { return m_start >= m_end; }
     unsigned size() const { return m_end - m_start; }
     void skip_rest() { m_start = m_end; }

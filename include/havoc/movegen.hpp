@@ -6,6 +6,7 @@
 #include "havoc/types.hpp"
 
 #include <iostream>
+#include <memory>
 #include <vector>
 
 namespace havoc {
@@ -16,7 +17,25 @@ enum Dir { N, S, NN, SS, NW, NE, SW, SE, no_dir };
 /// Move generator — generates pseudo-legal moves for a position.
 class Movegen {
     int last = 0;
-    Move list[218];
+    /// Uninitialised storage for the generated moves. `Move` has default
+    /// member initialisers, so a plain `Move list[218]` is rewritten in full
+    /// every time a Movegen is built -- once per search node, on top of the
+    /// two move lists Moveorder already holds. Entries are constructed on
+    /// write by the encode helpers, and `operator[]` is only ever called with
+    /// an index below `last`, the count actually written.
+    union Storage {
+        Storage() {}
+        ~Storage() {}
+        Move moves[218];
+    };
+    Storage store;
+
+    /// Constructs the next move in place. The storage is deliberately
+    /// uninitialised, so this is the write that begins the entry's lifetime.
+    void add(int f, int t, Movetype mt) {
+        std::construct_at(&store.moves[last++], static_cast<U8>(f), static_cast<U8>(t),
+                          static_cast<U8>(mt));
+    }
     Color us, them;
     U64 rank2, rank7;
     U64 empty, pawns, pawns2, pawns7;
@@ -50,7 +69,7 @@ class Movegen {
 
     Movegen& operator=(const Movegen&) = delete;
     Movegen& operator=(Movegen&&) = delete;
-    Move& operator[](int idx) { return list[idx]; }
+    Move& operator[](int idx) { return store.moves[idx]; }
 
     template <Movetype mt, Piece p> inline void generate();
     template <Piece p> inline void generate();
@@ -95,13 +114,13 @@ template <> inline void shift<SE>(U64& b) {
 
 template <Movetype mt> inline void Movegen::encode(U64& b, const int& f) {
     while (b)
-        list[last++].set(f, bits::pop_lsb(b), mt);
+        add(f, bits::pop_lsb(b), mt);
 }
 
 template <Movetype mt> inline void Movegen::encode_pawn_pushes(U64& b, const int& dir) {
     while (b) {
         int to = bits::pop_lsb(b);
-        list[last++].set(to + dir, to, mt);
+        add(to + dir, to, mt);
     }
 }
 
@@ -109,10 +128,10 @@ inline void Movegen::encode_promotions(U64& b, const int& dir) {
     while (b) {
         Square to = Square(bits::pop_lsb(b));
         Square f = Square(to + dir);
-        list[last++].set(f, to, promotion_q);
-        list[last++].set(f, to, promotion_r);
-        list[last++].set(f, to, promotion_b);
-        list[last++].set(f, to, promotion_n);
+        add(f, to, promotion_q);
+        add(f, to, promotion_r);
+        add(f, to, promotion_b);
+        add(f, to, promotion_n);
     }
 }
 
@@ -120,10 +139,10 @@ inline void Movegen::encode_capture_promotions(U64& b, const int& dir) {
     while (b) {
         Square to = Square(bits::pop_lsb(b));
         Square f = Square(to + dir);
-        list[last++].set(f, to, capture_promotion_q);
-        list[last++].set(f, to, capture_promotion_r);
-        list[last++].set(f, to, capture_promotion_b);
-        list[last++].set(f, to, capture_promotion_n);
+        add(f, to, capture_promotion_q);
+        add(f, to, capture_promotion_r);
+        add(f, to, capture_promotion_b);
+        add(f, to, capture_promotion_n);
     }
 }
 
@@ -482,9 +501,9 @@ template <> inline void Movegen::generate<quiet, king>() {
 
 template <> inline void Movegen::generate<castles, king>() {
     if (can_castle_ks_)
-        list[last++].set(kings[0], (us == white ? G1 : G8), castle_ks);
+        add(kings[0], (us == white ? G1 : G8), castle_ks);
     if (can_castle_qs_)
-        list[last++].set(kings[0], (us == white ? C1 : C8), castle_qs);
+        add(kings[0], (us == white ? C1 : C8), castle_qs);
 }
 
 template <> inline void Movegen::generate<capture, king>() {
