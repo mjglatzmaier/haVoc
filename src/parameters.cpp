@@ -81,6 +81,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // to prevent the bias term from absorbing scale changes.
         result.emplace_back("sq_score_category_scale", &sq_score_category_scale);
         result.emplace_back("mobility_category_scale", &mobility_category_scale);
+        result.emplace_back("mobility_endgame_scale", &mobility_endgame_scale);
         result.emplace_back("king_safety_category_scale", &king_safety_category_scale);
         result.emplace_back("threat_category_scale", &threat_category_scale);
         result.emplace_back("passed_pawn_category_scale", &passed_pawn_category_scale);

@@ -403,7 +403,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
                           : params_.knight_mobility_table.back();
             score += ((params_.knight_mobility_scale * params_.mobility_scaling[knight] * mob) /
                       100) *
-                     params_.mobility_category_scale / 100;
+                     ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
         }
 
         // Outpost
@@ -501,7 +501,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
                           : params_.bishop_mobility_table.back();
         int mobility_score =
             ((params_.bishop_mobility_scale * params_.mobility_scaling[bishop] * mob_val) / 100) *
-            params_.mobility_category_scale / 100;
+            ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
         if ((sq_bb & p.pinned<c>()) && mobility_score > 0)
             mobility_score /= params_.pinned_scaling[bishop];
 
@@ -618,7 +618,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
                         : params_.rook_mobility_table.back();
         int mobility_score =
             ((params_.rook_mobility_scale * params_.mobility_scaling[rook] * mob_r) / 100) *
-            params_.mobility_category_scale / 100;
+            ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
 
         if (sq_bb & p.pinned<c>())
             mobility_score /= params_.pinned_scaling[rook];
