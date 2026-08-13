@@ -951,7 +951,7 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     // 1. Pieces under attack by pawns
     auto attackedByPawns = enemies & pawnAttacks;
     if (attackedByPawns != 0ULL)
-        score += 1;
+        score += params_.threat_by_pawn;
 
     // 2. Hanging pieces under attack
     auto defendendEnemies = enemies & (enemyPawnAttacks | enemyPieceAttacks);
@@ -975,14 +975,14 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     auto defendendWeakPawns = weakPawns & (enemyPawnAttacks | enemyPieceAttacks);
     auto undefendendWeakPawns = weakPawns ^ defendendWeakPawns;
     if (undefendendWeakPawns) {
-        if (undefendendWeakPawns & ei.piece_attacks[c][knight])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][knight]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][bishop])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][bishop]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][rook])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][rook]);
-        if (undefendendWeakPawns & ei.piece_attacks[c][queen])
-            score += bits::count(undefendendWeakPawns & ei.piece_attacks[c][queen]);
+        score += params_.threat_weak_pawn[0] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][knight]);
+        score += params_.threat_weak_pawn[1] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][bishop]);
+        score += params_.threat_weak_pawn[2] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][rook]);
+        score += params_.threat_weak_pawn[3] *
+                 bits::count(undefendendWeakPawns & ei.piece_attacks[c][queen]);
     }
 
     // 4. Pieces pinned to queen
@@ -1000,7 +1000,7 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
             if (pinnedByRook && bits::count(pinnedByRook) == 1) {
                 auto pp = p.piece_on(Square(bits::pop_lsb(pinnedByRook)));
                 if (pp == bishop || pp == knight)
-                    score += 6;
+                    score += params_.queen_pin_minor;
             }
         }
         while (bishopPinners) {
@@ -1010,9 +1010,9 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
             if (pinnedByBishop && bits::count(pinnedByBishop) == 1) {
                 auto pp = p.piece_on(Square(bits::pop_lsb(pinnedByBishop)));
                 if (pp == knight)
-                    score += 6;
+                    score += params_.queen_pin_minor;
                 if (pp == rook)
-                    score += 18;
+                    score += params_.queen_pin_rook;
             }
         }
     }
@@ -1029,7 +1029,7 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         auto between = bitboards::between[bishopSq][enemyKing] & (ourRooks | ourKnights);
         if (between && bits::count(between) == 1) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
     while (rookCheckers && !hasDiscovery) {
@@ -1037,7 +1037,7 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         auto between = bitboards::between[rookSq][enemyKing] & (ourBishops | ourKnights);
         if (between && bits::count(between) == 1) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
     auto queenCheckers = (bitboards::rattks[enemyKing] | bitboards::battks[enemyKing]) & ourQueens;
@@ -1046,14 +1046,14 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
         auto between = bitboards::between[queenSq][enemyKing] & ourKnights;
         if (between && bits::count(between) == 1) {
             hasDiscovery = true;
-            score += 10;
+            score += params_.discovered_check_bonus;
         }
     }
 
     // 6. Restriction
     auto ourAttacks = pawnAttacks | ourPieceAttacks;
     auto theirAttacks = enemyPawnAttacks | enemyPieceAttacks;
-    score += bits::count(ourAttacks) - bits::count(theirAttacks);
+    score += params_.restriction_weight * (bits::count(ourAttacks) - bits::count(theirAttacks));
 
     // 7. Skewer detection
     bishopCheckers = bitboards::battks[enemyKing] & ourBishops;
@@ -1072,11 +1072,11 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
             if (between && bits::count(between) == 1) {
                 auto pp = p.piece_on(Square(enemy));
                 if (pp == bishop || pp == knight)
-                    score += 4;
+                    score += params_.skewer_bonus[0];
                 if (pp == rook)
-                    score += 6;
+                    score += params_.skewer_bonus[1];
                 if (pp == queen)
-                    score += 8;
+                    score += params_.skewer_bonus[2];
             }
         }
     }

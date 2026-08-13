@@ -158,6 +158,18 @@ struct parameters {
     std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
 
     int uncastled_penalty = 5;
+    /// eval_threats weights. Every one of these was a bare literal in the
+    /// evaluation, so none of them could be tuned. The defaults reproduce the
+    /// values that were hardcoded. The three tables are indexed
+    /// 0 = knight, 1 = bishop, 2 = rook, 3 = queen rather than by Piece, so
+    /// that no entry is structurally unreachable.
+    int threat_by_pawn = 1;
+    std::vector<int> threat_weak_pawn{1, 1, 1, 1};
+    int queen_pin_minor = 6;
+    int queen_pin_rook = 18;
+    int discovered_check_bonus = 10;
+    int restriction_weight = 1;
+    std::vector<int> skewer_bonus{4, 6, 8}; // minor, rook, queen skewered
     int connected_rook_bonus = 1;
     int doubled_bishop_bonus = 4;
     int open_file_bonus = 1;

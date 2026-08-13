@@ -1180,6 +1180,26 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // weight high enough for the term, which tapers to nothing in the
         // endgame, to survive the phase interpolation.
         "k6r/7q/8/8/5ppp/8/PP3PPP/R2Q2K1 w - - 0 1",
+        // eval_threats tactical motifs. Each gives the motif to White only,
+        // and in every case Black lacks the piece that would let it score the
+        // mirror image, so the weight cannot cancel across the subtraction.
+        // A rook pinning a knight against the enemy queen.
+        "k3q3/8/8/4n3/8/8/8/4R1K1 w - - 0 1",
+        // A bishop pinning a rook against the enemy queen, which is scored
+        // more heavily than a pinned minor.
+        "k6q/8/8/8/3r4/8/8/B5K1 w - - 0 1",
+        // A discovered check: the knight stands between the bishop and the
+        // enemy king, so moving it uncovers the check. Black needs the a7
+        // pawn -- a bare enemy king diverts the evaluation into the mating
+        // heuristic, which never runs eval_threats at all.
+        "7k/p7/8/8/3N4/8/6K1/B7 w - - 0 1",
+        // Skewers, by the value of the piece standing behind the king. The
+        // b2 pawn blocks the diagonal so that the king is not actually in
+        // check, which would make the position illegal with White to move;
+        // the term reads pseudo-attacks and is unaffected by the blocker.
+        "7n/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
+        "7r/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
+        "7q/8/8/8/3k4/8/1P4K1/B7 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter

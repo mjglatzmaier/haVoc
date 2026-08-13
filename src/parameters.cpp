@@ -158,9 +158,19 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // King shelter
         for (size_t i = 0; i < king_shelter.size(); ++i)
             result.emplace_back("king_shelter_" + std::to_string(i), &king_shelter[i]);
-        result.emplace_back("pawnless_flank_penalty", &pawnless_flank_penalty);
-        for (size_t i = 0; i < king_storm_penalty.size(); ++i)
+        result.emplace_back("pawnless_flank_penalty", &pawnless_flank_penalty);        for (size_t i = 0; i < king_storm_penalty.size(); ++i)
             result.emplace_back("king_storm_penalty_" + std::to_string(i), &king_storm_penalty[i]);
+
+        // eval_threats weights, all of which used to be bare literals.
+        result.emplace_back("threat_by_pawn", &threat_by_pawn);
+        for (size_t i = 0; i < threat_weak_pawn.size(); ++i)
+            result.emplace_back("threat_weak_pawn_" + std::to_string(i), &threat_weak_pawn[i]);
+        result.emplace_back("queen_pin_minor", &queen_pin_minor);
+        result.emplace_back("queen_pin_rook", &queen_pin_rook);
+        result.emplace_back("discovered_check_bonus", &discovered_check_bonus);
+        result.emplace_back("restriction_weight", &restriction_weight);
+        for (size_t i = 0; i < skewer_bonus.size(); ++i)
+            result.emplace_back("skewer_bonus_" + std::to_string(i), &skewer_bonus[i]);
 
         // King safe squares
         for (size_t i = 0; i < king_safe_sqs.size(); ++i)
