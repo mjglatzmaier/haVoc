@@ -105,6 +105,16 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("backward_pawn_penalty_eg", &backward_pawn_penalty_eg);
         result.emplace_back("isolated_pawn_penalty_mg", &isolated_pawn_penalty_mg);
         result.emplace_back("isolated_pawn_penalty_eg", &isolated_pawn_penalty_eg);
+        result.emplace_back("undefended_pawn_penalty_mg", &undefended_pawn_penalty_mg);
+        result.emplace_back("undefended_pawn_penalty_eg", &undefended_pawn_penalty_eg);
+        result.emplace_back("backward_pawn_semiopen_mg", &backward_pawn_semiopen_mg);
+        result.emplace_back("backward_pawn_semiopen_eg", &backward_pawn_semiopen_eg);
+        result.emplace_back("isolated_pawn_semiopen_mg", &isolated_pawn_semiopen_mg);
+        result.emplace_back("isolated_pawn_semiopen_eg", &isolated_pawn_semiopen_eg);
+        result.emplace_back("doubled_pawn_semiopen_mg", &doubled_pawn_semiopen_mg);
+        result.emplace_back("doubled_pawn_semiopen_eg", &doubled_pawn_semiopen_eg);
+        result.emplace_back("doubled_isolated_penalty_mg", &doubled_isolated_penalty_mg);
+        result.emplace_back("doubled_isolated_penalty_eg", &doubled_isolated_penalty_eg);
         result.emplace_back("space_category_scale", &space_category_scale);
         result.emplace_back("king_danger_divisor", &king_danger_divisor);
         return result;
@@ -175,6 +185,21 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("restriction_weight", &restriction_weight);
         for (size_t i = 0; i < skewer_bonus.size(); ++i)
             result.emplace_back("skewer_bonus_" + std::to_string(i), &skewer_bonus[i]);
+
+        // Per-piece weights that used to be bare literals in the evaluation.
+        result.emplace_back("pawn_attacks_undefended", &pawn_attacks_undefended);
+        result.emplace_back("knight_edge_penalty", &knight_edge_penalty);
+        result.emplace_back("knight_king_distance_penalty", &knight_king_distance_penalty);
+        result.emplace_back("knight_behind_pawn_bonus", &knight_behind_pawn_bonus);
+        result.emplace_back("knight_protection_bonus", &knight_protection_bonus);
+        result.emplace_back("bishop_xray_bonus", &bishop_xray_bonus);
+        result.emplace_back("bishop_king_distance_penalty", &bishop_king_distance_penalty);
+        result.emplace_back("bishop_behind_pawn_bonus", &bishop_behind_pawn_bonus);
+        result.emplace_back("bishop_protection_bonus", &bishop_protection_bonus);
+        result.emplace_back("rook_xray_bonus", &rook_xray_bonus);
+        result.emplace_back("rook_protection_bonus", &rook_protection_bonus);
+        result.emplace_back("weak_queen_penalty", &weak_queen_penalty);
+        result.emplace_back("space_bonus", &space_bonus);
 
         // King safe squares
         for (size_t i = 0; i < king_safe_sqs.size(); ++i)

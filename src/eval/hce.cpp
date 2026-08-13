@@ -403,7 +403,7 @@ template <Color c> int HCEEvaluator::eval_pawns(const position& p, einfo& ei) {
 
     // Pawn chain bases / undefended enemy pawns
     U64 baseAttks = pawnAttacks & ei.pe->undefended[them];
-    score += bits::count(baseAttks) / 2;
+    score += (bits::count(baseAttks) * params_.pawn_attacks_undefended) / 2;
     return score;
 }
 
@@ -442,7 +442,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
 
         // Edge penalty
         if (sq_bb & bitboards::edges)
-            score -= 12;
+            score -= params_.knight_edge_penalty;
 
         // Closed center bonus
         if (ei.pe->locked_center || ei.pe->center_pawn_count >= 4)
@@ -458,7 +458,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
 
         // King distance
         int dist = std::max(util::row_dist(s, ks), util::col_dist(s, ks));
-        score -= dist;
+        score -= dist * params_.knight_king_distance_penalty;
 
         // Minor behind pawn
         auto fsq = (c == white ? s + 8 : s - 8);
@@ -466,7 +466,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
             auto bbs = bitboards::squares[fsq];
             auto pawninfront = p.get_pieces<c, pawn>() & bbs;
             if (pawninfront && util::row(s) != Row::r1 && util::row(s) != Row::r8)
-                score += 12;
+                score += params_.knight_behind_pawn_bonus;
         }
 
         // King harassment
@@ -478,7 +478,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
         }
 
         // Protection
-        score += bits::count(p.attackers_of2(s, c));
+        score += bits::count(p.attackers_of2(s, c)) * params_.knight_protection_bonus;
     }
     return score;
 }
@@ -518,7 +518,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
             dark_sq = true;
 
         // X-Ray attacks on valuable pieces
-        score += bits::count(bitboards::battks[s] & valuable_enemies);
+        score += bits::count(bitboards::battks[s] & valuable_enemies) * params_.bishop_xray_bonus;
 
         // Mobility
         U64 mvs = magics::attacks<bishop>(ei.all_pieces, s);
@@ -538,7 +538,8 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score += mobility_score;
 
         // King distance
-        score -= std::max(util::row_dist(s, ks), util::col_dist(s, ks));
+        score -= std::max(util::row_dist(s, ks), util::col_dist(s, ks)) *
+                 params_.bishop_king_distance_penalty;
 
         // Closed center penalty
         if (ei.pe->locked_center || ei.pe->center_pawn_count >= 4)
@@ -574,7 +575,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
             auto bbs = bitboards::squares[fsq];
             auto pawninfront = p.get_pieces<c, pawn>() & bbs;
             if (pawninfront && util::row(s) != Row::r1 && util::row(s) != Row::r8)
-                score += 12;
+                score += params_.bishop_behind_pawn_bonus;
         }
 
         // Penalty for bishops on same color as own pawns.
@@ -602,7 +603,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         }
 
         // Protection
-        score += bits::count(p.attackers_of2(s, c));
+        score += bits::count(p.attackers_of2(s, c)) * params_.bishop_protection_bonus;
     }
 
     // Double bishop bonus
@@ -635,7 +636,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         rookSquares[rookIdx++] = s;
 
         // X-Ray attacks on valuable pieces
-        score += bits::count(bitboards::rattks[s] & valuable_enemies);
+        score += bits::count(bitboards::rattks[s] & valuable_enemies) * params_.rook_xray_bonus;
 
         // Mobility
         U64 mvs = magics::attacks<rook>(ei.all_pieces, s);
@@ -689,7 +690,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         }
 
         // Protection
-        score += bits::count(p.attackers_of2(s, c));
+        score += bits::count(p.attackers_of2(s, c)) * params_.rook_protection_bonus;
     }
 
     // Connected rook bonus
@@ -753,7 +754,7 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
 
         // Weak queen penalty
         U64 attackers = p.attackers_of2(s, them) & weakEnemies;
-        score -= bits::count(attackers);
+        score -= bits::count(attackers) * params_.weak_queen_penalty;
 
         // Center influence
         score +=
@@ -986,7 +987,7 @@ template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
         int s = bits::pop_lsb(pawns);
         space |= util::squares_behind(bitboards::col[util::col(s)], c, s);
     }
-    score += bits::count(space);
+    score += bits::count(space) * params_.space_bonus;
     return (score * mg) / material_entry::kPhaseMax;
 }
 
@@ -1004,10 +1005,12 @@ template <Color c> int HCEEvaluator::eval_threats(const position& p, einfo& ei) 
     auto enemyPieceAttacks = (ei.piece_attacks[them][knight] | ei.piece_attacks[them][bishop] |
                               ei.piece_attacks[them][rook] | ei.piece_attacks[them][queen]);
 
-    // 1. Pieces under attack by pawns
+    // 1. Pieces under attack by pawns. Counted, not flagged: a pawn fork
+    // attacking two pieces is worth about twice a pawn attacking one, and the
+    // weak-pawn term below already counts its victims the same way. As a bare
+    // flag this could not tell a fork from a single nudge.
     auto attackedByPawns = enemies & pawnAttacks;
-    if (attackedByPawns != 0ULL)
-        score += params_.threat_by_pawn;
+    score += params_.threat_by_pawn * bits::count(attackedByPawns);
 
     // 2. Hanging pieces under attack
     auto defendendEnemies = enemies & (enemyPawnAttacks | enemyPieceAttacks);

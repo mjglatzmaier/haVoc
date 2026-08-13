@@ -140,7 +140,7 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         auto defend_mask = (c == white ? bitboards::pattks[black][s] : bitboards::pattks[white][s]);
         auto defenders = pawns & defend_mask;
         if (defenders == 0ULL) {
-            score -= 1;
+            score.sub(par.undefended_pawn_penalty_mg, par.undefended_pawn_penalty_eg);
             e.undefended[c] |= fbb;
         }
 
@@ -197,7 +197,7 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         if (bits::more_than_one(doubled)) {
             e.doubled[c] |= doubled;
             if (e.isolated[c] & doubled)
-                score.sub(2 * par.doubled_pawn_penalty_mg, 2 * par.doubled_pawn_penalty_eg);
+                score.sub(par.doubled_isolated_penalty_mg, par.doubled_isolated_penalty_eg);
             else
                 score.sub(par.doubled_pawn_penalty_mg, par.doubled_pawn_penalty_eg);
         }
@@ -206,11 +206,11 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         U64 column = bitboards::col[col_idx];
         if ((column & epawns) == 0ULL) {
             if ((fbb & e.backward[c]) && !is_isolated)
-                score.sub(2 * par.backward_pawn_penalty_mg, 2 * par.backward_pawn_penalty_eg);
+                score.sub(par.backward_pawn_semiopen_mg, par.backward_pawn_semiopen_eg);
             if (fbb & e.isolated[c])
-                score.sub(2 * par.isolated_pawn_penalty_mg, 2 * par.isolated_pawn_penalty_eg);
+                score.sub(par.isolated_pawn_semiopen_mg, par.isolated_pawn_semiopen_eg);
             if (fbb & e.doubled[c])
-                score.sub(2 * par.doubled_pawn_penalty_mg, 2 * par.doubled_pawn_penalty_eg);
+                score.sub(par.doubled_pawn_semiopen_mg, par.doubled_pawn_semiopen_eg);
 
         }
 
