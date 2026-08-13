@@ -397,7 +397,16 @@ void position::undo_null_move() {
 
 // ─── SEE ────────────────────────────────────────────────────────────────────
 
-static const std::vector<int> mvals{100, 300, 315, 480, 910, 2000};
+// Indexed by Piece: pawn, knight, bishop, rook, queen, king. The king entry is
+// only ever a "this cannot be allowed to happen" sentinel and is not tunable.
+static std::array<int, 6> mvals{100, 300, 315, 480, 910, 2000};
+
+void position::set_see_values(const std::array<int, 5>& pawn_through_queen) {
+    for (int i = 0; i < 5; ++i)
+        mvals[static_cast<std::size_t>(i)] = pawn_through_queen[static_cast<std::size_t>(i)];
+}
+
+std::array<int, 6> position::see_values() { return mvals; }
 
 int position::see(const Move& m) const {
     return see_move(m);

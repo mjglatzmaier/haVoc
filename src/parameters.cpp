@@ -1,5 +1,7 @@
 #include "havoc/parameters.hpp"
 
+#include "havoc/position.hpp"
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -60,7 +62,17 @@ bool parameters::load(const std::string& filename) {
     if (unknown > 0)
         std::cerr << "info string load_params: " << applied << " applied, " << unknown
                   << " unrecognised key(s) ignored" << std::endl;
+
+    sync_see_values();
     return applied > 0;
+}
+
+// Static exchange evaluation orders and prunes captures, so it is asserting
+// things about material that the evaluation also asserts. Keep the two saying
+// the same thing.
+void parameters::sync_see_values() const {
+    position::set_see_values({material_value[0], material_value[1], material_value[2],
+                              material_value[3], material_value[4]});
 }
 
 bool parameters::save(const std::string& filename) const {
