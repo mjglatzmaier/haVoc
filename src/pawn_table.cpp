@@ -116,7 +116,6 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
 
     for (Square s = *sqs; s != no_square; s = *++sqs) {
         U64 fbb = bitboards::squares[s];
-        U64 front = (c == white ? bitboards::squares[s + 8] : bitboards::squares[s - 8]);
         int row = util::row(s);
         int col_idx = util::col(s);
 
@@ -144,7 +143,6 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         U64 mask = bitboards::passpawn_mask[c][s] & epawns;
         if (mask == 0ULL) {
             e.passed[c] |= fbb;
-            e.weak_squares[c] |= front;
         }
 
         // Isolated pawns
@@ -152,14 +150,14 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         if (neighbors_bb == 0ULL) {
             e.isolated[c] |= fbb;
             score.sub(par.isolated_pawn_penalty_mg, par.isolated_pawn_penalty_eg);
-            e.weak_squares[c] |= front;
+
         }
 
         // Backward pawns
         if (backward_pawn<c>(row, col_idx, pawns)) {
             e.backward[c] |= fbb;
             score.sub(par.backward_pawn_penalty_mg, par.backward_pawn_penalty_eg);
-            e.weak_squares[c] |= front;
+
         }
 
         // Square color
@@ -181,14 +179,13 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         // Semi-open files
         U64 column = bitboards::col[col_idx];
         if ((column & epawns) == 0ULL) {
-            e.semiopen[c] |= fbb;
             if (fbb & e.backward[c])
                 score.sub(2 * par.backward_pawn_penalty_mg, 2 * par.backward_pawn_penalty_eg);
             if (fbb & e.isolated[c])
                 score.sub(2 * par.isolated_pawn_penalty_mg, 2 * par.isolated_pawn_penalty_eg);
             if (fbb & e.doubled[c])
                 score.sub(2 * par.doubled_pawn_penalty_mg, 2 * par.doubled_pawn_penalty_eg);
-            e.weak_squares[c] |= front;
+
         }
 
         // King/queen side pawns
