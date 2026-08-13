@@ -169,6 +169,62 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("bishop_own_pawn_penalty_eg", &bishop_own_pawn_penalty_eg);
 
         result.emplace_back("uncastled_penalty", &uncastled_penalty);
+
+        // King harassment tables, the threat tables and the piece-pair combo
+        // matrix. All of these were static constexpr until now, which put the
+        // bulk of the king attack weighting out of the tuner's reach.
+        //
+        // Every one of these loops starts at 1, not 0. eval_king reads these
+        // tables as table[min(N, king_attk_count)] inside `if
+        // (king_attk_count)`, so entry 0 is the "attacks no square of the king
+        // ring" case and is unreachable by construction. Registering it would
+        // hand the tuner a weight with an identically zero gradient.
+        for (size_t i = 1; i < pawn_king.size(); ++i)
+            result.emplace_back("pawn_king_" + std::to_string(i), &pawn_king[i]);
+        for (size_t i = 1; i < knight_king.size(); ++i)
+            result.emplace_back("knight_king_" + std::to_string(i), &knight_king[i]);
+        for (size_t i = 1; i < bishop_king.size(); ++i)
+            result.emplace_back("bishop_king_" + std::to_string(i), &bishop_king[i]);
+        for (size_t i = 1; i < rook_king.size(); ++i)
+            result.emplace_back("rook_king_" + std::to_string(i), &rook_king[i]);
+        // queen_king stops one short of the end. The table is indexed per
+        // queen by min(6, count), so entry 6 needs a single queen attacking
+        // six squares of the eight-square king ring, and the king blocks
+        // every ray that would pass through its own square. Exhausting all
+        // 64x63 king/queen placements gives a maximum of five, so entry 6
+        // cannot be read by any position, legal or otherwise.
+        for (size_t i = 1; i + 1 < queen_king.size(); ++i)
+            result.emplace_back("queen_king_" + std::to_string(i), &queen_king[i]);
+
+        // Only the strictly lower triangle. eval_king walks p1 from knight to
+        // queen and p2 from pawn to p1 - 1, so a combination is always stored
+        // with the stronger piece first and the diagonal never appears -- a
+        // piece type cannot combine with itself here. That is 10 live entries
+        // out of 25; the other 15 are shape, not weights.
+        for (size_t i = knight; i <= queen; ++i)
+            for (size_t j = 0; j < i; ++j)
+                result.emplace_back("attack_combos_" + std::to_string(i) + "_" +
+                                        std::to_string(j),
+                                    &attack_combos[i][j]);
+
+        // Threat tables are indexed by the victim's piece type. eval_threats
+        // builds its victim set as `ei.pieces[them] ^ enemyPawns`, so a pawn
+        // is never a victim here and entry 0 cannot be read. Entry 5, the
+        // king, is only reachable when the side to move is in check, and a
+        // bonus for "attacking the king" is not a weight worth fitting, so it
+        // is left live but untuned.
+        for (size_t i = knight; i <= queen; ++i) {
+            result.emplace_back("knight_attks_" + std::to_string(i), &knight_attks[i]);
+            result.emplace_back("bishop_attks_" + std::to_string(i), &bishop_attks[i]);
+            result.emplace_back("rook_attks_" + std::to_string(i), &rook_attks[i]);
+            result.emplace_back("queen_attks_" + std::to_string(i), &queen_attks[i]);
+        }
+
+        result.emplace_back("connected_rook_bonus", &connected_rook_bonus);
+        result.emplace_back("doubled_bishop_bonus", &doubled_bishop_bonus);
+        result.emplace_back("open_file_bonus", &open_file_bonus);
+        result.emplace_back("bishop_open_center_bonus", &bishop_open_center_bonus);
+        result.emplace_back("rook_7th_bonus", &rook_7th_bonus);
         return result;
     }
 

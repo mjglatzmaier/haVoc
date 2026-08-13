@@ -1046,6 +1046,82 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "r3k2r/4bppp/8/P7/8/8/1PP2PPP/4K2R w Kkq - 0 1",
         "r3k2r/4bppp/P7/8/8/8/1PP2PPP/4K2R w Kkq - 0 1",
         "1r2k2r/P3bppp/8/8/8/8/1PP2PPP/4K2R w Kk - 0 1",
+        // Everything above is quiet or an ending. That left the entire king
+        // attack weighting -- the per-piece king harassment tables, the
+        // attack_combos matrix -- and the threat tables unreached, because
+        // none of these positions has an enemy piece bearing on a king zone
+        // or an undefended piece to threaten. The tuner could move those
+        // weights and the error would not change.
+        //
+        // Pieces swarming a castled king: knight, bishop, rook and queen all
+        // attack squares in black's king ring at once, which is what the
+        // combination matrix is indexed by.
+        "r1b2rk1/pp3ppp/2n5/q2p2N1/3P4/2B5/PP2QPPP/R4RK1 w - - 0 1",
+        "r4rk1/pp3ppp/8/2b1N3/2B5/1Q6/PP3PPP/5RK1 w - - 0 1",
+        "2r3k1/5ppp/8/6N1/3Q4/8/PP3PPP/6K1 w - - 0 1",
+        // The mirror of the same idea, so a white-only attack cannot be the
+        // only thing the corpus sees.
+        "6k1/pp3ppp/8/3q4/6n1/8/PP3PPP/2R3K1 b - - 0 1",
+        // Loose pieces of every type standing en prise to every type, which
+        // is what the knight/bishop/rook/queen threat tables are indexed by.
+        "4k3/1n1r4/8/2B1Q3/8/2N5/8/4K3 w - - 0 1",
+        "4k3/3q4/8/2n1r3/8/2B2R2/8/4K3 b - - 0 1",
+        // An asymmetric bishop pair: white keeps both bishops, black has one
+        // bishop and two knights, so doubled_bishop_bonus cannot cancel.
+        "r1bqk2r/pppp1ppp/2n2n2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 1",
+        // A rook on the seventh and, separately, connected rooks on the back
+        // rank. Black's rooks are split by a knight on b8 so the bonus does
+        // not appear on both sides and cancel.
+        "r2q2k1/2R2ppp/8/8/8/8/PP3PPP/3Q2K1 w - - 0 1",
+        "rn3rk1/5ppp/8/8/8/8/PP3PPP/R3R1K1 w - - 0 1",
+        // A rook on a fully open file, with no pawn of either colour on it.
+        "3r2k1/pp3ppp/8/8/8/8/PP3PPP/4R1K1 w - - 0 1",
+        // One undefended victim on d5, attacked at once by a knight, a
+        // bishop, a rook and a queen, with the victim's type varied across
+        // the four positions. eval_threats scores `ei.pieces[them] ^ pawns`
+        // minus everything the enemy defends, so the victim has to be both
+        // genuinely loose and genuinely attacked -- black's king and pawns are
+        // parked on the far side of the board so they defend nothing.
+        "7k/3Q2pp/8/3n4/1N6/8/B5PP/3RK3 w - - 0 1",
+        "7k/3Q2pp/8/3b4/1N6/8/B5PP/3RK3 w - - 0 1",
+        "7k/3Q2pp/8/3r4/1N6/8/B5PP/3RK3 w - - 0 1",
+        "7k/3Q2pp/8/3q4/1N6/8/B5PP/3RK3 w - - 0 1",
+        // A pawn joining the attack on the king ring. attack_combos is
+        // indexed by a pair of attacking piece types and the pawn row is only
+        // reachable when a pawn attacks the ring alongside a piece: here f6
+        // covers g7 while the knight, rook and queen cover it too.
+        "r5k1/pp2R3/4NP2/7Q/8/8/PP6/6K1 w - - 0 1",
+        // The same with a second pawn, so the pawn arm of the king harassment
+        // table reaches its top entry rather than stopping at one square.
+        "r5k1/pp4P1/5P2/7Q/8/8/PP6/R5K1 w - - 0 1",
+        // Strictly one-sided threats. In the four d5 positions above both
+        // sides end up with a loose piece of the same type, so the threat
+        // weight moves identically on both sides of the subtraction and
+        // cancels. Here white's attacker is defended by a pawn or its king
+        // and black's is not, so only one side scores.
+        "k7/pp6/8/3n4/1N6/P7/6PP/4K3 w - - 0 1",
+        "k7/pp6/8/3r4/8/8/6PP/3RK3 w - - 0 1",
+        // Every piece type attacking one square of the king ring at once.
+        // attack_combos is indexed by a *pair* of types that attack the same
+        // square, so a swarm that covers different squares reaches none of
+        // it. Pawn h6, knight f5, bishop f8, rook e7 and queen b2 all bear on
+        // g7, which reaches all ten live entries of the matrix from one
+        // position. Nothing attacks g8, so black is not in check.
+        "r4Bk1/pp2R3/7P/5N2/8/8/PQP5/6K1 w - - 0 1",
+        // A centralised enemy king, which is the only way a single rook or
+        // queen reaches the upper entries of its harassment table: a king on
+        // the edge simply has fewer ring squares to attack.
+        "r7/pp6/8/3k4/2R5/8/PP6/6K1 w - - 0 1",
+        "r7/pp6/8/3k4/1Q6/8/PP6/6K1 w - - 0 1",
+        // A rook attacking a loose enemy rook. eval_threats builds its
+        // "defended" set from pawn and piece attacks only -- a king does not
+        // count as a defender -- so in the naive version of this position both
+        // rooks read as hanging and the weight cancels. White's rook is
+        // defended by the c3 pawn instead.
+        "k7/pp6/8/3r4/3R4/2P5/6PP/4K3 w - - 0 1",
+        // A queen bearing on exactly four squares of a centralised king's
+        // ring, along the e-file and the e2-c4 diagonal.
+        "r7/pp6/8/3k4/8/8/PP2Q3/6K1 w - - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
