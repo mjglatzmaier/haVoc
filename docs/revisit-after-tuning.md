@@ -130,3 +130,42 @@ the assertion from a curated observation into something that follows from a
 symmetric evaluation. Until then, expect to re-curate this list whenever the
 evaluation changes, and check eval-level symmetry first: if the position's
 evaluation still equals minus its mirror's, the search residual is the cause.
+
+## Half the evaluation is written in units it cannot speak in
+
+Counting every non-PST tunable in `parameters.hpp` against a pawn worth 100:
+
+| range | count | share |
+| --- | --- | --- |
+| exactly 0 | 18 | 6% |
+| 1 to 4 | 154 | 52% |
+| 5 to 15 | 79 | 27% |
+| 16 to 50 | 30 | 10% |
+| above 50 | 34 | 11% |
+
+Over half the evaluation's weights are worth four centipawns or less. That is
+not a tuning observation, it is a structural one: a term that spans two
+centipawns end to end cannot express a judgement at all, whatever the position.
+`king_shelter` is `{-1, -1, 1, 1}` -- a king with no pawns in front of it and a
+king behind three are two centipawns apart. `threat_weak_pawn` is `{1, 1, 1, 1}`,
+so a queen attacking a hanging pawn says the same thing as a knight. Terms like
+these are outvoted by a single piece-square entry.
+
+This is the most likely reason a large body of chess knowledge in this
+evaluation never showed up in the rating, and the most likely place for Texel
+tuning to find a lot at once: the shapes are mostly right and the magnitudes are
+mostly placeholders. It also says something about what to do *before* tuning.
+Every dead or near-dead term found this session -- outposts firing for 0.68% of
+minors, a rook's open file worth 1 and its half-open file worth nothing, two
+storming pawns worth nothing, a passer on rank 4 worth 2 with the rest of its
+evaluation skipped entirely -- would have been fitted as noise by a tuner rather
+than fixed by one. Structure first, magnitudes second.
+
+The corollary is the trap this session fell into twice. Correcting a structural
+defect invites setting the new weight to what the term "should" be worth, which
+in a compressed evaluation means setting it far above its neighbours. A king
+storm table peaking at 32 beside a `king_open_file_penalty` of 9 measured -22
+Elo; at 12, which is 36 centipawns summed over three pawns against a previous
+maximum of 4, it measured -37 over 228 games. Fix the shape, keep the magnitude
+in family with whatever sits beside it, and let the tuner raise the whole block
+together.
