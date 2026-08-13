@@ -7,6 +7,9 @@
 
 #include <sstream>
 #include <string>
+#include <map>
+#include <random>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -369,6 +372,80 @@ TEST_F(PositionTest, RecognisesDeadDrawnMaterial) {
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3RK3/8/8 w - - 0 1"));   // KR vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3QK3/8/8 w - - 0 1"));   // KQ vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/4K3/4P3/8 w - - 0 1"));  // KP vs K
+}
+
+// The material key must identify material and nothing else. The material table
+// caches an entry per key and validates it by comparing the full key, so any
+// two positions sharing a key are treated as having identical material: the
+// cached material score, phase interpolant and endgame classification of the
+// first are handed to the second.
+//
+// This used to fail in both directions. mkey was XORed with the square-indexed
+// zobrist::piece(square, colour, piece) in add_piece and remove_piece, exactly
+// as the position key is, but do_quiet updates the position key and
+// deliberately leaves mkey alone -- quiet moves do not change material. So a
+// piece was registered in the key at its *starting* square and, when captured
+// later somewhere else, unregistered at the square it happened to die on. The
+// two terms did not cancel: the key kept a stale term for the origin and
+// gained a spurious one for the grave.
+//
+// The result was a key that tracked capture squares rather than material.
+// Identical material reached by different move orders produced different keys,
+// and -- because two pieces of the same colour and type captured on the same
+// square contribute the identical term twice, which cancels -- genuinely
+// different material could produce the *same* key. Over the sample below the
+// old scheme produced 6,167 keys for 4,238 distinct materials, with 19 outright
+// collisions between different materials.
+TEST_F(PositionTest, MaterialKeyIdentifiesMaterialAndNothingElse) {
+    std::mt19937 rng(4242u);
+    std::map<std::string, U64> key_of_material;
+    std::map<U64, std::string> material_of_key;
+    long positions = 0, same_material_different_key = 0, same_key_different_material = 0;
+
+    for (int game = 0; game < 60; ++game) {
+        std::istringstream ss("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        position p(ss);
+        for (int ply = 0; ply < 120; ++ply) {
+            Movegen mv(p);
+            mv.generate<pseudo_legal, pieces>();
+            std::vector<Move> legal;
+            for (int i = 0; i < mv.size(); ++i)
+                if (p.is_legal(mv[i]))
+                    legal.push_back(mv[i]);
+            if (legal.empty())
+                break;
+            p.do_move(legal[rng() % legal.size()]);
+
+            std::string material;
+            for (int c = 0; c < 2; ++c)
+                for (int pc = pawn; pc <= king; ++pc)
+                    material += static_cast<char>('0' + p.number_of(Color(c), Piece(pc)));
+            const U64 k = p.material_key();
+            ++positions;
+
+            auto a = key_of_material.find(material);
+            if (a == key_of_material.end())
+                key_of_material[material] = k;
+            else if (a->second != k)
+                ++same_material_different_key;
+
+            auto b = material_of_key.find(k);
+            if (b == material_of_key.end())
+                material_of_key[k] = material;
+            else if (b->second != material)
+                ++same_key_different_material;
+        }
+    }
+
+    EXPECT_GT(positions, 3000) << "the random walk did not cover enough ground to mean anything";
+    EXPECT_EQ(same_key_different_material, 0)
+        << "two different materials share a key, so the material table will hand one "
+           "position the cached score, phase and endgame type of the other";
+    EXPECT_EQ(same_material_different_key, 0)
+        << "identical material produced different keys, so the material table caches "
+           "the same entry many times over and thrashes";
+    EXPECT_EQ(key_of_material.size(), material_of_key.size())
+        << "the material key must be a bijection with material";
 }
 
 } // namespace havoc

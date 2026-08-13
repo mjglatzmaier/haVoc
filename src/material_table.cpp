@@ -83,10 +83,13 @@ material_table::material_table(const parameters& params) : params_(&params) {
 }
 
 void material_table::init() {
-    sz_mb_ = 50 * 1024;
-    count_ = 1024 * sz_mb_ / sizeof(material_entry);
-    if (count_ < 1024)
-        count_ = 1024;
+    // A power of two, so that k & (count_ - 1) can reach every slot. The old
+    // size of 1,638,400 entries is not a power of two: masking with 0x18FFFF
+    // left 84% of a 50 MB allocation unreachable, and the table behaved like a
+    // 262,144-slot one that cost 50 MB. With a genuine material key 131,072
+    // slots hold 97.2% of probes, within noise of what the 50 MB table managed.
+    count_ = 128 * 1024;
+    sz_mb_ = count_ * sizeof(material_entry) / (1024 * 1024);
     entries_ = std::make_unique<material_entry[]>(count_);
 }
 
