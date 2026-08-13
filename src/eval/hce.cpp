@@ -647,6 +647,44 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
         for (Piece pc = pawn; pc <= queen; ++pc)
             unsafe_bb |= ei.kattk_points[them][pc];
 
+        // Safe checks. The most concrete form of king danger is a square an
+        // enemy piece already attacks, from which it would give check, and
+        // which we do not defend -- the check simply lands and cannot be
+        // answered by taking the checker.
+        //
+        // The check-from sets are computed with magics against the current
+        // occupancy rather than read from bitboards::kchecks, which holds
+        // empty-board slider attacks. On a real board a bishop sitting on a
+        // kchecks square usually is not giving check at all, because
+        // something stands in between, so that table overstates slider checks
+        // badly and is only correct for the knight.
+        //
+        // "Safe" excludes squares occupied by the attacker's own pieces, which
+        // it cannot move onto, and any square in our attack map. The king's
+        // own ring counts as defended: a check the king can simply capture is
+        // not the danger this term is about.
+        {
+            const U64 our_attacks = ei.pe->attacks[c] | ei.piece_attacks[c][knight] |
+                                    ei.piece_attacks[c][bishop] | ei.piece_attacks[c][rook] |
+                                    ei.piece_attacks[c][queen] | ei.kmask[c];
+            const U64 safe = ~ei.pieces[them] & ~our_attacks;
+
+            const U64 rook_from = magics::attacks<rook>(ei.all_pieces, s);
+            const U64 bishop_from = magics::attacks<bishop>(ei.all_pieces, s);
+
+            U64 check_from[5]{};
+            check_from[knight] = bitboards::nmask[s];
+            check_from[bishop] = bishop_from;
+            check_from[rook] = rook_from;
+            check_from[queen] = rook_from | bishop_from;
+
+            for (Piece pc = knight; pc <= queen; ++pc) {
+                const U64 checks = check_from[pc] & ei.piece_attacks[them][pc] & safe;
+                if (checks)
+                    score -= params_.safe_check_weight[pc] * bits::count(checks);
+            }
+        }
+
         if (unsafe_bb) {
             mvs &= ~unsafe_bb;
 
