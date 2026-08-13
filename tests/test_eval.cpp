@@ -113,6 +113,50 @@ TEST_F(EvalTest, StartposIsApproximatelyZero) {
     EXPECT_LE(score, 50) << "Startpos eval too high: " << score;
 }
 
+// ─── Backward pawns ────────────────────────────────────────────────────────
+
+// A pawn is backward when no pawn on a neighbouring file can ever defend it.
+// The old test scanned each neighbouring file for its most advanced pawn and
+// asked whether that one stood in front -- the wrong end of the file. With
+// pawns on a2, a5 and b3, a5 is ahead of b3 and so b3 was called backward,
+// while a2 was attacking b3 at the time.
+TEST_F(EvalTest, ABackwardPawnIsOneNoNeighbourCanDefend) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+
+    struct Case {
+        const char* fen;
+        const char* square;
+        int sq;
+        bool backward;
+        const char* why;
+    };
+    const Case cases[] = {
+        {"4k3/8/8/P7/8/1P6/8/4K3 w - - 0 1", "b3", havoc::B3, true,
+         "the only neighbour is a5, which is strictly in front"},
+        {"4k3/8/8/P7/8/1P6/P7/4K3 w - - 0 1", "b3", havoc::B3, false,
+         "a2 is behind b3 -- in fact it attacks it. The old code looked at "
+         "a5, the most advanced a-pawn, and called b3 backward anyway"},
+        {"4k3/8/8/P7/8/1P6/8/4K3 w - - 0 1", "a5", havoc::A5, false,
+         "b3 is behind a5 and can advance to b4 beside it"},
+        {"4k3/8/8/8/8/1P6/8/4K3 w - - 0 1", "b3", havoc::B3, true,
+         "no neighbouring pawns at all: vacuously backward, which the "
+         "outpost code relies on"},
+        {"4k3/8/8/8/1P6/2P5/8/4K3 w - - 0 1", "c3", havoc::C3, true,
+         "b4 is the only neighbour and it is strictly in front"},
+        {"4k3/8/8/8/1P6/2P5/8/4K3 w - - 0 1", "b4", havoc::B4, false,
+         "c3 is behind b4"},
+    };
+
+    for (const auto& c : cases) {
+        auto pos = make_pos(c.fen);
+        const auto* e = pt.fetch(pos);
+        const bool got = (e->backward[havoc::white] & havoc::bitboards::squares[c.sq]) != 0ULL;
+        EXPECT_EQ(got, c.backward)
+            << c.square << " in " << c.fen << ": " << c.why;
+    }
+}
+
 // ─── Evaluation must be a function of the position ─────────────────────────
 
 // has_castled is set only by do_move when a castling move is played, and is

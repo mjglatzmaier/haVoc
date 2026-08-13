@@ -19,62 +19,22 @@ inline size_t prev_pow2(size_t x) {
     return prev_pow2(x >> 1) << 1;
 }
 
+/// A pawn is backward when no pawn on a neighbouring file can ever defend it,
+/// which is to say every one of them stands strictly in front of it.
+///
+/// The old implementation scanned each neighbouring file for its *most
+/// advanced* pawn and asked whether that one was ahead. That is the wrong end
+/// of the file: with white pawns on a2, a5 and b3, the a-file's most advanced
+/// pawn is a5, which is ahead of b3, so b3 was called backward -- while a2 was
+/// defending it. What decides the question is the rearmost neighbour, so the
+/// test is simply whether any neighbouring pawn stands on this pawn's rank or
+/// behind it. A pawn with no neighbours at all satisfies it vacuously, which
+/// is deliberate and matches the old behaviour: the square in front of an
+/// isolated pawn is as much a hole as the one in front of a backward pawn.
 template <Color c> bool backward_pawn(int row, int col, U64 pawns) {
-    int left = col - 1 < Col::A ? -1 : col - 1;
-    int right = col + 1 > Col::H ? -1 : col + 1;
-    bool left_greater = false;
-    bool right_greater = false;
-
-    if constexpr (c == white) {
-        if (left != -1) {
-            int sq = -1;
-            U64 left_pawns = bitboards::col[left] & pawns;
-            bool no_left_pawns = (left_pawns == 0ULL);
-            while (left_pawns) {
-                int tmp = bits::pop_lsb(left_pawns);
-                if (tmp > sq)
-                    sq = tmp;
-            }
-            left_greater = (sq > 0 && util::row(sq) > row) || no_left_pawns;
-        }
-        if (right != -1) {
-            int sq = -1;
-            U64 right_pawns = bitboards::col[right] & pawns;
-            bool no_right_pawns = (right_pawns == 0ULL);
-            while (right_pawns) {
-                int tmp = bits::pop_lsb(right_pawns);
-                if (tmp > sq)
-                    sq = tmp;
-            }
-            right_greater = (sq > 0 && util::row(sq) > row) || no_right_pawns;
-        }
-    } else {
-        if (left != -1) {
-            int sq = 100;
-            U64 left_pawns = bitboards::col[left] & pawns;
-            bool no_left_pawns = (left_pawns == 0ULL);
-            while (left_pawns) {
-                int tmp = bits::pop_lsb(left_pawns);
-                if (tmp < sq)
-                    sq = tmp;
-            }
-            left_greater = (sq < 100 && util::row(sq) < row) || no_left_pawns;
-        }
-        if (right != -1) {
-            int sq = 100;
-            U64 right_pawns = bitboards::col[right] & pawns;
-            bool no_right_pawns = (right_pawns == 0ULL);
-            while (right_pawns) {
-                int tmp = bits::pop_lsb(right_pawns);
-                if (tmp < sq)
-                    sq = tmp;
-            }
-            right_greater = (sq < 100 && util::row(sq) < row) || no_right_pawns;
-        }
-    }
-
-    return (left == -1 && right_greater) || (right == -1 && left_greater) ||
-           (left_greater && right_greater);
+    const U64 behind_or_level = (c == white) ? ((row == 7) ? ~0ULL : ((1ULL << (8 * (row + 1))) - 1))
+                                             : ~((1ULL << (8 * row)) - 1);
+    return (bitboards::neighbor_cols[col] & pawns & behind_or_level) == 0ULL;
 }
 
 const float pawn_scaling[8] = {0.86f, 0.90f, 0.95f, 1.00f, 1.00f, 0.95f, 0.90f, 0.86f};
