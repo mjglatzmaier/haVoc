@@ -36,12 +36,8 @@ struct pawn_entry {
     U64 light[2]{};
     U64 attacks[2]{};
     U64 undefended[2]{};
-    U64 weak_squares[2]{};
-    U64 chaintips[2]{};
-    U64 chainbases[2]{};
     U64 queenside[2]{};
     U64 kingside[2]{};
-    U64 semiopen[2]{};
     int16_t center_pawn_count = 0;
     bool locked_center = false;
 };
