@@ -143,9 +143,8 @@ struct parameters {
     static constexpr int doubled_bishop_bonus = 4;
     static constexpr int open_file_bonus = 1;
     static constexpr int bishop_open_center_bonus = 1;
-    static constexpr int bishop_color_complex_penalty = 1;
-    static constexpr int bishop_penalty_pawns_same_color = 1;
     static constexpr int rook_7th_bonus = 2;
+
 
     // Pawn structure
     /// Pawn-structure penalties, split by game phase.
@@ -167,7 +166,6 @@ struct parameters {
     int backward_pawn_penalty_eg = 1;
     int isolated_pawn_penalty_mg = 4;
     int isolated_pawn_penalty_eg = 4;
-    static constexpr int semi_open_pawn_penalty = 1;
 
     // Material values
     std::array<int, 6> material_value = {100, 300, 315, 480, 910, 20000};
@@ -231,12 +229,6 @@ struct parameters {
     int history_bonus_scale = 1;    // history bonus is scale * depth^2
     int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)
     int lazy_margin = 225;          // lazy evaluation cutoff margin
-
-    static constexpr int pawn_lever_score[64] = {
-        1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3,
-        2, 1, 1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4,
-        4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1, 1, 2, 3, 4, 4, 3, 2, 1,
-    };
 
     // Parameter serialization
     bool load(const std::string& filename);
