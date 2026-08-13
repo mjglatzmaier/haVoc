@@ -2,6 +2,7 @@
 
 #include "havoc/bitboard.hpp"
 #include "havoc/magics.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/position.hpp"
 #include "havoc/squares.hpp"
 #include "havoc/utils.hpp"
@@ -18,6 +19,65 @@ namespace {
 
 inline bool is_pawnless_endgame(const position& p) {
     return (p.get_pieces<white, pawn>() | p.get_pieces<black, pawn>()) == 0ULL;
+}
+
+/// True when `c` holds the classic drawn "wrong rook pawn" ending: every pawn
+/// on a single rook file, at least one bishop, no bishop able to touch the
+/// promotion square, and the defending king already controlling that square.
+///
+/// This is a theorem rather than a heuristic. The pawn can only promote on the
+/// corner square; the defending king sits on or beside it and can never be
+/// driven away, because the attacking bishop covers the opposite color complex
+/// and so can neither take the corner nor cover the escape square. The attacker
+/// may have any number of pawns and any number of bishops -- if they are all on
+/// the rook file and all on the wrong color, none of that matters.
+///
+/// haVoc had no notion of this at all. `k7/8/8/8/8/8/PB6/6K1 w` (a-pawn, dark
+/// bishop, black king on a8) is a dead draw and scored +443, one point off the
+/// +441 it gave the genuinely winning light-bishop version of the same
+/// position. The engine would happily trade into it believing it was a pawn up.
+template <Color c> inline bool is_wrong_rook_pawn_draw(const position& p) {
+    constexpr Color them = (c == white ? black : white);
+
+    // The defender must be down to a bare king. Any other material gives
+    // counterplay, or a piece to sacrifice for the pawn, and the proof breaks.
+    if ((p.get_pieces<them, pawn>() | p.get_pieces<them, knight>() |
+         p.get_pieces<them, bishop>() | p.get_pieces<them, rook>() |
+         p.get_pieces<them, queen>()) != 0ULL)
+        return false;
+
+    // The attacker must hold nothing but king, pawns and bishops. A knight or
+    // a rook covers the corner the bishop cannot, and wins.
+    if ((p.get_pieces<c, knight>() | p.get_pieces<c, rook>() | p.get_pieces<c, queen>()) != 0ULL)
+        return false;
+
+    const U64 pawns = p.get_pieces<c, pawn>();
+    const U64 bishops = p.get_pieces<c, bishop>();
+    if (pawns == 0ULL || bishops == 0ULL)
+        return false;
+
+    // Every pawn on the a-file, or every pawn on the h-file.
+    int promo_col;
+    if ((pawns & ~bitboards::col[Col::A]) == 0ULL)
+        promo_col = Col::A;
+    else if ((pawns & ~bitboards::col[Col::H]) == 0ULL)
+        promo_col = Col::H;
+    else
+        return false;
+
+    const int promo = (c == white ? 56 + promo_col : promo_col);
+
+    // Derive the promotion square's color from the board rather than assuming a
+    // convention, then require every bishop to be on the other complex.
+    const U64 promo_complex = (bitboards::squares[promo] & bitboards::colored_sqs[white]) != 0ULL
+                                  ? bitboards::colored_sqs[white]
+                                  : bitboards::colored_sqs[black];
+    if ((bishops & promo_complex) != 0ULL)
+        return false;
+
+    // The defending king must already be on or beside the promotion square.
+    const int dk = static_cast<int>(p.king_square(them));
+    return std::max(util::row_dist(dk, promo), util::col_dist(dk, promo)) <= 1;
 }
 
 /// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
@@ -175,9 +235,35 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
             }
         }
         switch (egt) {
-        case KpK:
+        case KpK: {
+            // A single pawn against a bare king is solved exactly by the
+            // bitbase, so there is nothing here for the evaluation to guess at.
+            const U64 wp = p.get_pieces<white, pawn>();
+            const U64 bp = p.get_pieces<black, pawn>();
+            if (bits::count(wp | bp) == 1) {
+                const Color strong = wp ? white : black;
+                U64 pawns = wp | bp;
+                int psq = bits::lsb(pawns);
+                int sk = static_cast<int>(p.king_square(strong));
+                int wk_ = static_cast<int>(p.king_square(strong == white ? black : white));
+                // Normalise so the pawn is white's and stands on files a-d.
+                if (strong == black) {
+                    psq ^= 56;
+                    sk ^= 56;
+                    wk_ ^= 56;
+                }
+                if (util::col(psq) > Col::D) {
+                    psq ^= 7;
+                    sk ^= 7;
+                    wk_ ^= 7;
+                }
+                const Color stm = (p.to_move() == strong) ? white : black;
+                if (!kpk::probe(sk, psq, wk_, stm))
+                    return score::kDraw;
+            }
             score += eval_kpk<white>(p, ei) - eval_kpk<black>(p, ei);
             break;
+        }
         case KrrK:
             score += eval_krrk<white>(p, ei) - eval_krrk<black>(p, ei);
             break;
@@ -207,7 +293,9 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     score += (pawn_score * params_.pawn_structure_category_scale) / 100;
     score += (piece_score * params_.sq_score_category_scale) / 100;
     score += (king_score * params_.king_safety_category_scale) / 100;
-    score += (passed_score * params_.passed_pawn_category_scale) / 100;
+    score += (passed_score * ei.me->taper(params_.passed_pawn_category_scale,
+                                          params_.passed_pawn_endgame_scale)) /
+             100;
 
     if (lazy_margin > 0 && !ei.me->is_endgame() && std::abs(score) >= lazy_margin)
         return to_stm(p, score, params_.tempo);
@@ -252,10 +340,14 @@ int HCEEvaluator::evaluate(const position& p, int lazy_margin) {
     // No pawns with small material advantage → likely drawn
     if (is_pawnless_endgame(p) && std::abs(score) < 400)
         scale = std::min(scale, params_.no_pawn_scale);
-
     // Single minor piece advantage with no pawns → near draw
     if (is_pawnless_endgame(p) && std::abs(ei.me->score) <= 315 && std::abs(ei.me->score) > 0)
         scale = std::min(scale, params_.minor_advantage_no_pawn_scale);
+
+    // Wrong rook pawn plus wrong-colored bishop: a proven draw, so the whole
+    // score collapses regardless of how many pawns the attacker is up.
+    if (is_wrong_rook_pawn_draw<white>(p) || is_wrong_rook_pawn_draw<black>(p))
+        scale = std::min(scale, params_.wrong_rook_pawn_scale);
 
     if (scale != 128)
         score = (score * scale) / 128;
@@ -311,7 +403,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
                           : params_.knight_mobility_table.back();
             score += ((params_.knight_mobility_scale * params_.mobility_scaling[knight] * mob) /
                       100) *
-                     params_.mobility_category_scale / 100;
+                     ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
         }
 
         // Outpost
@@ -409,7 +501,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
                           : params_.bishop_mobility_table.back();
         int mobility_score =
             ((params_.bishop_mobility_scale * params_.mobility_scaling[bishop] * mob_val) / 100) *
-            params_.mobility_category_scale / 100;
+            ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
         if ((sq_bb & p.pinned<c>()) && mobility_score > 0)
             mobility_score /= params_.pinned_scaling[bishop];
 
@@ -455,9 +547,15 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
                 score += 12;
         }
 
-        // Penalty for bishops on same color as own pawns
-        int same_color_penalty = (ei.me->is_endgame() ? params_.bishop_own_pawn_penalty_eg
-                                                      : params_.bishop_own_pawn_penalty_mg);
+        // Penalty for bishops on same color as own pawns.
+        //
+        // Blended by game phase. Selecting on is_endgame() picked the endgame
+        // value only once the board was down to two non-pawn pieces, which is
+        // 8.5% of positions, so bishop_own_pawn_penalty_eg was very nearly a
+        // dead parameter and a bad bishop was charged the middlegame rate
+        // through three quarters of all real endgames.
+        int same_color_penalty =
+            ei.me->taper(params_.bishop_own_pawn_penalty_mg, params_.bishop_own_pawn_penalty_eg);
         U64 fcolored_pawns = (this_light ? flight_sq_pawns : fdark_sq_pawns);
         score -= same_color_penalty * bits::count(fcolored_pawns);
 
@@ -520,18 +618,20 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
                         : params_.rook_mobility_table.back();
         int mobility_score =
             ((params_.rook_mobility_scale * params_.mobility_scaling[rook] * mob_r) / 100) *
-            params_.mobility_category_scale / 100;
+            ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
 
         if (sq_bb & p.pinned<c>())
             mobility_score /= params_.pinned_scaling[rook];
 
         score += mobility_score;
 
-        // Trapped rook
+        // Trapped rook. Blended by phase for the same reason as the bishop
+        // penalty above: index 1 of trapped_rook_penalty was reachable only in
+        // the barest positions. The extra charge for having not yet castled is
+        // a middlegame idea, so it fades with the middlegame weight instead of
+        // switching off.
         if (trapped_rook<c>(p, ei, s)) {
-            score -= params_.trapped_rook_penalty[ei.me->is_endgame()];
-            if (!ei.me->is_endgame() && !p.has_castled<c>())
-                score -= 2;
+            score -= ei.me->taper(params_.trapped_rook_penalty[0], params_.trapped_rook_penalty[1]);
         }
 
         // Center influence
@@ -629,15 +729,26 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
     constexpr Color them = Color(c ^ 1);
     Square* kings = p.squares_of<c, king>();
     U64 enemyPawns = p.get_pieces<them, pawn>();
-    bool is_endgame = ei.me->is_endgame();
+    // Shelter, storm and the castling bonus are middlegame ideas: they fade
+    // out as the pieces that could exploit a draughty king leave the board.
+    // They used to switch off in one step when the material happened to match
+    // a classified ending, which is 8.5% of positions, so a king was still
+    // charged full middlegame shelter through most real endgames and then had
+    // the whole term vanish at an arbitrary boundary.
+    const int mg = ei.me->mg_weight();
 
     for (Square s = *kings; s != no_square; s = *++kings) {
         U64 sq_bb = bitboards::squares[s];
 
-        // Square eval (middlegame only)
-        if (!is_endgame)
-            score +=
-                params_.sq_score_scaling[king] * square_score<c>(params_, king, s, ei.me->phase_interpolant);
+        // Square eval. square_score already tapers between the middlegame and
+        // endgame king tables by phase, so gating it as well left the king with
+        // no positional guidance at all in exactly the positions where king
+        // activity decides the game. Classified endings that supply their own
+        // king logic -- KPK through the bitbase, KRK, KBNK -- do so by adding
+        // to this score, and the endgame king table already wants the king
+        // centralised, so there is nothing here to double count.
+        score += params_.sq_score_scaling[king] *
+                 square_score<c>(params_, king, s, ei.me->phase_interpolant);
 
         // Mobility
         U64 mvs = ei.kmask[c] & ei.empty;
@@ -736,8 +847,8 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             }
         }
 
-        // Pawn shelter (middlegame)
-        if (!is_endgame) {
+        // Pawn shelter, weighted towards the middlegame.
+        {
             // Computed live rather than read from the pawn hash. The hash is
             // keyed on pawn structure alone, so a mask built from the king
             // square does not belong in it: castling leaves the pawns
@@ -745,28 +856,30 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             // against wherever the king stood when that entry was filled.
             U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
             int n = std::min(3, bits::count(pawn_shelter));
-            score += params_.king_shelter[n] / 2;
+            int shelter = params_.king_shelter[n] / 2;
 
             // Pawnless flank penalty
             U64 kflank = bitboards::kflanks[util::col(s)] & p.get_pieces<c, pawn>();
             if (!kflank)
-                score -= 2;
+                shelter -= 2;
+
+            score += (shelter * mg) / material_entry::kPhaseMax;
         }
 
-        // Castling bonus (middlegame)
-        if (!is_endgame && p.has_castled<c>())
-            score += 16;
+
 
         // Enemy pawn storm
-        if (!is_endgame) {
+        {
             auto pawnStormMask = bitboards::kpawnstorm[c][!(util::col(s) >= Col::E)];
             auto pawnStorm = pawnStormMask & enemyPawns;
             auto numAttackers = bits::count(pawnStorm);
+            int storm = 0;
             if (numAttackers >= 2) {
-                score -= 2;
+                storm -= 2;
                 if (numAttackers >= 3)
-                    score -= 2;
+                    storm -= 2;
             }
+            score += (storm * mg) / material_entry::kPhaseMax;
         }
     }
     return score;
@@ -776,7 +889,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
 
 template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
     int score = 0;
-    if (ei.me->is_endgame())
+    // Space is worth having because pieces need somewhere to go, so it fades
+    // as the pieces do. Returning zero the moment the material matched a
+    // classified ending made it worth full value right up to that boundary and
+    // nothing after it.
+    const int mg = ei.me->mg_weight();
+    if (mg == 0)
         return score;
 
     U64 spacemask =
@@ -795,7 +913,7 @@ template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
         space |= util::squares_behind(bitboards::col[util::col(s)], c, s);
     }
     score += bits::count(space);
-    return score;
+    return (score * mg) / material_entry::kPhaseMax;
 }
 
 // ─── eval_threats ───────────────────────────────────────────────────────────
@@ -961,7 +1079,7 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         int row_dist = (c == white ? 7 - util::row(f) : util::row(f));
 
         if (row_dist > 3 || row_dist <= 0) {
-            score += parameters::passed_pawn_bonus;
+            score += params_.passed_pawn_rank_bonus[0];
             continue;
         }
 
@@ -969,7 +1087,7 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
 
         // 1. Is next square blocked?
         if (p.piece_on(front) == no_piece)
-            score += 1;
+            score += params_.passed_pawn_unblocked;
 
         // 2. Control of front square
         U64 our_attackers = 0ULL;
@@ -983,11 +1101,11 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
 
         if (our_attackers != 0ULL) {
             crudeControl += bits::count(our_attackers);
-            score += 3 * bits::count(our_attackers);
+            score += params_.passed_pawn_control * bits::count(our_attackers);
         }
         if (their_attackers != 0ULL) {
             crudeControl -= bits::count(their_attackers);
-            score -= 3 * bits::count(their_attackers);
+            score -= params_.passed_pawn_control * bits::count(their_attackers);
         }
 
         // 3. Rooks behind passed pawns
@@ -1001,10 +1119,10 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
                     auto supports = ((bitboards::between[rf][f] & p.all_pieces()) ^
                                      (bitboards::squares[rf] | bitboards::squares[f])) == 0ULL;
                     if (isBehind)
-                        score += 1;
+                        score += params_.passed_pawn_rook_behind;
                     if (isBehind && supports) {
                         crudeControl += 1;
-                        score += 30;
+                        score += params_.passed_pawn_rook_support;
                     }
                 }
             }
@@ -1013,13 +1131,13 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         // 4. Connected passers
         auto connectedPassed = (bitboards::neighbor_cols[util::col(f)] & ei.pe->passed[c]) != 0ULL;
         if (connectedPassed)
-            score += 30;
+            score += params_.passed_pawn_connected;
 
         // 5. Closer to promotion
-        score += (row_dist == 3 ? 45 : row_dist == 2 ? 90 : row_dist == 1 ? 180 : 0);
+        score += params_.passed_pawn_rank_bonus[4 - row_dist];
 
         if (crudeControl < 0)
-            score -= (row_dist == 3 ? 30 : row_dist == 2 ? 55 : row_dist == 1 ? 120 : 0);
+            score -= params_.passed_pawn_blocked_penalty[3 - row_dist];
     }
     return score;
 }

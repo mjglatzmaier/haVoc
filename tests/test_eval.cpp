@@ -1,4 +1,5 @@
 #include "havoc/bitboard.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/book.hpp"
 #include "havoc/eval/hce.hpp"
 #include "havoc/magics.hpp"
@@ -9,6 +10,7 @@
 #include "havoc/position.hpp"
 #include "havoc/tablebase.hpp"
 #include "havoc/tt.hpp"
+#include "havoc/uci.hpp"
 #include "havoc/zobrist.hpp"
 
 #include <algorithm>
@@ -85,6 +87,7 @@ class EvalTest : public ::testing::Test {
         havoc::bitboards::init();
         havoc::magics::init();
         havoc::zobrist::init();
+        havoc::kpk::init();
     }
 };
 
@@ -100,6 +103,65 @@ TEST_F(EvalTest, StartposIsApproximatelyZero) {
     int score = eval.evaluate(pos);
     EXPECT_GE(score, -50) << "Startpos eval too low: " << score;
     EXPECT_LE(score, 50) << "Startpos eval too high: " << score;
+}
+
+// ─── Evaluation must be a function of the position ─────────────────────────
+
+// has_castled is set only by do_move when a castling move is played, and is
+// never derived from a FEN. It is not part of the zobrist key either. So the
+// same position, with the same key, evaluates differently depending on how it
+// was reached -- and the transposition table, which is keyed on that key,
+// hands one path's score to the other.
+//
+// This walks a king and rook from e1/h1 to g1/f1 the long way round, which
+// reaches exactly the position kingside castling reaches, and compares it
+// against the castled path.
+TEST_F(EvalTest, EvaluationDoesNotDependOnHowThePositionWasReached) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    auto play = [](havoc::position& pos, const std::string& uci) {
+        havoc::Movegen mvs(pos);
+        mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+        for (int i = 0; i < mvs.size(); ++i) {
+            if (!pos.is_legal(mvs[i]))
+                continue;
+            if (havoc::uci::move_to_string(mvs[i]) == uci) {
+                pos.do_move(mvs[i]);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Enough material on both sides that is_endgame() stays false, otherwise
+    // the endgame specialisation can return before the castling terms run.
+    // f2, g2 and d7 are empty so both kings have a route off their back rank.
+    const std::string start = "r3k1n1/ppp1pppp/8/8/8/8/PPPPP2P/4K2R w K - 0 1";
+
+    // Path A: castle kingside. King e1 -> g1, rook h1 -> f1.
+    auto a = make_pos(start);
+    ASSERT_TRUE(play(a, "e1g1"));
+
+    // Path B: the same placement, walked there. The rook has to go first,
+    // because once the king stands on g1 the rook can no longer cross it, and
+    // the king then has to detour over f2 and g2 for the same reason. Black
+    // shuffles on a three-move cycle so that it is Black to move at the end of
+    // both paths with its king back on e8.
+    auto b = make_pos(start);
+    for (const char* mv : {"h1f1", "e8d8", "e1f2", "d8d7", "f2g2", "d7e8", "g2g1"})
+        ASSERT_TRUE(play(b, mv)) << "could not play " << mv;
+
+    ASSERT_EQ(a.key(), b.key())
+        << "the two paths must reach the same position for this test to mean anything";
+    ASSERT_EQ(a.to_move(), b.to_move());
+
+    EXPECT_EQ(eval.evaluate(a), eval.evaluate(b))
+        << "the same position evaluates differently depending on the move order "
+           "that reached it. Both share a zobrist key, so the transposition "
+           "table will serve one of these scores for the other.";
 }
 
 // ─── Extra queen → large advantage ─────────────────────────────────────────
@@ -370,6 +432,202 @@ TEST_F(EvalTest, OppositeColorBishops_Scaled) {
 //
 // Assert it by differencing against a run with the scale neutralized: with
 // other pieces on the board the knob must make no difference at all.
+TEST_F(EvalTest, KpkBitbaseAgreesWithMovegenOnEveryLegalPosition) {
+    // The bitbase is built by value iteration over its own successor function,
+    // so checking it against itself proves nothing. This walks a large sample
+    // of legal KPK positions with the real move generator instead and asks
+    // whether each verdict follows from the verdicts of its actual children,
+    // including the two moves that leave the table: capturing the pawn (bare
+    // kings, drawn) and promoting (KQ vs K, won unless the queen falls at once
+    // or the defender is stalemated).
+    auto legal_moves = [](havoc::position& p) {
+        havoc::Movegen mv(p);
+        mv.generate<havoc::pseudo_legal, havoc::pieces>();
+        std::vector<havoc::Move> out;
+        for (int i = 0; i < mv.size(); ++i)
+            if (p.is_legal(mv[i]))
+                out.push_back(mv[i]);
+        return out;
+    };
+    auto promoted_material = [](const havoc::position& p) {
+        return p.get_pieces<havoc::white, havoc::queen>() |
+               p.get_pieces<havoc::white, havoc::rook>() |
+               p.get_pieces<havoc::white, havoc::bishop>() |
+               p.get_pieces<havoc::white, havoc::knight>();
+    };
+
+    long checked = 0, mismatches = 0;
+    for (int pf = 0; pf < 4; ++pf)
+        for (int pr = 1; pr <= 6; ++pr) {
+            const int psq = pr * 8 + pf;
+            for (int wk = 0; wk < 64; ++wk)
+                for (int bk = 0; bk < 64; ++bk) {
+                    if (wk == psq || bk == psq || wk == bk)
+                        continue;
+                    if (std::max(std::abs((wk >> 3) - (bk >> 3)), std::abs((wk & 7) - (bk & 7))) <= 1)
+                        continue;
+                    // Keep the runtime sane: every ninth position, which still
+                    // covers every pawn square and both sides to move.
+                    if ((wk * 64 + bk) % 9 != 0)
+                        continue;
+                    for (int s = 0; s < 2; ++s) {
+                        const bool wtm = (s == 0);
+                        havoc::U64 patt = 0ULL;
+                        if ((psq & 7) > 0)
+                            patt |= 1ULL << (psq + 7);
+                        if ((psq & 7) < 7)
+                            patt |= 1ULL << (psq + 9);
+                        if (wtm && (patt & (1ULL << bk)))
+                            continue;  // black already in check on white's turn
+
+                        char b[64] = {0};
+                        b[wk] = 'K';
+                        b[psq] = 'P';
+                        b[bk] = 'k';
+                        std::string fen;
+                        for (int r = 7; r >= 0; --r) {
+                            int run = 0;
+                            for (int c = 0; c < 8; ++c) {
+                                const char pc = b[r * 8 + c];
+                                if (!pc)
+                                    ++run;
+                                else {
+                                    if (run) {
+                                        fen += static_cast<char>('0' + run);
+                                        run = 0;
+                                    }
+                                    fen += pc;
+                                }
+                            }
+                            if (run)
+                                fen += static_cast<char>('0' + run);
+                            if (r)
+                                fen += '/';
+                        }
+                        fen += wtm ? " w - - 0 1" : " b - - 0 1";
+
+                        auto pos = make_pos(fen);
+                        const bool want =
+                            havoc::kpk::probe(wk, psq, bk, wtm ? havoc::white : havoc::black);
+
+                        const auto moves = legal_moves(pos);
+                        bool got = false;
+                        if (!moves.empty()) {
+                            got = !wtm;  // white needs one winning move, black needs them all
+                            for (const auto& m : moves) {
+                                havoc::position child = pos;
+                                child.do_move(m);
+                                const havoc::U64 cp = child.get_pieces<havoc::white, havoc::pawn>();
+                                const havoc::U64 cq = promoted_material(child);
+                                bool child_won;
+                                if (cp == 0ULL && cq == 0ULL) {
+                                    child_won = false;  // bare kings
+                                } else if (cq != 0ULL) {
+                                    const auto replies = legal_moves(child);
+                                    child_won = !replies.empty();
+                                    for (const auto& r2 : replies) {
+                                        havoc::position g = child;
+                                        g.do_move(r2);
+                                        if (promoted_material(g) == 0ULL) {
+                                            child_won = false;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    child_won = havoc::kpk::probe(
+                                        child.king_square(havoc::white), havoc::bits::lsb(cp),
+                                        child.king_square(havoc::black),
+                                        child.to_move() == havoc::white ? havoc::white
+                                                                        : havoc::black);
+                                }
+                                if (wtm ? child_won : !child_won) {
+                                    got = wtm;
+                                    break;
+                                }
+                            }
+                        }
+                        ++checked;
+                        if (want != got && mismatches++ < 5)
+                            ADD_FAILURE() << "bitbase says " << want << " but successors say " << got
+                                          << " for " << fen;
+                    }
+                }
+        }
+    EXPECT_EQ(mismatches, 0);
+    EXPECT_GT(checked, 15000) << "sampling stride skipped too much of the table";
+}
+
+TEST_F(EvalTest, DrawnKingAndPawnEndingsScoreZero) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    // Textbook draws that haVoc used to score as a clean extra pawn.
+    const char* drawn[] = {
+        "7k/8/7K/7P/8/8/8/8 w - - 0 1",     // rook pawn, defender holds the corner
+        "8/8/8/3k4/8/3K4/3P4/8 w - - 0 1",  // defender has the opposition
+        "8/8/8/8/8/1k6/1p6/1K6 w - - 0 1",  // black pawn, white king stalemated
+        "8/8/8/8/8/k7/p7/K7 w - - 0 1",     // black rook pawn, white king blockading
+    };
+    for (const char* fen : drawn) {
+        auto pos = make_pos(fen);
+        EXPECT_EQ(eval.evaluate(pos), 0) << "drawn KPK should score zero: " << fen;
+    }
+
+    // Won versions, so the rule cannot pass by flattening every KPK ending.
+    const char* won[] = {
+        "8/8/8/2k5/8/3K4/3P4/8 w - - 0 1",  // attacker has the opposition
+        "8/6k1/8/8/8/8/6PK/8 w - - 0 1",    // king escorting the pawn
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",  // king leads the pawn up the board
+    };
+    for (const char* fen : won) {
+        auto pos = make_pos(fen);
+        EXPECT_GT(eval.evaluate(pos), 50) << "won KPK should still score as a win: " << fen;
+    }
+}
+
+TEST_F(EvalTest, WrongRookPawnAndWrongBishopIsDrawn) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    // Every pawn on a rook file, every bishop on the complex the promotion
+    // square is not on, and the defending king on the promotion square. The
+    // attacker cannot make progress no matter how many pawns are involved.
+    struct Case {
+        const char* fen;
+        const char* why;
+    };
+    const Case drawn[] = {
+        {"k7/8/8/8/8/8/PB6/6K1 w - - 0 1", "a-pawn, dark bishop, black king on a8"},
+        {"7k/8/8/8/8/8/7P/5BK1 w - - 0 1", "h-pawn, bishop on f1 cannot see h8"},
+        {"k7/8/8/8/8/P7/PB6/6K1 w - - 0 1", "two a-pawns, still drawn"},
+        // Same theorem with the colors reversed, which the mirror tests do not
+        // reach because they never generate this material.
+        {"1k6/1b6/p7/8/8/8/8/K7 b - - 0 1", "black a-pawn, bishop on b7 cannot see a1"},
+    };
+    for (const auto& c : drawn) {
+        auto pos = make_pos(c.fen);
+        EXPECT_EQ(eval.evaluate(pos), 0) << "should be a dead draw: " << c.why << " (" << c.fen << ")";
+    }
+
+    // Negative controls. Each breaks exactly one clause of the theorem, and
+    // each must still be scored as a win, so the rule cannot pass by simply
+    // zeroing every rook-pawn ending.
+    const Case winning[] = {
+        {"k7/8/8/8/8/8/P1B5/6K1 w - - 0 1", "bishop on c2 does cover a8"},
+        {"6k1/8/8/8/8/8/PB6/6K1 w - - 0 1", "defending king nowhere near the corner"},
+        {"k7/8/8/8/8/8/PBN5/6K1 w - - 0 1", "a knight covers the corner the bishop cannot"},
+        {"k7/8/8/8/8/8/PPB5/6K1 w - - 0 1", "the b-pawn does not promote in the corner"},
+    };
+    for (const auto& c : winning) {
+        auto pos = make_pos(c.fen);
+        EXPECT_GT(eval.evaluate(pos), 200) << "should still be winning: " << c.why << " (" << c.fen << ")";
+    }
+}
+
 TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
     havoc::parameters params;
     havoc::parameters neutral;
@@ -748,16 +1006,46 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "8/8/8/1P6/8/8/6p1/K6k w - - 0 1",
         "4k3/pppppppp/8/8/PPPPPPPP/8/8/4K3 w - - 0 1",
         // Endgame scale factors: opposite bishops, pawnless, lone minor
-        "6k1/5ppp/8/8/3b4/8/2B2PPP/6K1 w - - 0 1",
-        "6k1/8/8/3b4/8/8/2B5/6K1 w - - 0 1",
+        "6k1/5ppp/8/8/3b4/8/2B2PPP/6K1 w - - 0 1",        "6k1/8/8/3b4/8/8/2B5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2B5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2N5/6K1 w - - 0 1",
         "6k1/8/8/8/8/8/2R5/6K1 w - - 0 1",
         "6k1/5ppp/8/8/8/8/5PPP/2R3K1 w - - 0 1",
+        // A wrong rook pawn: white's a-pawn promotes on a8, white's bishop is
+        // on the dark complex and can never touch it, and the black king is
+        // already sitting on the promotion square. Nothing else in this list
+        // reaches wrong_rook_pawn_scale.
+        "k7/8/8/8/8/8/PB6/6K1 w - - 0 1",
         // King and pawn endings
         "8/3k4/8/8/3P4/3K4/8/8 w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
         "6k1/5ppp/8/8/8/8/1P6/1K6 w - - 0 1",
+        // Doubled pawns, asymmetric so the two sides cannot cancel: white has
+        // a doubled c-file, black does not. Without this the corpus never
+        // reaches the doubled-pawn penalty at all.
+        "6k1/pp3ppp/8/8/8/2P5/PPP2PPP/6K1 w - - 0 1",
+        // Doubled and isolated together, which takes the other branch of the
+        // doubled-pawn test, plus a tripled file.
+        "6k1/1p3pp1/8/8/2P5/2P5/2P2PP1/6K1 w - - 0 1",
+        // The same weakness with a full board, so the middlegame endpoint of
+        // the doubled-pawn penalty is exercised and not just the endgame one.
+        "r1bqkbnr/pp1ppppp/2n5/8/8/2P5/PPP2PPP/RNBQKBNR w KQkq - 0 1",
+        // A passer two ranks from promotion, which is the one rung of the
+        // passed_pawn_rank_bonus ladder the rest of the set never reaches.
+        "6k1/pp6/4P3/8/8/8/5PPP/6K1 w - - 0 1",
+        // A rook behind its own passer with a clear path to it. This is the
+        // only shape that reaches passed_pawn_rook_behind and, because a1-a5
+        // is empty, passed_pawn_rook_support as well. Enough material is left
+        // on that is_endgame() stays false, otherwise the endgame
+        // specialisation returns before eval_passed_pawns runs at all.
+        "r3k2r/4bppp/8/P7/8/8/1PP2PPP/R3K2R w KQkq - 0 1",
+        // The same passer with no rook behind it and a black rook bearing on
+        // the square in front, so crudeControl goes negative and the blocked
+        // penalty fires. Three positions, one per rung of the ladder: the
+        // pawn is three, two and one rank from promotion.
+        "r3k2r/4bppp/8/P7/8/8/1PP2PPP/4K2R w Kkq - 0 1",
+        "r3k2r/4bppp/P7/8/8/8/1PP2PPP/4K2R w Kkq - 0 1",
+        "1r2k2r/P3bppp/8/8/8/8/1PP2PPP/4K2R w Kk - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
@@ -847,12 +1135,10 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "material_value_0", "material_value_5",
         // (b) genuinely dead: declared, tuned and saved, but read by nothing.
         // attacker_weight_0 is the pawn entry of the king-danger sum, whose
-        // loop starts at knight. passed_pawn_rank_bonus and uncastled_penalty
-        // are features that were never implemented -- eval_passed_pawns uses
-        // its own hard-coded constants and eval_king has a hard-coded castling
-        // bonus with no matching penalty.
-        "attacker_weight_0", "passed_pawn_rank_bonus_0", "passed_pawn_rank_bonus_1",
-        "passed_pawn_rank_bonus_2", "passed_pawn_rank_bonus_3", "uncastled_penalty",
+        // loop starts at knight. uncastled_penalty is a feature that was never
+        // implemented -- eval_king has a hard-coded castling bonus with no
+        // matching penalty.
+        "attacker_weight_0", "uncastled_penalty",
     };
 
     std::vector<std::string> unexpected;
@@ -885,6 +1171,89 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
 //
 // Stated as an invariant that holds for any cache: evaluating a position must
 // not depend on what was evaluated before it.
+// The generalisation of the test below. That one names three position pairs by
+// hand, which only catches a cache-key hole if someone already guessed where it
+// is. This walks random games and checks every position twice: once with the
+// pawn and material tables emptied first, and once with them full of whatever
+// the rest of the walk left behind.
+//
+// A pure evaluation cannot tell the difference. If it can, some input to a
+// cached term is not part of that cache's key, and the entry a position finds
+// depends on which positions came before it. That is exactly the defect found
+// in the material key, in the pawn hash king mask, and in has_castled, three
+// separate times, each time only after it had already cost playing strength.
+// This test does not need to know which term is wrong to fail.
+TEST_F(EvalTest, EvaluationIsIndependentOfCacheContentsOverRandomPlay) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    std::mt19937 rng(20260813u); // fixed seed: a failure must be reproducible
+
+    std::vector<std::string> fens;
+    for (int game = 0; game < 30; ++game) {
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        for (int ply = 0; ply < 70; ++ply) {
+            std::vector<havoc::Move> legal;
+            havoc::Movegen mvs(pos);
+            mvs.generate<havoc::pseudo_legal, havoc::pieces>();
+            for (int i = 0; i < mvs.size(); ++i)
+                if (pos.is_legal(mvs[i]))
+                    legal.push_back(mvs[i]);
+            if (legal.empty())
+                break;
+            pos.do_move(legal[rng() % legal.size()]);
+            if (ply >= 6)
+                fens.push_back(pos.to_fen());
+        }
+    }
+    ASSERT_GT(fens.size(), 1000u) << "the walk did not cover enough positions to mean anything";
+
+    // Cold: every position sees empty tables, so nothing can leak into it.
+    std::vector<float> cold;
+    cold.reserve(fens.size());
+    for (const auto& fen : fens) {
+        pt.clear();
+        mt.clear();
+        auto pos = make_pos(fen);
+        cold.push_back(eval.evaluate(pos, -1.0f));
+    }
+
+    // Warm, forwards: the tables now carry every earlier position in the walk.
+    pt.clear();
+    mt.clear();
+    int mismatches = 0;
+    for (size_t i = 0; i < fens.size() && mismatches < 5; ++i) {
+        auto pos = make_pos(fens[i]);
+        const float warm = eval.evaluate(pos, -1.0f);
+        if (warm != cold[i]) {
+            ++mismatches;
+            ADD_FAILURE() << "evaluation depends on cache contents (forward walk)\n  " << fens[i]
+                          << "\n  cold " << cold[i] << "  warm " << warm;
+        }
+    }
+
+    // Warm, backwards: a different set of entries is resident when each
+    // position is reached, so a hole that the forward order happened to miss
+    // still has a second chance to show.
+    pt.clear();
+    mt.clear();
+    for (size_t n = fens.size(); n > 0 && mismatches < 5; --n) {
+        const size_t i = n - 1;
+        auto pos = make_pos(fens[i]);
+        const float warm = eval.evaluate(pos, -1.0f);
+        if (warm != cold[i]) {
+            ++mismatches;
+            ADD_FAILURE() << "evaluation depends on cache contents (reverse walk)\n  " << fens[i]
+                          << "\n  cold " << cold[i] << "  warm " << warm;
+        }
+    }
+
+    std::cout << "[          ] checked " << fens.size() << " positions cold and warm"
+              << std::endl;
+}
+
 TEST_F(EvalTest, EvaluationDoesNotDependOnWhatWasEvaluatedBefore) {
     havoc::parameters params;
     havoc::pawn_table pt(params);

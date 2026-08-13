@@ -188,6 +188,25 @@ enum CastleRight {
     clearw = 12
 };
 
+/// Castling rights surviving a move that touches a given square.
+///
+/// A right dies when the king leaves its home square, when the rook leaves its
+/// corner, and -- the case that used to be missed entirely -- when the rook is
+/// captured on its corner. Indexing by both the origin and the destination of
+/// a move covers all three without special-casing captures: the destination of
+/// a capture on a1/h1/a8/h8 is exactly the corner whose right is lost.
+[[nodiscard]] constexpr U16 castle_rights_after(int sq) {
+    switch (sq) {
+    case 0:  return clearwqs; // A1
+    case 7:  return clearwks; // H1
+    case 4:  return clearw;   // E1
+    case 56: return clearbqs; // A8
+    case 63: return clearbks; // H8
+    case 60: return clearb;   // E8
+    default: return 15;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Score constants (replaces legacy Score enum).
 // ---------------------------------------------------------------------------

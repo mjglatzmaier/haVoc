@@ -31,7 +31,6 @@ struct info {
     Color stm = white;
     Square eps = no_square;
     Square ks[2] = {no_square, no_square};
-    bool has_castled[2] = {};
     Piece captured = no_piece;
     bool incheck = false;
 };
@@ -158,7 +157,6 @@ class position {
     template <Color c> [[nodiscard]] inline bool can_castle() const {
         return can_castle_ks<c>() || can_castle_qs<c>();
     }
-    template <Color c> [[nodiscard]] inline bool has_castled() const { return ifo.has_castled[c]; }
     template <Color c> [[nodiscard]] inline U64 pinned() const { return ifo.pinned[c]; }
 
     [[nodiscard]] inline bool pawns_near_promotion() const {
@@ -304,6 +302,17 @@ inline void piece_data::do_castle_qs(const Color& c, const Square& f, const Squa
     do_quiet(c, rook, rf, rt, ifo);
 }
 
+/// Material key contribution for owning `count` pieces of type `p` and color
+/// `c`. The material key must be a function of the piece *counts* and nothing
+/// else, so it deliberately does not depend on where any piece stands.
+///
+/// The zobrist piece table is reused with the count standing in for a square,
+/// which is safe because a side can hold at most ten pieces of one type and the
+/// material key shares no bits with the position key.
+inline U64 material_hash(const Color& c, const Piece& p, int count) {
+    return zobrist::piece(Square(count), c, p);
+}
+
 inline void piece_data::remove_piece(const Color& c, const Piece& p, const Square& s, info& ifo) {
     U64 sq = bitboards::squares[s];
     bycolor[c] ^= sq;
@@ -320,7 +329,9 @@ inline void piece_data::remove_piece(const Color& c, const Piece& p, const Squar
     color_on[s] = no_color;
     piece_on[s] = no_piece;
     ifo.key ^= zobrist::piece(s, c, p);
-    ifo.mkey ^= zobrist::piece(s, c, p);
+    // number_of has already been decremented, so the count being removed is
+    // one more than it now reads.
+    ifo.mkey ^= material_hash(c, p, number_of[c][p] + 1);
     ifo.repkey ^= zobrist::piece(s, c, p);
     if (p == pawn)
         ifo.pawnkey ^= zobrist::piece(s, c, p);
@@ -337,7 +348,7 @@ inline void piece_data::add_piece(const Color& c, const Piece& p, const Square& 
     piece_idx[c][p][s] = number_of[c][p];
     color_on[s] = c;
     ifo.key ^= zobrist::piece(s, c, p);
-    ifo.mkey ^= zobrist::piece(s, c, p);
+    ifo.mkey ^= material_hash(c, p, number_of[c][p]);
     ifo.repkey ^= zobrist::piece(s, c, p);
     if (p == pawn)
         ifo.pawnkey ^= zobrist::piece(s, c, p);
@@ -355,7 +366,7 @@ inline void piece_data::set(const Color& c, const Piece& p, const Square& s, inf
         king_sq[c] = s;
 
     ifo.key ^= zobrist::piece(s, c, p);
-    ifo.mkey ^= zobrist::piece(s, c, p);
+    ifo.mkey ^= material_hash(c, p, number_of[c][p]);
     ifo.repkey ^= zobrist::piece(s, c, p);
     if (p == pawn)
         ifo.pawnkey ^= zobrist::piece(s, c, p);

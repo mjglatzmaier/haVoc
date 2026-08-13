@@ -81,10 +81,18 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // to prevent the bias term from absorbing scale changes.
         result.emplace_back("sq_score_category_scale", &sq_score_category_scale);
         result.emplace_back("mobility_category_scale", &mobility_category_scale);
+        result.emplace_back("mobility_endgame_scale", &mobility_endgame_scale);
         result.emplace_back("king_safety_category_scale", &king_safety_category_scale);
         result.emplace_back("threat_category_scale", &threat_category_scale);
         result.emplace_back("passed_pawn_category_scale", &passed_pawn_category_scale);
+        result.emplace_back("passed_pawn_endgame_scale", &passed_pawn_endgame_scale);
         result.emplace_back("pawn_structure_category_scale", &pawn_structure_category_scale);
+        result.emplace_back("doubled_pawn_penalty_mg", &doubled_pawn_penalty_mg);
+        result.emplace_back("doubled_pawn_penalty_eg", &doubled_pawn_penalty_eg);
+        result.emplace_back("backward_pawn_penalty_mg", &backward_pawn_penalty_mg);
+        result.emplace_back("backward_pawn_penalty_eg", &backward_pawn_penalty_eg);
+        result.emplace_back("isolated_pawn_penalty_mg", &isolated_pawn_penalty_mg);
+        result.emplace_back("isolated_pawn_penalty_eg", &isolated_pawn_penalty_eg);
         result.emplace_back("space_category_scale", &space_category_scale);
         result.emplace_back("king_danger_divisor", &king_danger_divisor);
         return result;
@@ -115,11 +123,21 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("opposite_bishop_scale", &opposite_bishop_scale);
         result.emplace_back("no_pawn_scale", &no_pawn_scale);
         result.emplace_back("minor_advantage_no_pawn_scale", &minor_advantage_no_pawn_scale);
+        result.emplace_back("wrong_rook_pawn_scale", &wrong_rook_pawn_scale);
 
         // Passed pawn rank bonuses
         for (size_t i = 0; i < passed_pawn_rank_bonus.size(); ++i)
             result.emplace_back("passed_pawn_rank_bonus_" + std::to_string(i),
                                 &passed_pawn_rank_bonus[i]);
+
+        result.emplace_back("passed_pawn_unblocked", &passed_pawn_unblocked);
+        result.emplace_back("passed_pawn_control", &passed_pawn_control);
+        result.emplace_back("passed_pawn_rook_behind", &passed_pawn_rook_behind);
+        result.emplace_back("passed_pawn_rook_support", &passed_pawn_rook_support);
+        result.emplace_back("passed_pawn_connected", &passed_pawn_connected);
+        for (size_t i = 0; i < passed_pawn_blocked_penalty.size(); ++i)
+            result.emplace_back("passed_pawn_blocked_penalty_" + std::to_string(i),
+                                &passed_pawn_blocked_penalty[i]);
 
         // Attacker weights
         for (size_t i = 0; i < attacker_weight.size(); ++i)

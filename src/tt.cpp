@@ -39,6 +39,25 @@ bool hash_table::fetch(U64 key, hash_data& e) {
     for (unsigned i = 0; i < cluster_size; ++i, ++stored) {
         if ((stored->pkey ^ stored->dkey) == key) {
             e.decode(stored->dkey);
+
+            // An entry that is still being hit is still useful, but eviction
+            // scores it by when it was *written*, not by when it was last
+            // needed: entry_value() is depth - 8 * relative_age(). Without a
+            // refresh, everything carried over from the previous search looks
+            // one generation stale no matter how often the current search
+            // transposes into it, and gets thrown out in favour of whatever
+            // shallow entry the current search happens to write next.
+            //
+            // Stamp the current generation on the way past. The age field is
+            // bits 55-62 of dkey, so it can be rewritten in place; pkey has to
+            // be re-derived from the key so the XOR validation still holds.
+            if (e.age != generation_) {
+                const U64 refreshed =
+                    (stored->dkey & ~(0xFFULL << 55)) | (U64(generation_) << 55);
+                stored->dkey = refreshed;
+                stored->pkey = key ^ refreshed;
+                e.age = generation_;
+            }
             return true;
         }
     }

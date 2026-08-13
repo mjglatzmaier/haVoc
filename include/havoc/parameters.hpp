@@ -26,9 +26,20 @@ struct parameters {
     // All at 100 = original eval scale. Tune individual params directly.
     int sq_score_category_scale = 100;
     int mobility_category_scale = 100;
+    /// Endgame counterpart to mobility_category_scale. Mobility had no phase
+    /// dependence at all, so a mobile knight was worth the same with a full
+    /// board as with four pieces left. Unlike the passed-pawn taper the right
+    /// direction here is not obvious, so this defaults equal to the middlegame
+    /// endpoint: the change is inert until the tuner fits it.
+    int mobility_endgame_scale = 100;
     int king_safety_category_scale = 100;
     int threat_category_scale = 100;
     int passed_pawn_category_scale = 100;
+    /// Endgame counterpart to passed_pawn_category_scale. The passed-pawn
+    /// evaluation used to be a single phase-independent scalar, so a passer
+    /// was worth exactly as much in the opening as in a king-and-pawn ending.
+    /// The score is now tapered between these two endpoints by game phase.
+    int passed_pawn_endgame_scale = 150;
     int pawn_structure_category_scale = 100;
     int space_category_scale = 100;
     int king_danger_divisor = 256;
@@ -137,10 +148,25 @@ struct parameters {
     static constexpr int rook_7th_bonus = 2;
 
     // Pawn structure
-    static constexpr int doubled_pawn_penalty = 4;
-    static constexpr int backward_pawn_penalty = 1;
-    static constexpr int isolated_pawn_penalty = 4;
-    static constexpr int passed_pawn_bonus = 2;
+    /// Pawn-structure penalties, split by game phase.
+    ///
+    /// These used to be static constexpr, so they were invisible to the
+    /// tuner, and pawn_score applied every penalty identically to the
+    /// middlegame and endgame accumulators. A pawn weakness is worth far more
+    /// in an endgame, where it cannot be covered by pieces and becomes a
+    /// fixed target, so the endgame endpoints default higher.
+    // Endgame endpoints deliberately equal the middlegame ones, which makes
+    // the split exactly inert: sub(v, v) is the old operator-=(v) bit for bit.
+    // Raising them (doubled 4->12, isolated 4->12, backward 1->3) was measured
+    // at -85 +/- 35 Elo over 274 games, LLR -2.96, H0 accepted. The parameters
+    // exist so Texel can fit the endgame endpoints from data; guessing them by
+    // hand is what failed.
+    int doubled_pawn_penalty_mg = 4;
+    int doubled_pawn_penalty_eg = 4;
+    int backward_pawn_penalty_mg = 1;
+    int backward_pawn_penalty_eg = 1;
+    int isolated_pawn_penalty_mg = 4;
+    int isolated_pawn_penalty_eg = 4;
     static constexpr int semi_open_pawn_penalty = 1;
 
     // Material values
@@ -150,9 +176,29 @@ struct parameters {
     int opposite_bishop_scale = 24;
     int no_pawn_scale = 32;
     int minor_advantage_no_pawn_scale = 8;
+    int wrong_rook_pawn_scale = 0;
 
     // Passed pawn rank bonuses
-    std::array<int, 4> passed_pawn_rank_bonus = {0, 45, 90, 180};
+    /// Passed-pawn bonus by distance to promotion, indexed [4 - row_dist],
+    /// so entry 0 is a passer still four or more ranks away and entry 3 is one
+    /// step from queening. These values were hard-coded inside
+    /// eval_passed_pawns while this array sat registered with the tuner and
+    /// read by nothing.
+    std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
+
+    /// The rest of eval_passed_pawns, which carried these as bare literals.
+    /// A passed pawn is the single most decisive structural feature on the
+    /// board, and every term below the rank ladder was fixed at a number
+    /// nobody could fit. Defaults reproduce the previous literals exactly.
+    int passed_pawn_unblocked = 1;      ///< square in front is empty
+    int passed_pawn_control = 3;        ///< per attacker of the square in front, each side
+    int passed_pawn_rook_behind = 1;    ///< own rook anywhere behind on the file
+    int passed_pawn_rook_support = 30;  ///< own rook behind with a clear path
+    int passed_pawn_connected = 30;     ///< another passer on a neighbouring file
+    /// Penalty when the square in front is controlled by the opponent, by
+    /// distance to promotion, indexed [3 - row_dist]: entry 0 is three ranks
+    /// out and entry 2 is one step from queening.
+    std::array<int, 3> passed_pawn_blocked_penalty = {30, 55, 120};
 
     // Search
     int fixed_depth = -1;

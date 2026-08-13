@@ -1,4 +1,5 @@
 #include "havoc/bitboard.hpp"
+#include "havoc/kpk.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/movegen.hpp"
 #include "havoc/position.hpp"
@@ -6,6 +7,11 @@
 
 #include <sstream>
 #include <string>
+#include <map>
+#include <random>
+#include <vector>
+#include <set>
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -17,6 +23,7 @@ class PositionTest : public ::testing::Test {
         bitboards::init();
         magics::init();
         zobrist::init();
+        kpk::init();
     }
 };
 
@@ -367,6 +374,297 @@ TEST_F(PositionTest, RecognisesDeadDrawnMaterial) {
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3RK3/8/8 w - - 0 1"));   // KR vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3QK3/8/8 w - - 0 1"));   // KQ vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/4K3/4P3/8 w - - 0 1"));  // KP vs K
+}
+
+// The material key must identify material and nothing else. The material table
+// caches an entry per key and validates it by comparing the full key, so any
+// two positions sharing a key are treated as having identical material: the
+// cached material score, phase interpolant and endgame classification of the
+// first are handed to the second.
+//
+// This used to fail in both directions. mkey was XORed with the square-indexed
+// zobrist::piece(square, colour, piece) in add_piece and remove_piece, exactly
+// as the position key is, but do_quiet updates the position key and
+// deliberately leaves mkey alone -- quiet moves do not change material. So a
+// piece was registered in the key at its *starting* square and, when captured
+// later somewhere else, unregistered at the square it happened to die on. The
+// two terms did not cancel: the key kept a stale term for the origin and
+// gained a spurious one for the grave.
+//
+// The result was a key that tracked capture squares rather than material.
+// Identical material reached by different move orders produced different keys,
+// and -- because two pieces of the same colour and type captured on the same
+// square contribute the identical term twice, which cancels -- genuinely
+// different material could produce the *same* key. Over the sample below the
+// old scheme produced 6,167 keys for 4,238 distinct materials, with 19 outright
+// collisions between different materials.
+TEST_F(PositionTest, MaterialKeyIdentifiesMaterialAndNothingElse) {
+    std::mt19937 rng(4242u);
+    std::map<std::string, U64> key_of_material;
+    std::map<U64, std::string> material_of_key;
+    long positions = 0, same_material_different_key = 0, same_key_different_material = 0;
+
+    for (int game = 0; game < 60; ++game) {
+        std::istringstream ss("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        position p(ss);
+        for (int ply = 0; ply < 120; ++ply) {
+            Movegen mv(p);
+            mv.generate<pseudo_legal, pieces>();
+            std::vector<Move> legal;
+            for (int i = 0; i < mv.size(); ++i)
+                if (p.is_legal(mv[i]))
+                    legal.push_back(mv[i]);
+            if (legal.empty())
+                break;
+            p.do_move(legal[rng() % legal.size()]);
+
+            std::string material;
+            for (int c = 0; c < 2; ++c)
+                for (int pc = pawn; pc <= king; ++pc)
+                    material += static_cast<char>('0' + p.number_of(Color(c), Piece(pc)));
+            const U64 k = p.material_key();
+            ++positions;
+
+            auto a = key_of_material.find(material);
+            if (a == key_of_material.end())
+                key_of_material[material] = k;
+            else if (a->second != k)
+                ++same_material_different_key;
+
+            auto b = material_of_key.find(k);
+            if (b == material_of_key.end())
+                material_of_key[k] = material;
+            else if (b->second != material)
+                ++same_key_different_material;
+        }
+    }
+
+    EXPECT_GT(positions, 3000) << "the random walk did not cover enough ground to mean anything";
+    EXPECT_EQ(same_key_different_material, 0)
+        << "two different materials share a key, so the material table will hand one "
+           "position the cached score, phase and endgame type of the other";
+    EXPECT_EQ(same_material_different_key, 0)
+        << "identical material produced different keys, so the material table caches "
+           "the same entry many times over and thrashes";
+    EXPECT_EQ(key_of_material.size(), material_of_key.size())
+        << "the material key must be a bijection with material";
+}
+
+// Every incrementally maintained key must equal the key a fresh position
+// computes from scratch for the same board. The keys are updated by hand in
+// do_quiet, add_piece, remove_piece and set, each guarded by its own
+// condition, and a missed or mismatched guard is invisible until it silently
+// corrupts whatever cache the key feeds -- exactly how the material key came
+// to identify capture squares rather than material.
+//
+// Rebuilding from the FEN is the independent oracle: it exercises set() only,
+// with no incremental path at all, so agreement across a random walk means the
+// incremental updates compose to the same function as a from-scratch build.
+// Promotions and en passant are the interesting cases, since both move a pawn
+// off a square without a pawn arriving on it.
+TEST_F(PositionTest, IncrementalKeysAgreeWithKeysBuiltFromScratch) {
+    std::mt19937 rng(90210u);
+    long positions = 0, promotions = 0, en_passants = 0;
+
+    for (int game = 0; game < 40; ++game) {
+        std::istringstream ss("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        position p(ss);
+        for (int ply = 0; ply < 140; ++ply) {
+            Movegen mv(p);
+            mv.generate<pseudo_legal, pieces>();
+            std::vector<Move> legal;
+            for (int i = 0; i < mv.size(); ++i)
+                if (p.is_legal(mv[i]))
+                    legal.push_back(mv[i]);
+            if (legal.empty())
+                break;
+
+            const Move m = legal[rng() % legal.size()];
+            if (m.type <= capture_promotion_n)
+                ++promotions;
+            if (m.type == ep)
+                ++en_passants;
+            p.do_move(m);
+            ++positions;
+
+            const std::string fen = p.to_fen();
+            std::istringstream rebuilt_ss(fen);
+            position rebuilt(rebuilt_ss);
+
+            ASSERT_EQ(p.key(), rebuilt.key()) << "position key drifted at " << fen;
+            ASSERT_EQ(p.pawnkey(), rebuilt.pawnkey()) << "pawn key drifted at " << fen;
+            ASSERT_EQ(p.material_key(), rebuilt.material_key())
+                << "material key drifted at " << fen;
+            ASSERT_EQ(p.repkey(), rebuilt.repkey()) << "repetition key drifted at " << fen;
+        }
+    }
+
+    EXPECT_GT(positions, 2000);
+    EXPECT_GT(promotions, 0) << "the walk never promoted, so it never tested the case "
+                                "where a pawn leaves the board without one arriving";
+    EXPECT_GT(en_passants, 0) << "the walk never played en passant, so it never tested "
+                                 "a capture on a square the captured pawn is not on";
+}
+
+namespace {
+/// Plays the move with the given origin and destination, and fails if no such
+/// legal move exists.
+bool play(position& p, Square from, Square to) {
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mv.size(); ++i)
+        if (mv[i].f == from && mv[i].t == to && p.is_legal(mv[i])) {
+            p.do_move(mv[i]);
+            return true;
+        }
+    return false;
+}
+} // namespace
+
+// A repetition is a repetition however many moves it took to come back.
+//
+// is_draw() walks the history two plies at a time, which is right, because only
+// positions with the same side to move can repeat. But the side-to-move term
+// was XORed into the key on every move without the outgoing side being XORed
+// back out, so it accumulated rather than toggled and had a period of four
+// plies instead of two. Every candidate the walk examined at a distance of two
+// plies mod four therefore differed by a constant and could not match, no
+// matter what was on the board.
+//
+// The engine consequently saw repetitions four and eight plies back and was
+// structurally blind to those six, ten and fourteen plies back. Rooks
+// triangulating home -- a1-b1-c1-a1 against a8-b8-c8-a8 -- repeat after six.
+TEST_F(PositionTest, ARepetitionSixPliesBackIsStillARepetition) {
+    std::istringstream ss("r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1");
+    position p(ss);
+    const U64 start_key = p.key();
+
+    const Square path[][2] = {{A1, B1}, {A8, B8}, {B1, C1}, {B8, C8}, {C1, A1}, {C8, A8}};
+    for (auto& mv : path) {
+        ASSERT_TRUE(play(p, mv[0], mv[1])) << "could not play the manoeuvre";
+        if (&mv != &path[5])
+            EXPECT_FALSE(p.is_draw()) << "claimed a draw before the position had repeated";
+    }
+
+    EXPECT_EQ(p.key(), start_key) << "the same board with the same side to move must hash "
+                                     "the same however many plies ago it was last seen";
+    EXPECT_TRUE(p.is_draw()) << "the position has occurred twice and was not detected";
+}
+
+// Castling rights die with the rook, whether it moves or is taken.
+//
+// do_move retired rights when the king or the rook moved, but nothing looked at
+// the square a capture landed on, so taking a rook on its home square left the
+// owner still nominally able to castle with it. The rights mask, the key and
+// the FEN all went on describing a rook that was no longer on the board, and
+// move generation kept emitting the castle for is_legal to throw away.
+TEST_F(PositionTest, CapturingARookOnItsHomeSquareRetiresTheCastlingRight) {
+    std::istringstream ss("4k2r/8/6N1/8/8/8/8/4K3 w k - 0 1");
+    position p(ss);
+    ASSERT_TRUE(p.can_castle_ks<black>());
+
+    ASSERT_TRUE(play(p, G6, H8)) << "Nxh8 should be legal";
+
+    EXPECT_FALSE(p.can_castle_ks<black>())
+        << "black kept the kingside right after the h8 rook was captured";
+    std::istringstream fen_fields(p.to_fen());
+    std::string board, stm, castling;
+    fen_fields >> board >> stm >> castling;
+    EXPECT_EQ(castling, "-")
+        << "the FEN still advertises a castling right for a rook that is gone: " << p.to_fen();
+
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mv.size(); ++i)
+        EXPECT_NE(mv[i].type, castle_ks) << "still generating a castle with no rook to castle with";
+
+    // And the key must agree with a position built from scratch, which is what
+    // makes the stale right corrupt transposition lookups rather than merely
+    // look untidy.
+    std::istringstream rebuilt_ss(p.to_fen());
+    position rebuilt(rebuilt_ss);
+    EXPECT_EQ(p.key(), rebuilt.key());
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zobrist randoms must actually be random.
+//
+// The legacy table was 1835 hand-rolled constants that all fitted in 32 bits
+// and had a Hamming weight of at most 4. They spanned a GF(2) space of only
+// 32 dimensions, which saturated the table with short linear dependencies:
+// 1715 triples XORed to zero and 400785 quadruples satisfied a ^ b == c ^ d.
+//
+// A four-term dependency is a key collision between two positions differing by
+// two pieces, and three of the old ones used a single piece type, so they
+// collided positions with identical material reachable in one game: two white
+// knights on a2 and b2 hashed exactly like the same knights on h4 and d6.
+// is_draw() compares repetition keys for equality, so that pair fabricates a
+// repetition that never happened.
+//
+// This test guards the properties the old table lacked.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_F(PositionTest, ZobristRandomsAreStatisticallyIndependent) {
+    std::vector<havoc::U64> rands;
+    for (int sq = havoc::A1; sq <= havoc::H8; ++sq)
+        for (int c = havoc::white; c <= havoc::black; ++c)
+            for (int p = havoc::pawn; p <= havoc::king; ++p)
+                rands.push_back(havoc::zobrist::piece(havoc::Square(sq), havoc::Color(c),
+                                                      havoc::Piece(p)));
+    for (int c = havoc::white; c <= havoc::black; ++c)
+        for (havoc::U16 r = 0; r < 16; ++r)
+            rands.push_back(havoc::zobrist::castle(havoc::Color(c), r));
+    for (int f = 0; f < 8; ++f)
+        rands.push_back(havoc::zobrist::ep(f));
+    rands.push_back(havoc::zobrist::stm(havoc::white));
+    rands.push_back(havoc::zobrist::stm(havoc::black));
+
+    // Every value distinct.
+    std::set<havoc::U64> distinct(rands.begin(), rands.end());
+    EXPECT_EQ(distinct.size(), rands.size()) << "duplicate zobrist randoms";
+
+    // Full 64-bit range, balanced bits. The old table averaged 3.84.
+    long total_bits = 0;
+    int min_pc = 64;
+    for (auto v : rands) {
+        int pc = __builtin_popcountll(v);
+        total_bits += pc;
+        min_pc = std::min(min_pc, pc);
+    }
+    const double mean_pc = double(total_bits) / double(rands.size());
+    EXPECT_GT(mean_pc, 24.0) << "zobrist randoms are too sparse, mean popcount " << mean_pc;
+    EXPECT_LT(mean_pc, 40.0) << "zobrist randoms are too dense, mean popcount " << mean_pc;
+    EXPECT_GE(min_pc, 12) << "a zobrist random has only " << min_pc << " bits set";
+
+    // They must span the full 64-dimensional GF(2) space, not a subspace.
+    std::map<int, havoc::U64> basis;
+    for (auto v : rands) {
+        havoc::U64 x = v;
+        for (auto it = basis.rbegin(); it != basis.rend(); ++it)
+            x = std::min(x, x ^ it->second);
+        if (x != 0ULL)
+            basis[63 - __builtin_clzll(x)] = x;
+    }
+    EXPECT_EQ(basis.size(), 64u) << "zobrist randoms span only " << basis.size() << " dimensions";
+
+    // No three or four of them may XOR to zero: those are outright key
+    // collisions between positions differing by two or three pieces.
+    std::map<havoc::U64, std::vector<size_t>> pair_xor;
+    for (size_t i = 0; i < rands.size(); ++i)
+        for (size_t j = i + 1; j < rands.size(); ++j)
+            pair_xor[rands[i] ^ rands[j]].push_back(i);
+
+    int three_term = 0;
+    for (auto v : rands)
+        if (pair_xor.count(v) != 0)
+            ++three_term;
+    EXPECT_EQ(three_term, 0) << three_term << " triples of zobrist randoms XOR to zero";
+
+    long four_term = 0;
+    for (const auto& [x, who] : pair_xor)
+        if (who.size() > 1)
+            four_term += long(who.size()) * long(who.size() - 1) / 2;
+    EXPECT_EQ(four_term, 0) << four_term << " quadruples of zobrist randoms satisfy a^b == c^d";
 }
 
 } // namespace havoc

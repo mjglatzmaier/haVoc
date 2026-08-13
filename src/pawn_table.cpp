@@ -96,6 +96,11 @@ struct pawn_score {
         mg = static_cast<int16_t>(mg - v);
         eg = static_cast<int16_t>(eg - v);
     }
+    /// Subtract a penalty that differs between the middlegame and the endgame.
+    void sub(int v_mg, int v_eg) {
+        mg = static_cast<int16_t>(mg - v_mg);
+        eg = static_cast<int16_t>(eg - v_eg);
+    }
 };
 
 template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, const parameters& par) {
@@ -146,14 +151,14 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         U64 neighbors_bb = bitboards::neighbor_cols[col_idx] & pawns;
         if (neighbors_bb == 0ULL) {
             e.isolated[c] |= fbb;
-            score -= par.isolated_pawn_penalty;
+            score.sub(par.isolated_pawn_penalty_mg, par.isolated_pawn_penalty_eg);
             e.weak_squares[c] |= front;
         }
 
         // Backward pawns
         if (backward_pawn<c>(row, col_idx, pawns)) {
             e.backward[c] |= fbb;
-            score -= par.backward_pawn_penalty;
+            score.sub(par.backward_pawn_penalty_mg, par.backward_pawn_penalty_eg);
             e.weak_squares[c] |= front;
         }
 
@@ -168,9 +173,9 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         if (bits::more_than_one(doubled)) {
             e.doubled[c] |= doubled;
             if (e.isolated[c] & doubled)
-                score -= static_cast<int16_t>(2 * par.doubled_pawn_penalty);
+                score.sub(2 * par.doubled_pawn_penalty_mg, 2 * par.doubled_pawn_penalty_eg);
             else
-                score -= par.doubled_pawn_penalty;
+                score.sub(par.doubled_pawn_penalty_mg, par.doubled_pawn_penalty_eg);
         }
 
         // Semi-open files
@@ -178,11 +183,11 @@ template <Color c> pawn_score evaluate_pawns(const position& p, pawn_entry& e, c
         if ((column & epawns) == 0ULL) {
             e.semiopen[c] |= fbb;
             if (fbb & e.backward[c])
-                score -= static_cast<int16_t>(2 * par.backward_pawn_penalty);
+                score.sub(2 * par.backward_pawn_penalty_mg, 2 * par.backward_pawn_penalty_eg);
             if (fbb & e.isolated[c])
-                score -= static_cast<int16_t>(2 * par.isolated_pawn_penalty);
+                score.sub(2 * par.isolated_pawn_penalty_mg, 2 * par.isolated_pawn_penalty_eg);
             if (fbb & e.doubled[c])
-                score -= static_cast<int16_t>(2 * par.doubled_pawn_penalty);
+                score.sub(2 * par.doubled_pawn_penalty_mg, 2 * par.doubled_pawn_penalty_eg);
             e.weak_squares[c] |= front;
         }
 

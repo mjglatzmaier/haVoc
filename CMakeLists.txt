@@ -41,6 +41,7 @@ set(HAVOC_CORE_SOURCES
     src/tt.cpp
     src/pawn_table.cpp
     src/material_table.cpp
+    src/kpk.cpp
     src/eval/hce.cpp
     src/move_order.cpp
     src/thread_pool.cpp
