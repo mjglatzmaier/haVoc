@@ -186,6 +186,20 @@ struct parameters {
     /// read by nothing.
     std::array<int, 4> passed_pawn_rank_bonus = {2, 45, 90, 180};
 
+    /// The rest of eval_passed_pawns, which carried these as bare literals.
+    /// A passed pawn is the single most decisive structural feature on the
+    /// board, and every term below the rank ladder was fixed at a number
+    /// nobody could fit. Defaults reproduce the previous literals exactly.
+    int passed_pawn_unblocked = 1;      ///< square in front is empty
+    int passed_pawn_control = 3;        ///< per attacker of the square in front, each side
+    int passed_pawn_rook_behind = 1;    ///< own rook anywhere behind on the file
+    int passed_pawn_rook_support = 30;  ///< own rook behind with a clear path
+    int passed_pawn_connected = 30;     ///< another passer on a neighbouring file
+    /// Penalty when the square in front is controlled by the opponent, by
+    /// distance to promotion, indexed [3 - row_dist]: entry 0 is three ranks
+    /// out and entry 2 is one step from queening.
+    std::array<int, 3> passed_pawn_blocked_penalty = {30, 55, 120};
+
     // Search
     int fixed_depth = -1;
 

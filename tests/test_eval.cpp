@@ -973,6 +973,19 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // A passer two ranks from promotion, which is the one rung of the
         // passed_pawn_rank_bonus ladder the rest of the set never reaches.
         "6k1/pp6/4P3/8/8/8/5PPP/6K1 w - - 0 1",
+        // A rook behind its own passer with a clear path to it. This is the
+        // only shape that reaches passed_pawn_rook_behind and, because a1-a5
+        // is empty, passed_pawn_rook_support as well. Enough material is left
+        // on that is_endgame() stays false, otherwise the endgame
+        // specialisation returns before eval_passed_pawns runs at all.
+        "r3k2r/4bppp/8/P7/8/8/1PP2PPP/R3K2R w KQkq - 0 1",
+        // The same passer with no rook behind it and a black rook bearing on
+        // the square in front, so crudeControl goes negative and the blocked
+        // penalty fires. Three positions, one per rung of the ladder: the
+        // pawn is three, two and one rank from promotion.
+        "r3k2r/4bppp/8/P7/8/8/1PP2PPP/4K2R w Kkq - 0 1",
+        "r3k2r/4bppp/P7/8/8/8/1PP2PPP/4K2R w Kkq - 0 1",
+        "1r2k2r/P3bppp/8/8/8/8/1PP2PPP/4K2R w Kk - 0 1",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter
