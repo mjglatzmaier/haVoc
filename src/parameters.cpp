@@ -130,6 +130,15 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
             result.emplace_back("passed_pawn_rank_bonus_" + std::to_string(i),
                                 &passed_pawn_rank_bonus[i]);
 
+        result.emplace_back("passed_pawn_unblocked", &passed_pawn_unblocked);
+        result.emplace_back("passed_pawn_control", &passed_pawn_control);
+        result.emplace_back("passed_pawn_rook_behind", &passed_pawn_rook_behind);
+        result.emplace_back("passed_pawn_rook_support", &passed_pawn_rook_support);
+        result.emplace_back("passed_pawn_connected", &passed_pawn_connected);
+        for (size_t i = 0; i < passed_pawn_blocked_penalty.size(); ++i)
+            result.emplace_back("passed_pawn_blocked_penalty_" + std::to_string(i),
+                                &passed_pawn_blocked_penalty[i]);
+
         // Attacker weights
         for (size_t i = 0; i < attacker_weight.size(); ++i)
             result.emplace_back("attacker_weight_" + std::to_string(i), &attacker_weight[i]);

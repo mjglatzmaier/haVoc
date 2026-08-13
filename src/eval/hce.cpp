@@ -1091,7 +1091,7 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
 
         // 1. Is next square blocked?
         if (p.piece_on(front) == no_piece)
-            score += 1;
+            score += params_.passed_pawn_unblocked;
 
         // 2. Control of front square
         U64 our_attackers = 0ULL;
@@ -1105,11 +1105,11 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
 
         if (our_attackers != 0ULL) {
             crudeControl += bits::count(our_attackers);
-            score += 3 * bits::count(our_attackers);
+            score += params_.passed_pawn_control * bits::count(our_attackers);
         }
         if (their_attackers != 0ULL) {
             crudeControl -= bits::count(their_attackers);
-            score -= 3 * bits::count(their_attackers);
+            score -= params_.passed_pawn_control * bits::count(their_attackers);
         }
 
         // 3. Rooks behind passed pawns
@@ -1123,10 +1123,10 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
                     auto supports = ((bitboards::between[rf][f] & p.all_pieces()) ^
                                      (bitboards::squares[rf] | bitboards::squares[f])) == 0ULL;
                     if (isBehind)
-                        score += 1;
+                        score += params_.passed_pawn_rook_behind;
                     if (isBehind && supports) {
                         crudeControl += 1;
-                        score += 30;
+                        score += params_.passed_pawn_rook_support;
                     }
                 }
             }
@@ -1135,13 +1135,13 @@ template <Color c> int HCEEvaluator::eval_passed_pawns(const position& p, einfo&
         // 4. Connected passers
         auto connectedPassed = (bitboards::neighbor_cols[util::col(f)] & ei.pe->passed[c]) != 0ULL;
         if (connectedPassed)
-            score += 30;
+            score += params_.passed_pawn_connected;
 
         // 5. Closer to promotion
         score += params_.passed_pawn_rank_bonus[4 - row_dist];
 
         if (crudeControl < 0)
-            score -= (row_dist == 3 ? 30 : row_dist == 2 ? 55 : row_dist == 1 ? 120 : 0);
+            score -= params_.passed_pawn_blocked_penalty[3 - row_dist];
     }
     return score;
 }
