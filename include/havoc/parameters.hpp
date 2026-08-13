@@ -137,6 +137,12 @@ struct parameters {
     /// being recaptured, indexed by the checking piece. Index 0 (pawn) is
     /// unused: a pawn check is never the threat that matters here.
     std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
+    // Files beside the king with no pawn cover. A file with none of our own
+    // pawns is a highway for enemy heavy pieces; one with no pawns at all is
+    // worse still.
+    int king_semiopen_file_penalty = 5;
+    int king_open_file_penalty = 9;
+    int king_open_file_heavy_penalty = 4;
 
     int uncastled_penalty = 5;
     static constexpr int connected_rook_bonus = 1;

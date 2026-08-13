@@ -152,6 +152,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
             result.emplace_back("king_safe_sqs_" + std::to_string(i), &king_safe_sqs[i]);
         for (size_t i = 1; i < safe_check_weight.size(); ++i)
             result.emplace_back("safe_check_weight_" + std::to_string(i), &safe_check_weight[i]);
+        result.emplace_back("king_semiopen_file_penalty", &king_semiopen_file_penalty);
+        result.emplace_back("king_open_file_penalty", &king_open_file_penalty);
+        result.emplace_back("king_open_file_heavy_penalty", &king_open_file_heavy_penalty);
 
         result.emplace_back("bishop_own_pawn_penalty_mg", &bishop_own_pawn_penalty_mg);
         result.emplace_back("bishop_own_pawn_penalty_eg", &bishop_own_pawn_penalty_eg);

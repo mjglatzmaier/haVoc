@@ -566,6 +566,63 @@ TEST_F(EvalTest, WrongRookPawnAndWrongBishopIsDrawn) {
         auto pos = make_pos(c.fen);
         EXPECT_GT(eval.evaluate(pos), 200) << "should still be winning: " << c.why << " (" << c.fen << ")";
     }
+TEST_F(EvalTest, OpenFilesBesideTheKingAreScoredAsDanger) {
+    havoc::parameters on;
+    havoc::parameters off;
+    off.king_semiopen_file_penalty = 0;
+    off.king_open_file_penalty = 0;
+    off.king_open_file_heavy_penalty = 0;
+
+    havoc::pawn_table pt(on);
+    havoc::material_table mt(on);
+    havoc::HCEEvaluator eval_on(pt, mt, on);
+    havoc::pawn_table pt2(off);
+    havoc::material_table mt2(off);
+    havoc::HCEEvaluator eval_off(pt2, mt2, off);
+
+    // Switching the term off in place isolates it from material and from every
+    // other king-safety term, which comparing two different positions would
+    // not. A positive result means the term charged white something.
+    auto penalty = [&](const std::string& fen) {
+        auto pos = make_pos(fen);
+        return eval_off.evaluate(pos) - eval_on.evaluate(pos);
+    };
+
+    // Both kings behind three pawns: nothing to charge, and nothing that could
+    // fail to cancel between the colors.
+    EXPECT_EQ(penalty("r2q2k1/5ppp/8/8/8/8/5PPP/R2Q2K1 w - - 0 1"), 0)
+        << "a king behind an intact shelter owes nothing";
+
+    // The kings are put on opposite wings so that a file can be open beside one
+    // king and not the other; with both kings on g1/g8 any open file is open
+    // for both and the penalties cancel.
+    //
+    // White Kg1 with pawns f2 and h2, black Kb8 with pawns a7 b7 c7, queens and
+    // rooks still on so the position is a middlegame -- the shelter terms are
+    // deliberately switched off in endgames, so a pawns-only position measures
+    // nothing at all. The g-file holds no pawn of either color, so it is fully
+    // open beside the white king while black's shelter is intact.
+    const int open = penalty("1k1q3r/ppp5/8/8/8/8/5P1P/R2Q2K1 w - - 0 1");
+    EXPECT_GT(open, 0) << "an open file beside the king must cost something";
+
+    // The same, plus a black pawn on g7: now the file is only half open,
+    // which is real but less dangerous than a fully open one.
+    const int semi_open = penalty("1k1q3r/ppp3p1/8/8/8/8/5P1P/R2Q2K1 w - - 0 1");
+    EXPECT_GT(semi_open, 0) << "a half-open file beside the king must cost something";
+    EXPECT_LT(semi_open, open) << "a half-open file is less dangerous than a fully open one";
+
+    // The same, with black's rook swung from h8 onto the open g-file.
+    const int open_with_rook = penalty("1k1q2r1/ppp5/8/8/8/8/5P1P/R2Q2K1 w - - 0 1");
+    EXPECT_GT(open_with_rook, open)
+        << "an enemy rook on the open file beside the king is worse than the bare file";
+
+    // Whatever is charged to white must be charged identically to black in the
+    // mirrored position, or the term introduces a color bias. mirror_fen flips
+    // the side to move along with the colors and the evaluation is returned
+    // from the mover's point of view, so the invariant is equality rather than
+    // negation -- the same one the mirror-symmetry tests rely on.
+    EXPECT_EQ(penalty(mirror_fen("1k1q3r/ppp5/8/8/8/8/5P1P/R2Q2K1 w - - 0 1")), open);
+    EXPECT_EQ(penalty(mirror_fen("1k1q2r1/ppp5/8/8/8/8/5P1P/R2Q2K1 w - - 0 1")), open_with_rook);
 }
 
 TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
