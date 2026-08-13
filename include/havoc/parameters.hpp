@@ -122,6 +122,11 @@ struct parameters {
     std::vector<int> king_shelter{-3, -2, 2, 3}; // 0,1,2,3 pawns
     std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
 
+    /// Danger per square from which an enemy piece could give check without
+    /// being recaptured, indexed by the checking piece. Index 0 (pawn) is
+    /// unused: a pawn check is never the threat that matters here.
+    std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
+
     int uncastled_penalty = 5;
     static constexpr int connected_rook_bonus = 1;
     static constexpr int doubled_bishop_bonus = 4;
