@@ -436,7 +436,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
         U64 mvs = bitboards::nmask[s];
         ei.piece_attacks[c][knight] |= mvs;
         if (!(sq_bb & p.pinned<c>())) {
-            U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+            U64 mobility = (mvs & ~ei.pieces[c]) & (~ei.pe->attacks[them]);
             unsigned cnt = bits::count(mobility);
             int mob = (cnt < params_.knight_mobility_table.size())
                           ? params_.knight_mobility_table[cnt]
@@ -539,7 +539,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         // Mobility
         U64 mvs = magics::attacks<bishop>(ei.all_pieces, s);
         ei.piece_attacks[c][bishop] |= mvs;
-        U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+        U64 mobility = (mvs & ~ei.pieces[c]) & (~ei.pe->attacks[them]);
 
         unsigned mob_cnt = bits::count(mobility);
         int mob_val = (mob_cnt < params_.bishop_mobility_table.size())
@@ -659,7 +659,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         // Mobility
         U64 mvs = magics::attacks<rook>(ei.all_pieces, s);
         ei.piece_attacks[c][rook] |= mvs;
-        U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+        U64 mobility = (mvs & ~ei.pieces[c]) & (~ei.pe->attacks[them]);
 
         int free_sqs = bits::count(mobility);
         int mob_r = (static_cast<unsigned>(free_sqs) < params_.rook_mobility_table.size())
@@ -784,7 +784,7 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
         // squares are the empty ones the enemy pawns do not cover, the same
         // definition the rook uses.
         {
-            U64 mobility = (mvs & ei.empty) & (~ei.pe->attacks[them]);
+            U64 mobility = (mvs & ~ei.pieces[c]) & (~ei.pe->attacks[them]);
             int free_sqs = bits::count(mobility);
             int mob_q = (static_cast<unsigned>(free_sqs) < params_.queen_mobility_table.size())
                             ? params_.queen_mobility_table[free_sqs]
