@@ -75,7 +75,6 @@ public:
     int num_threads = 1;
     bool quiet_filter = true;
     double max_step_override = 0.0;
-    int pert_override = 0;
 
     bool load_data(const std::string& filename) {
         // is_quiet_position() filters the training set with static exchange
@@ -195,13 +194,9 @@ public:
         diagnose(K);
         auto tunable = params.all_params(stage);
         const size_t NP = tunable.size();
-        // The step size is chosen by the line search below rather than by a
-        // schedule, so the only thing a stage needs to declare is how far to
-        // perturb a parameter when measuring its gradient. max_step is just
-        // the largest first guess the line search is allowed to try.
-        int pert = (stage == TuneStage::category || stage == TuneStage::pst) ? 2 : 1;
+        // Each parameter starts with the same step and adapts from there, so
+        // the only thing a stage needs to declare is the first step to try.
         double max_step = max_step_override > 0 ? max_step_override : 16.0;
-        if (pert_override > 0) pert = pert_override;
         struct Bounds { int lo, hi; };
         auto bounds = [](const std::string& n) -> Bounds {
             // These exist to keep a scale from going negative (which would
@@ -222,95 +217,98 @@ public:
             if (n.find("_scale") != std::string::npos) return {0, 800};
             return {-500, 500};
         };
-        // The parameters are ints, but the optimiser needs to accumulate steps
-        // smaller than one centipawn, so the real state is kept in doubles and
-        // rounded only when it is written back into the evaluation.
+        // The parameters are ints, but a step smaller than one has to be able
+        // to accumulate across sweeps, so the real state is kept in doubles
+        // and rounded only when written back into the evaluation.
         std::vector<double> shadow(NP);
         for (size_t i = 0; i < NP; ++i) shadow[i] = *tunable[i].second;
-
-        auto apply = [&](const std::vector<double>& v) {
-            for (size_t i = 0; i < NP; ++i) {
-                auto b = bounds(tunable[i].first);
-                long nv = std::lround(v[i]);
-                *tunable[i].second = (int)std::max((long)b.lo, std::min((long)b.hi, nv));
-            }
-        };
 
         double cur_err = compute_error(K);
         std::cout << "\nStage " << (int)stage+1 << " | Error: " << cur_err
                   << " | Params: " << NP << " | Max step: " << max_step
                   << " | Threads: " << num_threads << std::endl;
 
-        std::vector<double> cand(NP);
+        // Coordinate descent with a per-parameter step size.
+        //
+        // Two gradient schemes were tried here first and both failed on the
+        // same property of this problem. The finite-difference gradient is
+        // extremely heterogeneous -- max/median |grad| measured 41 on one
+        // iteration and 188 on the next -- and the parameters are integers, so
+        // normalising the direction by its largest coordinate moves the median
+        // coordinate by step/188, which rounds to zero. A "successful"
+        // iteration then updated one parameter out of 273 after paying 546
+        // error evaluations. Stepping by the sign of each gradient removes the
+        // scale problem but exposes a second one: with median |grad| at 1.3e-6
+        // against a maximum of 5.2e-5, a large share of the signs are noise,
+        // and moving all 259 of them together is worse than not moving at all,
+        // even at a step of one centipawn.
+        //
+        // Coordinate descent avoids both. Each parameter is changed on its own
+        // and kept only if the error over the whole dataset actually falls, so
+        // a noisy coordinate costs one wasted evaluation instead of corrupting
+        // the step. A sweep costs the same 2*NP evaluations the gradient did,
+        // but it can improve many parameters instead of one. Each parameter
+        // carries its own step, halved whenever neither direction helps, which
+        // lets a weight that needs to move 40 centipawns get there in a few
+        // sweeps while a weight that is already right settles quickly.
+        std::vector<double> pstep(NP, max_step);
+        int total_improved = 0;
         for (int it = 0; it < iters; ++it) {
             auto t0 = std::chrono::steady_clock::now();
-            std::cout << "\n=== Iteration " << it+1 << " ===" << std::endl;
-            std::vector<double> grad(NP, 0);
-            std::vector<int> orig(NP);
-            for (size_t i = 0; i < NP; ++i) orig[i] = *tunable[i].second;
+            std::cout << "\n=== Sweep " << it + 1 << " ===" << std::endl;
+            int improved = 0;
             for (size_t i = 0; i < NP; ++i) {
-                *tunable[i].second = orig[i] + pert;
-                double ep = compute_error(K);
-                *tunable[i].second = orig[i] - pert;
-                double em = compute_error(K);
-                *tunable[i].second = orig[i];
-                grad[i] = (ep - em) / (2.0 * pert);
-                if (NP > 20 && (i+1) % 10 == 0)
-                    std::cout << "  gradient: " << i+1 << "/" << NP << "\r" << std::flush;
-            }
-            if (NP > 20) std::cout << "  gradient: " << NP << "/" << NP << "    " << std::endl;
-
-            // Scale the direction so the most strongly pushed parameter moves
-            // by max_step, then backtrack until the step actually reduces the
-            // error. The previous code multiplied the gradient by a fixed 1e6,
-            // clamped every coordinate to +/-8 and threw the gradient away if
-            // the result was worse. With gradients around 1e-4 that clamp was
-            // active for essentially every parameter, so each iteration moved
-            // all ~300 of them by the full 8 centipawns at once -- a step of
-            // norm 8*sqrt(300) -- which always overshot, always reverted, and
-            // halved a learning rate that needed eight halvings before it
-            // could matter. It reported "Converged!" without having moved.
-            double gmax = 0.0;
-            for (size_t i = 0; i < NP; ++i) gmax = std::max(gmax, std::abs(grad[i]));
-            if (gmax <= 0.0) { std::cout << "Zero gradient everywhere." << std::endl; break; }
-
-            double step = max_step;
-            bool accepted = false;
-            for (int ls = 0; ls < 12 && !accepted; ++ls) {
-                for (size_t i = 0; i < NP; ++i) cand[i] = shadow[i] - step * grad[i] / gmax;
-                apply(cand);
-                double e = compute_error(K);
-                if (e < cur_err) {
-                    int moved = 0;
-                    for (size_t i = 0; i < NP; ++i)
-                        if (*tunable[i].second != orig[i]) ++moved;
-                    std::cout << "  accepted step " << step << ": " << cur_err << " -> " << e
-                              << " (" << moved << "/" << NP << " params moved)" << std::endl;
-                    cur_err = e;
-                    shadow = cand;
-                    accepted = true;
-                } else {
-                    step *= 0.5;
+                if (pstep[i] < 0.5) continue;
+                auto b = bounds(tunable[i].first);
+                const int base = *tunable[i].second;
+                bool ok = false;
+                for (double dir : {1.0, -1.0}) {
+                    double target = shadow[i] + dir * pstep[i];
+                    long nv = std::lround(target);
+                    nv = std::max((long)b.lo, std::min((long)b.hi, nv));
+                    if ((int)nv == base) continue;
+                    *tunable[i].second = (int)nv;
+                    double e = compute_error(K);
+                    if (e < cur_err) {
+                        cur_err = e;
+                        shadow[i] = std::max((double)b.lo, std::min((double)b.hi, target));
+                        ++improved;
+                        ok = true;
+                        break;
+                    }
+                    *tunable[i].second = base;
                 }
+                if (!ok) pstep[i] *= 0.5;
+                if (NP > 20 && (i + 1) % 10 == 0)
+                    std::cout << "  sweep: " << i + 1 << "/" << NP << "\r" << std::flush;
             }
-            if (!accepted) {
-                apply(shadow);
-                std::cout << "No improving step at any scale down to " << step
-                          << "; stopping." << std::endl;
+            if (NP > 20) std::cout << "  sweep: " << NP << "/" << NP << "    " << std::endl;
+
+            int live = 0;
+            for (size_t i = 0; i < NP; ++i)
+                if (pstep[i] >= 0.5) ++live;
+            total_improved += improved;
+            auto s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            std::cout << "Error: " << cur_err << "  (" << improved << "/" << NP
+                      << " improved, " << live << " still live, " << (int)s << "s)" << std::endl;
+            if (!ckpt.empty()) {
+                params.save(ckpt);
+                std::cout << "  Checkpoint: " << ckpt << std::endl;
+            }
+            if (live == 0) {
+                std::cout << "Every step size is exhausted; no further integer move helps."
+                          << std::endl;
                 break;
             }
-
-            auto s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-            std::cout << "Error: " << cur_err << " (" << (int)s << "s)" << std::endl;
-            if (!ckpt.empty()) { params.save(ckpt); std::cout << "  Checkpoint: " << ckpt << std::endl; }
         }
+        std::cout << "\nTotal accepted parameter changes: " << total_improved << std::endl;
     }
 };
 
 int main(int argc, char* argv[]) {
     std::string data = "training_data.epd", pfile, out = "tuned_params.txt";
     int iters = 5, stg = 2, thr = (int)std::thread::hardware_concurrency();
-    bool qfilter = true; double lr_ov = 0.0; int pert_ov = 0;
+    bool qfilter = true; double lr_ov = 0.0;
     double fK = 0;
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
@@ -323,18 +321,17 @@ int main(int argc, char* argv[]) {
         else if ((k=="--threads"||k=="-t") && i+1<argc) thr = std::stoi(argv[++i]);
         else if (k=="--no-quiet-filter") qfilter = false;
         else if ((k=="--max-step"||k=="--lr") && i+1<argc) lr_ov = std::stod(argv[++i]);
-        else if (k=="--pert" && i+1<argc) pert_ov = std::stoi(argv[++i]);
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
                       << "[--iterations N] [--stage 1|2|3|4] [--K val] [--threads N] "
-                      << "[--no-quiet-filter] [--max-step F] [--pert N]\n"; return 0;
+                      << "[--no-quiet-filter] [--max-step F]\n"; return 0;
         }
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine
                 : stg==4 ? TuneStage::pst : TuneStage::shape);
     bitboards::init(); magics::init(); zobrist::init(); kpk::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
-    tuner.max_step_override = lr_ov; tuner.pert_override = pert_ov;
+    tuner.max_step_override = lr_ov;
     if (!pfile.empty() && tuner.params.load(pfile))
         std::cout << "Loaded params from " << pfile << std::endl;
     if (!tuner.load_data(data)) { std::cerr << "Failed to load " << data << std::endl; return 1; }
