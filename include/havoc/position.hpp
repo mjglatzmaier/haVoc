@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -58,8 +59,8 @@ struct piece_data {
     std::array<Color, squares> color_on;
     std::array<Piece, squares> piece_on;
     std::array<std::array<int, pieces>, 2> number_of{};
-    std::array<std::array<U64, squares>, colors> bitmap{};
-    std::array<std::array<std::array<int, squares>, pieces>, 2> piece_idx{};
+    std::array<std::array<U64, no_piece + 1>, colors> bitmap{};
+    std::array<std::array<std::array<std::uint8_t, squares>, pieces>, 2> piece_idx{};
     std::array<std::array<std::array<Square, 11>, pieces>, 2> square_of;
 
     piece_data() {
@@ -248,7 +249,7 @@ inline void piece_data::do_quiet(const Color& c, const Piece& p, const Square& f
 
     int idx = piece_idx[c][p][f];
     piece_idx[c][p][f] = 0;
-    piece_idx[c][p][t] = idx;
+    piece_idx[c][p][t] = static_cast<std::uint8_t>(idx);
 
     bycolor[c] ^= fto;
     bitmap[c][p] ^= fto;
@@ -335,7 +336,7 @@ inline void piece_data::remove_piece(const Color& c, const Piece& p, const Squar
     Square tmp_sq = square_of[c][p][max_idx];
     square_of[c][p][tmp_idx] = square_of[c][p][max_idx];
     square_of[c][p][max_idx] = no_square;
-    piece_idx[c][p][tmp_sq] = tmp_idx;
+    piece_idx[c][p][tmp_sq] = static_cast<std::uint8_t>(tmp_idx);
     number_of[c][p] -= 1;
     piece_idx[c][p][s] = 0;
     color_on[s] = no_color;
@@ -357,7 +358,7 @@ inline void piece_data::add_piece(const Color& c, const Piece& p, const Square& 
     number_of[c][p] += 1;
     square_of[c][p][number_of[c][p]] = s;
     piece_on[s] = p;
-    piece_idx[c][p][s] = number_of[c][p];
+    piece_idx[c][p][s] = static_cast<std::uint8_t>(number_of[c][p]);
     color_on[s] = c;
     ifo.key ^= zobrist::piece(s, c, p);
     ifo.mkey ^= material_hash(c, p, number_of[c][p]);
@@ -371,7 +372,7 @@ inline void piece_data::set(const Color& c, const Piece& p, const Square& s, inf
     bycolor[c] |= bitboards::squares[s];
     color_on[s] = c;
     number_of[c][p] += 1;
-    piece_idx[c][p][s] = number_of[c][p];
+    piece_idx[c][p][s] = static_cast<std::uint8_t>(number_of[c][p]);
     square_of[c][p][number_of[c][p]] = s;
     piece_on[s] = p;
     if (p == king)
