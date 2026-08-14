@@ -331,3 +331,101 @@ as parameters awaiting a fit: SPSA cannot rescue them, because both directions
 have now been measured. If quiet history is to drive pruning here it needs a
 better-conditioned table first -- the current one is keyed on (colour, from,
 to) with no piece identity -- not a different threshold.
+
+## Why Texel tuning never produced anything
+
+Three independent defects, stacked. Any one alone would have been enough to
+make the pipeline useless, and none of them announced itself as a failure --
+every run printed a decreasing error and reported success.
+
+**1. The objective was inverted for half the data.** Fixed earlier, in
+`f5bcd20`, by comparing evaluation and result in the same point of view. The
+cost is measurable after the fact: on 287k quiet positions the error under the
+old convention is 0.2357, against a predict-0.5 baseline of 0.25. The fit was
+pinned to "learned nothing" and could not have been anything else.
+
+**2. The update rule could not move.** The step was
+
+    delta = (int)(-lr * vel[i] * 1e6);   // clamped to +/-8
+
+so any gradient above roughly 2.7e-6 saturated the clamp. Real gradients are
+around 1e-4, which means every one of the ~300 stage-2 parameters moved the
+full eight centipawns on every iteration at once -- a step of norm
+`8*sqrt(300)` = 138cp. That always overshot; the failure branch then reverted
+*all* parameters and halved the learning rate. Roughly eight halvings were
+needed before the step became sane, and `scripts/tune.sh` runs three
+iterations. The tuner reverted every iteration and printed "Converged!"
+without having moved a weight.
+
+**3. The parameterisation was not identifiable.** Stage 1 is documented as
+"category-level scale factors only" but also contained the sixteen individual
+pawn-structure weights. `pawn_table.cpp` sums those into `pe->score_mg/eg` and
+`hce.cpp` multiplies the tapered sum by `pawn_structure_category_scale`, so the
+contribution is `taper(sum_i w_i) * scale / 100`. Multiplying every weight by
+*c* and the scale by *1/c* leaves the evaluation bit-identical: an exact flat
+direction in the loss. The optimiser drifts along it, driven by nothing but
+the noise in whichever dataset it was given. Two fits landed at
+`doubled_pawn_penalty_mg` = 39 and -15 -- a penalty that is a bonus on one
+dataset.
+
+A fourth issue was not a defect so much as an unexamined assumption: the scale
+bounds `[10, 200]` were binding. Four of eleven stage-1 parameters came to rest
+against a cap, so the numbers being reported described the box rather than the
+data. Widened to `[0, 800]`, `threat_category_scale` fits to 283.
+
+### What the repaired pipeline says
+
+Two datasets -- 287k self-play positions and 985k CCRL positions -- now agree
+on the parameters that both can see, and disagree only where you would expect:
+
+| parameter | self-play | CCRL |
+| --- | --- | --- |
+| `sq_score_category_scale` | 73 | 73 |
+| `pawn_structure_category_scale` | 6 | 11 |
+| `king_danger_divisor` | 254 | 269 |
+| `space_category_scale` | 104 | 122 |
+| `mobility_endgame_scale` | 118 | 235 |
+| `king_safety_category_scale` | 198 | 146 |
+| `passed_pawn_category_scale` | 0 | 71 |
+| `passed_pawn_endgame_scale` | 247 | 104 |
+| `king_danger_endgame_scale` | 33 | 94 |
+
+Two things worth keeping. Both datasets independently want the piece-square
+tables scaled *down* to 73%, which is the counterpart to the finding that the
+positional terms are undersized: the eval leans too heavily on its PSTs. And
+every remaining disagreement is a phase-dependent parameter. That is a
+property of the data, not of the fit -- the self-play set is generated from
+six uniformly random opening plies at depth 4 with early adjudication, so it
+barely reaches the endgames those parameters describe. CCRL is the better fit
+set until `datagen` uses a book, searches deeper, and stops adjudicating early.
+
+**K differs sharply between the two: 825 on self-play, 477 on CCRL.** The CCRL
+figure is close to the conventional ~400. A K that large on self-play data is
+consistent with evaluations that are noisy rather than with an eval whose
+magnitudes are wrong, and it means the earlier worry -- that K = 825 implied a
+magnitude-inflated evaluation -- was reading a property of the dataset.
+
+### Cost, for planning
+
+Each iteration costs `2 * NP + a few` full passes over the data, so time is
+linear in both sample count and parameter count. Measured at roughly 0.31
+microseconds per position per pass on six threads:
+
+| data | stage 1 (11p) | stage 2 (273p) | stage 4 PST (768p) |
+| --- | --- | --- | --- |
+| 287k | 2 s/it | 55 s/it | 2.3 min/it |
+| 1M | 7 s/it | 3 min/it | 8 min/it |
+| 3M | 21 s/it | 9 min/it | 24 min/it |
+
+Memory is the binding constraint, not CPU: one `position` per sample. After
+shrinking `position` from 5360 to 2160 bytes that is ~2.2 GB per million
+samples, so a 16 GB machine tops out near 3M. The full 11.8M CCRL set needs a
+box with 64 GB.
+
+**Texel cannot tune search.** `TuneStage::search` exists, but the objective is
+the static evaluation of quiet positions, so every search constant has an
+identically zero gradient. The optimiser now detects this and stops rather
+than dividing by zero. Search constants need SPSA against game results, which
+is why the roadmap puts that after the evaluation fit -- and it must come
+after, because every centipawn-denominated margin was fitted against the
+current evaluation spread.
