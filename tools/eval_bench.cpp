@@ -61,6 +61,7 @@
 #include "havoc/bitboard.hpp"
 #include "havoc/eval/eval_pairs.hpp"
 #include "havoc/eval/hce.hpp"
+#include "havoc/movegen.hpp"
 #include "havoc/kpk.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/material_table.hpp"
@@ -72,8 +73,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <map>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <string>
@@ -89,6 +93,37 @@ namespace {
 /// the term it governs without ever reaching an illegal value.
 bool is_divisor(const std::string& name) {
     return name.find("divisor") != std::string::npos;
+}
+
+
+/// Load an EPD/FEN corpus, one position per line.
+std::vector<position> load_corpus(const std::string& file, std::size_t limit) {
+    std::vector<position> out;
+    std::ifstream in(file);
+    if (!in.is_open()) {
+        std::cerr << "cannot open " << file << "\n";
+        return out;
+    }
+    std::string line;
+    while (out.size() < limit && std::getline(in, line)) {
+        if (line.empty())
+            continue;
+        auto c9 = line.find(" c9 ");
+        std::istringstream fs(c9 == std::string::npos ? line : line.substr(0, c9));
+        position p;
+        p.setup(fs);
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+std::string family_of(const std::string& name) {
+    std::size_t i = name.size();
+    while (i > 0 && std::isdigit(static_cast<unsigned char>(name[i - 1])))
+        --i;
+    if (i > 0 && i < name.size() && name[i - 1] == '_')
+        --i;
+    return name.substr(0, i);
 }
 
 position make_pos(const std::string& fen) {
@@ -112,15 +147,146 @@ struct Result {
     std::vector<Contribution> top;
 };
 
+
+/// Does this parameter change what the engine would actually *play*?
+///
+/// Every other measurement in this file, and in eval_sensitivity, reports
+/// centipawns. Centipawns are not what wins games. A parameter that shifts
+/// every position in a family by the same amount moves the score a great deal
+/// and changes no decision at all, because the engine picks the argmax over
+/// sibling positions and a common offset cancels in that comparison.
+///
+/// That is the difference between a level and a preference, and it is the
+/// most likely explanation for a result that keeps recurring here: sweeping
+/// parameter changes that measure large in centipawns and exactly neutral in
+/// games. A category scale multiplies a whole family, and sibling positions
+/// one ply apart usually share most of that family, so most of the change
+/// divides out of the comparison that actually selects the move.
+///
+/// So measure the thing directly. For each position, generate the legal moves,
+/// score the resulting positions, and record which move the evaluation
+/// prefers. Then perturb one parameter and see how often that preference
+/// changes. `flip` is the fraction of positions where the engine would now
+/// play a different move -- an upper bound on how much Elo the parameter can
+/// possibly be worth, and a hard zero is proof that it cannot be worth any.
+int run_decisions(const std::string& file, std::size_t limit, parameters& params,
+                  pawn_table& pt, material_table& mt, HCEEvaluator& ev, int top_n) {
+    auto roots = load_corpus(file, limit);
+    if (roots.empty())
+        return 1;
+
+    // Generate once; replaying do_move/undo_move per probe is far cheaper than
+    // regenerating, and it uses the engine's own idiom rather than relying on
+    // position copy semantics.
+    std::vector<std::vector<Move>> moves(roots.size());
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+        Movegen mvs(roots[i]);
+        mvs.generate<pseudo_legal, pieces>();
+        for (int j = 0; j < mvs.size(); ++j)
+            if (roots[i].is_legal(mvs[j]))
+                moves[i].push_back(mvs[j]);
+        total += moves[i].size();
+    }
+
+    // The evaluation returns a score from the side to move's point of view, so
+    // a child position is scored for the opponent and has to be negated to
+    // rank it for the side choosing the move.
+    auto preferences = [&](std::vector<int>& out) {
+        pt.clear();
+        mt.clear();
+        out.assign(roots.size(), -1);
+        for (std::size_t i = 0; i < roots.size(); ++i) {
+            int best = std::numeric_limits<int>::min();
+            for (std::size_t j = 0; j < moves[i].size(); ++j) {
+                roots[i].do_move(moves[i][j]);
+                const int s = -ev.evaluate(roots[i]);
+                roots[i].undo_move(moves[i][j]);
+                if (s > best) {
+                    best = s;
+                    out[i] = static_cast<int>(j);
+                }
+            }
+        }
+    };
+
+    std::vector<int> base, probe;
+    preferences(base);
+
+    std::vector<std::string> search_names;
+    for (auto& [name, slot] : params.all_params(TuneStage::search))
+        search_names.push_back(name);
+
+    std::map<std::string, std::pair<double, int>> fam; // family -> (flips, params)
+    std::vector<std::pair<std::string, double>> rows;
+
+    for (auto& [name, slot] : params.every_param()) {
+        if (std::find(search_names.begin(), search_names.end(), name) != search_names.end())
+            continue;
+        const int original = *slot;
+        if (original == 0 && !is_divisor(name))
+            continue;
+
+        if (is_divisor(name))
+            *slot = original * 16;
+        else
+            *slot = 0;
+        preferences(probe);
+        *slot = original;
+
+        std::size_t flips = 0;
+        for (std::size_t i = 0; i < base.size(); ++i)
+            flips += (base[i] != probe[i]);
+        const double pct = 100.0 * double(flips) / double(base.size());
+
+        rows.push_back({name, pct});
+        auto& f = fam[family_of(name)];
+        f.first += pct;
+        f.second += 1;
+    }
+
+    std::cout << "\ndecision sensitivity\n";
+    std::cout << "  positions " << roots.size() << "   legal moves " << total
+              << "   mean branching " << (total / roots.size()) << "\n";
+    std::cout << "  flip = % of positions where deleting the term changes the preferred move\n\n";
+
+    std::vector<std::pair<std::string, double>> fam_rows;
+    for (auto& [k, v] : fam)
+        fam_rows.push_back({k, v.first});
+    std::sort(fam_rows.begin(), fam_rows.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+
+    std::cout << "family                                   flip%\n";
+    std::cout << "----------------------------------------------\n";
+    for (int i = 0; i < top_n && i < int(fam_rows.size()); ++i)
+        std::cout << std::left << std::setw(40) << fam_rows[i].first.substr(0, 39) << std::right
+                  << std::setw(7) << std::fixed << std::setprecision(1) << fam_rows[i].second
+                  << "\n";
+
+    std::size_t dead = 0;
+    for (auto& r : rows)
+        dead += (r.second == 0.0);
+    std::cout << "\n  parameters probed        " << rows.size() << "\n";
+    std::cout << "  changing no decision    " << dead << "  ("
+              << (100 * dead / (rows.empty() ? 1 : rows.size())) << "%)\n\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    std::string decisions_file;
+    std::size_t decisions_limit = 300;
     int min_margin = 8;
     int show = 3;
     bool verbose = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "--min-margin" && i + 1 < argc)
+        if (a == "--decisions" && i + 1 < argc)
+            decisions_file = argv[++i];
+        else if (a == "--positions" && i + 1 < argc)
+            decisions_limit = std::strtoul(argv[++i], nullptr, 10);
+        else if (a == "--min-margin" && i + 1 < argc)
             min_margin = std::atoi(argv[++i]);
         else if (a == "--show" && i + 1 < argc)
             show = std::atoi(argv[++i]);
@@ -149,6 +315,9 @@ int main(int argc, char** argv) {
         const int w = ev.evaluate(worse);
         return b - w;
     };
+
+    if (!decisions_file.empty())
+        return run_decisions(decisions_file, decisions_limit, params, pt, mt, ev, show > 3 ? show : 20);
 
     auto slots = params.every_param();
     std::vector<std::string> search_names;
