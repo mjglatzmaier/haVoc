@@ -182,7 +182,23 @@ struct parameters {
     /// -3 and -2 both became -1, so two distinct parameter values produced an
     /// identical evaluation and the tuner had no gradient between them. The
     /// halving is gone and these are the values it produced.
-    std::vector<int> king_shelter{-22, -10, 0, 6}; // 0,1,2,3 pawns
+    // Indexed by the distance of the nearest friendly pawn in front of the
+    // king on a given file, summed over the king file and its two neighbours.
+    // Index 0 means no pawn in front at all, 1 means the pawn is unmoved
+    // beside the king, 3 means three ranks away or further.
+    //
+    // The previous model indexed by a *count* of pawns touching the king,
+    // which could express four states in total and could not tell h3 from h4.
+    // Summing over three files multiplies the range by three, which is easy to
+    // miss: these values give +21 for a perfect shield and -45 for a bare king,
+    // against the old count model's +6 and -22. Halving them to {-8,4,1,-2}
+    // restores the old range and was tried -- it puts the pawn shield pair back
+    // to a 4cp margin that king_shelter no longer carries, and bench back to
+    // 790209 from 697583. So the discrimination and the node win both come from
+    // the range, not from the shape alone, and the two cannot be separated by
+    // halving. Left at the wider range, which is the variant that was actually
+    // measured: -11.9 +/- 31.8 over 334 games. Needs SPSA, not more hand values.
+    std::vector<int> king_shelter{-15, 7, 1, -4}; // distance 0(none),1,2,3+
     /// Charged when the king's flank holds no friendly pawn at all.
     int pawnless_flank_penalty = 12;
     /// Charged by the number of enemy pawns bearing down on the king's side of

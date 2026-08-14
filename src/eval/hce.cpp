@@ -1007,9 +1007,39 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             // square does not belong in it: castling leaves the pawns
             // untouched, hits the same entry, and would score the shelter
             // against wherever the king stood when that entry was filled.
-            U64 pawn_shelter = p.get_pieces<c, pawn>() & ei.kmask[c];
-            int n = std::min(3, bits::count(pawn_shelter));
-            int shelter = params_.king_shelter[n];
+            // Measured per file by how far the nearest friendly pawn stands
+            // in front of the king, summed over the king's file and its two
+            // neighbours.
+            //
+            // The previous model counted how many pawns occupied the eight
+            // squares touching the king and indexed a four-entry table with
+            // that count. It could express only four states, and the whole
+            // difference between a perfect shield and a broken one was one
+            // step of that table. Pushing the h-pawn from h2 to h4 in front of
+            // a castled king moved the count from 3 to 2 and was worth 6cp
+            // before phase scaling -- and h3 and h4 were indistinguishable,
+            // since neither touches the king. eval_bench measured the whole
+            // pair at 4cp and attributed it to pawn structure rather than to
+            // king safety.
+            //
+            // Distance indexing gives the term the resolution to say that an
+            // unmoved pawn shields better than an advanced one, which is the
+            // distinction the shelter is there to make.
+            const U64 shelter_pawns = p.get_pieces<c, pawn>();
+            const int krow = util::row(s);
+            const int kcol0 = util::col(s);
+            int shelter = 0;
+            for (int f = std::max(0, kcol0 - 1); f <= std::min(7, kcol0 + 1); ++f) {
+                U64 bb = shelter_pawns & bitboards::col[f];
+                int nearest = 0; // 0 == no pawn in front of the king
+                while (bb) {
+                    const Square ps = Square(bits::pop_lsb(bb));
+                    const int d = (c == white) ? (util::row(ps) - krow) : (krow - util::row(ps));
+                    if (d > 0 && (nearest == 0 || d < nearest))
+                        nearest = d;
+                }
+                shelter += params_.king_shelter[std::min(3, nearest)];
+            }
 
             // Pawnless flank penalty
             U64 kflank = bitboards::kflanks[util::col(s)] & p.get_pieces<c, pawn>();
