@@ -552,9 +552,32 @@ mean branching 29:
 | `passed_pawn_rank_bonus` | 15.0 |
 | `king_safety_category_scale` | 8.7 |
 
-**606 of 870 live parameters -- 69% -- change no decision anywhere.** Deleted
-outright, not merely scaled down, and the engine plays the identical move in
-all 300 positions.
+606 of 870 live parameters -- 69% -- changed no decision in those 300
+positions. **That number is mostly an artifact of the sample size, and taking
+it at face value would be a serious mistake.** Repeating the measurement on
+larger corpora:
+
+| positions | parameters changing no decision |
+|---|---|
+| 300 | 606 / 870 (69%) |
+| 2000 | 371 / 870 (42%) |
+| 10000 | 148 / 870 (17%) |
+
+The count is still falling at 10000 and has not converged. A term that fires in
+one position in 500 needs thousands of positions before it flips one decision;
+sampling thinly does not find a dead parameter, it manufactures one, and it
+does so preferentially for exactly the rare-but-decisive knowledge that
+hand-crafted terms exist to encode.
+
+So the evaluation is not mostly dead. It is mostly *rarely decisive*, which is
+a different claim with a different remedy. The honest summary is that flip
+rates are extremely skewed: `material_value` flips roughly 9% of decisions per
+live parameter, while the long tail flips well under 1% each.
+
+The operational consequence is that flip% is a filter on **effort**, not a
+licence to delete. Use it to avoid tuning or hand-setting a term that provably
+cannot move a decision at the corpus size you measured -- and measure at 10000
+positions or more before calling anything dead.
 
 The category scales are single parameters, so zeroing one deletes a whole
 category. Removing every square score changes the move in 16% of positions;
@@ -562,9 +585,9 @@ removing all of king safety changes it in 9%. Entire categories of chess
 knowledge are decision-relevant in fewer than one position in six, because the
 argmax over sibling positions is very nearly always settled by material.
 
-Caveat: this is static evaluation one ply from the root. Search amplifies and
-washes out static differences, so flip% is proof that a term *cannot* matter,
-not proof that a nonzero term does.
+Two caveats. This is static evaluation one ply from the root, and search both
+amplifies and washes out static differences. And flip% is only ever a statement
+about the corpus it was measured on -- see the sample-size table above.
 
 ### Search has not saturated, so nodes are expensive
 
