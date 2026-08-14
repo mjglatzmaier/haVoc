@@ -8,13 +8,39 @@ a hand-written evaluation function.
 
 ## Strength
 
-Estimated **~2523 Elo** (CCRL Blitz scale, 95% CI ±53), measured 14 August 2026.
+Estimated **~2503 Elo** (CCRL Blitz scale, 95% CI ±55), measured 14 August 2026.
 
 | Date | Rating | 95% CI | Games | Notes |
 |------|--------|--------|-------|-------|
-| 2026-08-14 | **2523** | ±53 | 240 | Eval coverage batch: connected pawns, queen mobility, tactical motifs, rook files, outposts, passer rank coverage, backward pawns |
+| 2026-08-14 | **2503** | ±55 | 240 | Correction history, mobility counts captures, storm advancement. Self-play said +52; the gauntlet did not see it — see below |
+| 2026-08-14 | 2523 | ±53 | 240 | Eval coverage batch: connected pawns, queen mobility, tactical motifs, rook files, outposts, passer rank coverage, backward pawns |
 | 2026-08-13 | 2473 | ±60 | 224 | Correctness batch: zobrist/material keys, phase interpolation, aspiration window, king safety |
 | (earlier) | 2413 | ±82 | 150 | Prior baseline, same anchors and hardware |
+
+The last two rows are the honest limit of this method. Between them the engine
+gained a measured +30.6 ± 12, +16.7 ± 11 and +4.9 ± 14 in self-play SPRTs
+against its own previous revision, and the gauntlet reports 2523 then 2503 —
+a change of the opposite sign, comfortably inside either interval. Both things
+can be true, and at least one certainly is:
+
+- **Self-play overstates field Elo.** A change is measured against an opponent
+  that shares every one of its blind spots, so an improvement that only matters
+  in positions both sides misplay collects points that no external opponent
+  will concede. This is a well-known effect and there is no reason to think
+  this engine is exempt.
+- **240 games cannot resolve 50 Elo.** The interval is ±55. Two runs that
+  differ by 20 are one run.
+
+The two anchors also disagree with each other by more than the stated interval:
+this run implies 2536 from Fruit and 2448 from Glaurung, and the previous run
+implied 2491 and 2561 — the same two engines, opposite directions. A fit that
+assumes a single strength scale is being asked to reconcile a non-transitive
+matchup, so the true uncertainty is wider than the statistical one.
+
+Read the table as "somewhere around 2500 since 13 August" and not as a
+trajectory. The SPRT numbers are the trustworthy measurements of individual
+changes; this table is a periodic sanity check that the engine has not drifted
+away from the field.
 
 ### Method
 
