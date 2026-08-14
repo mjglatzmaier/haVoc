@@ -208,6 +208,49 @@ TEST_F(SearchTest, CheckEvasionsAreNeverPrunedAsLateQuiets) {
     EXPECT_NE(move_str(m), "0000");
 }
 
+// Correction history is a running average of the gap between the static
+// evaluation and the search result, keyed on pawn structure. Three properties
+// have to hold or it silently does nothing: a single update must move the
+// entry (integer division at grain 1 would round every small diff to zero), a
+// stream of consistent evidence must converge on that value rather than
+// overshoot it, and the entry must stay bounded no matter how much evidence
+// arrives.
+TEST_F(SearchTest, CorrectionHistoryConvergesAndStaysBounded) {
+    Movehistory hist;
+    const U64 key = 0x1234567890abcdefULL;
+
+    EXPECT_EQ(hist.correction(white, key), 0);
+
+    // One shallow update at a weight of 1/256 must still register internally,
+    // even though it is far too small to show up in centipawns yet.
+    hist.update_correction(white, key, 0, 50);
+    EXPECT_EQ(hist.correction(white, key), 0);
+
+    // Consistent evidence converges towards the observed gap without passing
+    // it -- a running average of a constant can never exceed that constant.
+    for (int i = 0; i < 400; ++i)
+        hist.update_correction(white, key, 8, 50);
+    const int converged = hist.correction(white, key);
+    EXPECT_GT(converged, 30);
+    EXPECT_LE(converged, 50);
+
+    // Unrelated structures are untouched, and so is the other side to move.
+    EXPECT_EQ(hist.correction(black, key), 0);
+    EXPECT_EQ(hist.correction(white, key ^ 0xffULL), 0);
+
+    // Absurd evidence cannot drive the entry past the clamp.
+    for (int i = 0; i < 2000; ++i)
+        hist.update_correction(white, key, 30, 5000);
+    EXPECT_LE(hist.correction(white, key), Movehistory::kCorrMax / Movehistory::kCorrGrain);
+
+    // Evidence in the other direction pulls it back, and clear() resets it.
+    for (int i = 0; i < 2000; ++i)
+        hist.update_correction(white, key, 30, -5000);
+    EXPECT_LT(hist.correction(white, key), 0);
+    hist.clear();
+    EXPECT_EQ(hist.correction(white, key), 0);
+}
+
 TEST_F(SearchTest, HistoryScoresStayBounded) {
     Movehistory hist;
     Move m(E2, E4, quiet);

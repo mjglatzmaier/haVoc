@@ -141,6 +141,35 @@ struct Movehistory {
     /// the weights set through `set_continuation_weights`.
     int continuation_score(const position& p, const Move& m, const SearchNode* stack) const;
 
+    /// ─── Correction history ─────────────────────────────────────────────
+    ///
+    /// The static evaluation is not a neutral estimator: it is wrong in ways
+    /// that repeat. A pawn structure the evaluation systematically overrates
+    /// will be overrated in every position that shares it, and the search
+    /// discovers that afresh at every node, paying for it in nodes each time.
+    /// Correction history remembers the gap between what the evaluation said
+    /// and what the search came back with, keyed on the pawn structure, and
+    /// applies it to the next static evaluation of a position with that same
+    /// structure.
+    ///
+    /// Values are held at `kCorrGrain` times their centipawn value so that a
+    /// running average can move by less than one centipawn per update, which
+    /// matters because most updates are small and integer division would
+    /// otherwise round them all to zero.
+    static constexpr int kCorrGrain = 256;
+    static constexpr int kCorrMax = kCorrGrain * 32;
+    static constexpr size_t kCorrSize = 16384;
+
+    /// Centipawn adjustment to add to a raw static evaluation.
+    [[nodiscard]] int correction(Color c, U64 pawnkey) const {
+        return corrections_[c][pawnkey & (kCorrSize - 1)] / kCorrGrain;
+    }
+
+    /// `diff` is the search result minus the corrected static evaluation, in
+    /// centipawns. Deeper searches carry more weight, capped so that no single
+    /// result can displace the accumulated average outright.
+    void update_correction(Color c, U64 pawnkey, int depth, int diff);
+
     /// The scoring functions are plain function pointers with a fixed
     /// signature and no route to the parameter block, so the search hands the
     /// tunable continuation weights to the table itself.
@@ -164,6 +193,9 @@ struct Movehistory {
                                  const Move& m) const;
 
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
+    /// Indexed by [side to move][pawn key]. Two colours because the same pawn
+    /// structure is a different proposition depending on whose move it is.
+    std::array<std::array<int, kCorrSize>, colors> corrections_{};
     // Countermove table: indexed by [color_of_previous_move][from][to] -> best response
     std::array<std::array<std::array<Move, 64>, 64>, 2> countermoves{};
     std::unique_ptr<ContinuationHistory> continuation_;

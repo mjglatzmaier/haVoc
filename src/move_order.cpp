@@ -139,6 +139,23 @@ void Movehistory::clear() {
     for (auto& color : countermoves)
         for (auto& from : color)
             std::fill(from.begin(), from.end(), empty);
+
+    for (auto& c : corrections_)
+        std::fill(c.begin(), c.end(), 0);
+}
+
+void Movehistory::update_correction(Color c, U64 pawnkey, int depth, int diff) {
+    int& e = corrections_[c][pawnkey & (kCorrSize - 1)];
+
+    // A single search result is one noisy sample of a systematic bias, so it
+    // is folded into a running average rather than written over it. The weight
+    // rises with depth because a deeper search is a better measurement, and is
+    // capped at 16/256 so that no one node can move the entry more than a
+    // sixteenth of the way to its own value.
+    const int w = std::min(depth + 1, 16);
+    const int sample = std::clamp(diff * kCorrGrain, -kCorrMax, kCorrMax);
+    e = (e * (256 - w) + sample * w) / 256;
+    e = std::clamp(e, -kCorrMax, kCorrMax);
 }
 
 int Movehistory::score(const Move& m, const Color& c) const {
