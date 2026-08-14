@@ -1611,3 +1611,131 @@ TEST_F(EvalTest, EvaluationDoesNotDependOnWhatWasEvaluatedBefore) {
             << "evaluation of " << b_fen << " changed after evaluating " << a_fen;
     }
 }
+
+// ─── Category scales control one thing each ────────────────────────────────
+
+// The category scales exist so that a tuner, or a human, can ask "how much is
+// mobility worth relative to everything else" and get an answer. That only
+// works if each scale multiplies one coherent group of terms and no term is
+// multiplied by two of them.
+//
+// Three terms used to sit in the wrong group. Mobility was scaled by
+// mobility_category_scale inside each piece function and then by
+// sq_score_category_scale again with the rest of the piece total, so the two
+// scales compounded: their product was determined but neither factor was, and
+// coordinate descent could slide along that flat direction forever without the
+// error moving. The king piece-square table sat inside the king total and was
+// therefore scaled by king_safety_category_scale, so tuning king *safety*
+// silently retuned king *activity*. And a pawn attacking the enemy king ring
+// was collected in the pawn term, so king pressure was scaled by the weak-pawn
+// factor.
+//
+// All three were exact no-ops at the default scales of 100, which is why
+// nothing caught them: integer (x * 100) / 100 is x. They only showed up once
+// a scale moved off 100 -- which is precisely what tuning does.
+
+namespace {
+/// Evaluates `fen` with two category scales set to the given percentages.
+int eval_with_scales(const char* fen, int sq_scale, int mobility_scale) {
+    havoc::parameters params;
+    params.sq_score_category_scale = sq_scale;
+    params.mobility_category_scale = mobility_scale;
+    params.mobility_endgame_scale = mobility_scale;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+    auto pos = make_pos(fen);
+    return eval.evaluate(pos);
+}
+} // namespace
+
+TEST_F(EvalTest, MobilityAndPieceSquareScalesAreIndependent) {
+    // An open middlegame, so both buckets are large enough that a compounded
+    // product would be obvious rather than lost in integer rounding.
+    const char* fen = "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2P1PN2/PP1NBPPP/R1BQ1RK1 w - - 0 1";
+
+    const int base = eval_with_scales(fen, 100, 100);
+    const int sq_up = eval_with_scales(fen, 200, 100);
+    const int mob_up = eval_with_scales(fen, 100, 200);
+    const int both_up = eval_with_scales(fen, 200, 200);
+
+    // Additive separability. If mobility were multiplied by both scales, the
+    // effect of raising the mobility scale would itself depend on the
+    // piece-square scale and these two differences would diverge.
+    EXPECT_EQ(both_up - sq_up, mob_up - base)
+        << "raising sq_score_category_scale changed what mobility_category_scale "
+           "is worth, so the two scales are multiplying the same term";
+
+    // Guard against the degenerate way to pass the above: if either scale had
+    // no effect at all the equality would hold trivially.
+    EXPECT_NE(sq_up, base) << "sq_score_category_scale does nothing";
+    EXPECT_NE(mob_up, base) << "mobility_category_scale does nothing";
+}
+
+TEST_F(EvalTest, KingPlacementIsNotScaledByKingSafety) {
+    // King safety switched off entirely. King *activity* is a different idea
+    // and must still be evaluated: otherwise a tuner that decides king safety
+    // is overrated takes king centralisation down with it, in exactly the
+    // endings where centralisation is most of what matters.
+    //
+    // The probe scales the king piece-square table itself rather than reading
+    // a score directly. Two positions differ only in where white's king
+    // stands; black's king is on the same square in both, so its share of the
+    // table cancels in the difference and what is left is white's king
+    // placement alone. Multiplying the table must therefore move that
+    // difference. If the table is being multiplied by king_safety_category_scale
+    // -- which is zero here -- the difference cannot move at all.
+    auto placement_gap = [](int pst_multiplier) {
+        havoc::parameters params;
+        params.king_safety_category_scale = 0;
+        for (auto& v : params.pst_mg[havoc::king])
+            v *= pst_multiplier;
+        for (auto& v : params.pst_eg[havoc::king])
+            v *= pst_multiplier;
+
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+
+        auto central = make_pos("6k1/5ppp/8/3K4/8/8/5PPP/7R w - - 0 1");
+        auto corner = make_pos("6k1/5ppp/8/8/8/8/5PPP/K6R w - - 0 1");
+        return eval.evaluate(central) - eval.evaluate(corner);
+    };
+
+    const int single = placement_gap(1);
+    const int tripled = placement_gap(3);
+
+    EXPECT_NE(tripled, single)
+        << "with king_safety_category_scale at 0 the king piece-square table "
+           "stopped being read, so king safety and king activity are still the "
+           "same knob";
+    EXPECT_GT(single, 0) << "a centralised king in an ending must beat a cornered one";
+    EXPECT_GT(tripled, single) << "scaling up the king table must widen the gap, not shrink it";
+}
+
+TEST_F(EvalTest, PawnKingPressureIsNotScaledByPawnStructure) {
+    // A pawn bearing on the enemy king ring is king pressure, not a statement
+    // about pawn structure, but it is collected inside the pawn term and so
+    // used to be multiplied by pawn_structure_category_scale -- the weak-pawn
+    // knob. Turning that knob to zero, which a tuner is free to do, deleted
+    // part of the king attack.
+    auto pressure = [](int pawn_scale, int king_ring_weight) {
+        havoc::parameters params;
+        params.pawn_structure_category_scale = pawn_scale;
+        for (auto& v : params.pawn_king)
+            v = king_ring_weight;
+
+        havoc::pawn_table pt(params);
+        havoc::material_table mt(params);
+        havoc::HCEEvaluator eval(pt, mt, params);
+
+        // White pawns on f6 and g7 both cover squares of black's king ring.
+        auto pos = make_pos("r5k1/pp4P1/5P2/7Q/8/8/PP6/R5K1 w - - 0 1");
+        return eval.evaluate(pos);
+    };
+
+    EXPECT_NE(pressure(0, 40), pressure(0, 0))
+        << "with pawn_structure_category_scale at 0 the pawn king-ring weight "
+           "stopped being read, so attacking the king is still priced by the "
+           "weak-pawn scale";
+}
