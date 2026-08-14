@@ -24,7 +24,6 @@ U64 nmask[64];
 U64 kmask[64];
 U64 kflanks[8];
 U64 rmask[64];
-U64 kpawnstorm[2][2];
 U64 battks[64];
 U64 rattks[64];
 U64 small_center_mask;
@@ -304,16 +303,6 @@ void bitboards::init() {
         rmask[s] = bm;
     }
 
-    // King pawn storm detection
-    kpawnstorm[white][0] = between[Square::F2][Square::F5] | between[Square::G2][Square::G5] |
-                           between[Square::H2][Square::H5];
-    kpawnstorm[white][1] = between[Square::A2][Square::A5] | between[Square::B2][Square::B5] |
-                           between[Square::C2][Square::C5];
-
-    kpawnstorm[black][0] = between[Square::F7][Square::F4] | between[Square::G7][Square::G4] |
-                           between[Square::H7][Square::H4];
-    kpawnstorm[black][1] = between[Square::A7][Square::A4] | between[Square::B7][Square::B4] |
-                           between[Square::C7][Square::C4];
 }
 
 } // namespace havoc

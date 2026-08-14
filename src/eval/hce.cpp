@@ -979,12 +979,43 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
 
 
 
-        // Enemy pawn storm
+        // Enemy pawn storm.
+        //
+        // Two defects here. The mask was one of two fixed bitboards -- files
+        // f/g/h or files a/b/c, chosen by which half the king stood on -- so a
+        // king on e1 had its own file ignored and looked at the h file
+        // instead, and a king on d1 was scored on the queenside while the storm
+        // came down the d file. It is now built from the king's own file and
+        // its neighbours, exactly like the open-file term above it.
+        //
+        // Worse, the penalty counted storming pawns and nothing else. A pawn
+        // one square from the king's rank and one four ranks away scored
+        // identically, and the count penalty is {0, 0, 2, 4}: two storming
+        // pawns, however far advanced, cost nothing at all. Grade each pawn by
+        // how close it has come. The count term is kept -- pawns arriving
+        // together are worth more than the sum of their parts -- but it is no
+        // longer the only thing being said.
         {
-            auto pawnStormMask = bitboards::kpawnstorm[c][!(util::col(s) >= Col::E)];
-            auto pawnStorm = pawnStormMask & enemyPawns;
-            auto numAttackers = bits::count(pawnStorm);
-            int storm = -params_.king_storm_penalty[std::min(3, numAttackers)];
+            const int kcol = util::col(s);
+            const int krow = util::row(s);
+            int numAttackers = 0;
+            int storm = 0;
+            for (int f = std::max(0, kcol - 1); f <= std::min(7, kcol + 1); ++f) {
+                U64 stormers = bitboards::col[f] & enemyPawns;
+                while (stormers) {
+                    const int sq = bits::pop_lsb(stormers);
+                    // A pawn is only storming if it is in front of the king.
+                    // One that has already gone past is not an attacker, it is
+                    // a passed pawn, and another term has that.
+                    const int dist = (c == white) ? util::row(sq) - krow : krow - util::row(sq);
+                    if (dist <= 0)
+                        continue;
+                    ++numAttackers;
+                    storm -= params_.king_storm_rank_penalty[std::min<int>(
+                        dist - 1, static_cast<int>(params_.king_storm_rank_penalty.size()) - 1)];
+                }
+            }
+            storm -= params_.king_storm_penalty[std::min(3, numAttackers)];
             score += (storm * mg) / material_entry::kPhaseMax;
         }
     }
