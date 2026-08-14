@@ -609,7 +609,17 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     } else {
         auto* sthread = search_threads_[thread_id];
         static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos)));
+
+        // Correction history adjusts the raw evaluation, before the TT gets a
+        // say. The TT value has a real search behind it and needs no help; the
+        // point of the correction is to improve the estimate we fall back on
+        // when there is no such value, and to give the update below a corrected
+        // baseline so the table converges instead of chasing its own output.
+        static_eval_val = static_cast<int16_t>(std::clamp(
+            static_eval_val + history_.correction(pos.to_move(), pos.pawnkey()),
+            static_cast<int>(-score::kMate + 100), static_cast<int>(score::kMate - 100)));
     }
+    const int16_t corrected_static_eval = static_eval_val;
 
     // A TT score is a better estimate of the position than a static evaluation
     // -- it has a search behind it -- but only in the direction its bound
@@ -1082,6 +1092,27 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     Bound bound = (bestScore >= beta            ? bound_low
                    : pvNode && bestScore > alpha_orig ? bound_exact
                                                      : bound_high);
+
+    // Feed the gap between what the evaluation guessed and what the search
+    // found back into correction history. Only when the search result is
+    // admissible evidence about the true score in the direction it differs:
+    // a fail-low bounds the score from above, so it may only teach the table
+    // that the evaluation was too high, and a fail-high only the reverse. A
+    // capture or a check makes the difference tactical rather than a property
+    // of the structure, which is what this table is keyed on.
+    const bool best_is_capture =
+        (best_move.type == static_cast<U8>(capture)) ||
+        (best_move.type == static_cast<U8>(ep)) ||
+        pos.is_cap_promotion(static_cast<Movetype>(best_move.type));
+
+    if (!in_check && !singular_search && corrected_static_eval != score::kNegInf &&
+        !best_is_capture && std::abs(bestScore) < score::kMate - 100 &&
+        (bound == bound_exact || (bound == bound_low && bestScore > corrected_static_eval) ||
+         (bound == bound_high && bestScore < corrected_static_eval))) {
+        history_.update_correction(to_mv, pos.pawnkey(), depth,
+                                   bestScore - corrected_static_eval);
+    }
+
     if (!singular_search)
         tt_.save(pos.key(), static_cast<U8>(depth), static_cast<U8>(bound), best_move,
                  score_to_tt(bestScore, stack->ply), pvNode);
