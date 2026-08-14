@@ -189,7 +189,15 @@ struct parameters {
     //
     // The previous model indexed by a *count* of pawns touching the king,
     // which could express four states in total and could not tell h3 from h4.
-    // A perfect shield now scores 3*7 = 21 and a bare king -45.
+    // Summing over three files multiplies the range by three, which is easy to
+    // miss: these values give +21 for a perfect shield and -45 for a bare king,
+    // against the old count model's +6 and -22. Halving them to {-8,4,1,-2}
+    // restores the old range and was tried -- it puts the pawn shield pair back
+    // to a 4cp margin that king_shelter no longer carries, and bench back to
+    // 790209 from 697583. So the discrimination and the node win both come from
+    // the range, not from the shape alone, and the two cannot be separated by
+    // halving. Left at the wider range, which is the variant that was actually
+    // measured: -11.9 +/- 31.8 over 334 games. Needs SPSA, not more hand values.
     std::vector<int> king_shelter{-15, 7, 1, -4}; // distance 0(none),1,2,3+
     /// Charged when the king's flank holds no friendly pawn at all.
     int pawnless_flank_penalty = 12;

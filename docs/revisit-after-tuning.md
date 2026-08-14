@@ -658,3 +658,44 @@ Note also what the corpus rules are for. The first draft of the half-open file
 pair deleted the f2 pawn to open the file, leaving the sides a pawn apart and
 producing a 138cp margin that was entirely material. Equal material is checked
 mechanically by the regression test for exactly this reason.
+
+### King shelter: shape fixed, magnitude unresolved
+
+`king_shelter` indexed a four-entry table with a *count* of friendly pawns on
+the eight squares touching the king. It could express four states, the whole
+gap between a perfect shield and a broken one was one step of that table, and
+h3 and h4 were identical because neither touches the king. It is now indexed by
+the distance of the nearest friendly pawn in front of the king, per file,
+summed over three files.
+
+| | count model | distance model |
+|---|---|---|
+| pawn shield pair margin | 4cp | 9cp |
+| carried by | pawn structure | `king_shelter`, 11cp / 122% |
+| pairs decisive | 15/16 | 16/16 |
+| bench nodes | 953544 | 697583 |
+| SPRT vs previous | - | -11.9 +/- 31.8 over 334 games |
+
+The node result is the interesting one and was not predicted: a shelter that
+moves by 11cp between adjacent king positions gives the search something stable
+to prune against, where four discrete 6cp steps did not. It returns 27%, more
+than the coherent reset spent.
+
+The magnitude is unresolved and should not be hand-tuned further. Summing over
+three files triples the range as a side effect of changing the shape: +21/-45
+against the count model's +6/-22. Halving to {-8,4,1,-2} was tried and puts the
+pawn shield pair back to a 4cp margin that `king_shelter` no longer carries,
+with bench back up to 790209. Discrimination and nodes both track the range, so
+the two effects cannot be separated by halving, and the wider range is the one
+the SPRT actually measured. This is an SPSA problem.
+
+### A correction to earlier attribution figures
+
+`eval_bench` originally ranked individual parameters. A table like
+`king_shelter` is one idea spread over several entries, and a pair can move two
+of them in opposite directions -- +7 on the near slot, -4 on the far one -- so
+no element beats an unrelated scalar even when the family plainly decided the
+pair. It now aggregates by family before ranking, which took corpus-wide
+correct attribution from 7/14 to 9/14. Attribution claims made before this
+change understate table-valued families, including the claim above that king
+safety did not carry its own pairs.
