@@ -873,6 +873,24 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             (SEE = pos.see(move)) < 0)
             continue;
 
+        // Skip quiet moves that hang material. The rule above covers captures
+        // only, so a quiet move stepping a knight onto a square defended by a
+        // pawn was searched at full width no matter how obviously it loses a
+        // piece -- history pruning would only catch it once the same move had
+        // already failed often enough to sink its history score, which is a
+        // slow way to learn something SEE answers immediately.
+        //
+        // see() handles quiet moves correctly: with no victim the sequence
+        // starts at zero and plays out the recaptures on the destination
+        // square, so the return is exactly what the mover loses by going
+        // there. The threshold scales with depth because the deeper the node
+        // the more likely the search would have found the refutation anyway.
+        if (!pvNode && !in_check && isQuiet && !hashOrKiller && !dangerousQuietCheck &&
+            !advancedPawnPush && moves_searched > 1 &&
+            depth <= params_.see_quiet_prune_depth && bestScore > score::kMatedMaxPly &&
+            pos.see(move) < -params_.see_quiet_margin * depth)
+            continue;
+
         // Singular extension: if the hash move is significantly better than
         // all alternatives, extend it by 1 ply. The alternatives are measured
         // by re-searching this node with the hash move excluded.

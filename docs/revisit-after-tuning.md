@@ -272,3 +272,15 @@ a defended outpost is worth about as much again as the outpost itself.
   read the LMR-reduced depth. That makes 90 per ply mean something different
   here than it does in the engines the number was borrowed from, and is worth
   changing before the margins are fit.
+
+- **Rejected: futility margins at `fp_base` 0 / `fp_margin` 60.** Recorded
+  because the negative result is the useful part. The shipped 100/90 fires on
+  about 1.4% of bench nodes; 0/60 removes about 12% of the tree, and measured
+  `-15.6 +/- 19.1` over 794 games.
+
+  So the answer is not "prune more of the same thing". The likely cause is that
+  the condition reads raw `depth` where every engine this rule was borrowed
+  from reads the LMR-reduced depth: at raw depth 6 the margin is being applied
+  to a subtree that may really be searched at depth 2, and the rule throws away
+  moves the reduced search would have looked at cheaply anyway. Switch to a
+  reduced depth before touching the margins again.
