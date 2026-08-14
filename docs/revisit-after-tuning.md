@@ -237,3 +237,23 @@ a defended outpost is worth about as much again as the outpost itself.
   real even with few pieces, because the pieces that remain still give check".
   100 reproduces the old behaviour exactly, so the tuner can undo this
   completely if the measurement says so.
+
+- **The king zone, and every weight that reads through it.** The attacker
+  counting sites now use a band two ranks deep in front of the king instead of
+  the eight squares touching it. The shape is not in doubt -- a knight on g5
+  aimed at a castled king on g1 was previously worth exactly nothing to the
+  danger sum -- but the weights underneath it were all chosen against the old,
+  narrower mask.
+
+  Two of them are affected in a way tuning has to sort out. `attacker_weight`
+  feeds a term that is squared, so a wider zone that raises the attacker count
+  does not raise the penalty proportionally, it raises it quadratically;
+  `king_danger_divisor` is the obvious counterweight and was never moved.
+  `attack_combos` fires on squares attacked twice, and there are simply more of
+  those in a zone half again as large.
+
+  Measured `+3.5 +/- 19.1` over 794 games, i.e. neutral, which is consistent
+  with a better-shaped term carrying weights calibrated for the old shape.
+  These four -- `attacker_weight`, `king_danger_divisor`, `attack_combos` and
+  the `pawn_king` / piece-king count tables -- should be refit together rather
+  than one at a time.

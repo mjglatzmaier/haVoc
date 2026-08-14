@@ -19,6 +19,13 @@ struct einfo {
     U64 weak_pawns[2]{};
     U64 empty = 0;
     U64 kmask[2]{};
+    /// The squares an attack on which counts as an attack on the king.
+    /// Wider than kmask: the ring plus the three squares two ranks ahead of
+    /// the king, shifted back onto the board for kings on the edge files.
+    /// kmask stays the true ring and is what defends, shelters and gives the
+    /// king its flight squares; kzone is only ever read to decide whether an
+    /// enemy piece is pointed at the king.
+    U64 kzone[2]{};
     U64 kattk_points[2][5]{};
     U64 piece_attacks[2][5]{};
     U64 queen_sqs[2]{};

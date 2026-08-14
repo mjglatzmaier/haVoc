@@ -208,6 +208,27 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
                            ei.pe->undefended[black];
     ei.kmask[white] = bitboards::kmask[p.king_square(white)];
     ei.kmask[black] = bitboards::kmask[p.king_square(black)];
+    // King zone, used only for counting attackers. The eight squares touching
+    // the king are where an attack lands, but not where it is launched from:
+    // a knight on g5 or a rook lifted to h3 is aiming at a castled king on g1
+    // without touching its ring at all, and under the old mask contributed
+    // nothing to king danger until it had already arrived. Every other engine
+    // counts a band two ranks deep in front of the king for this reason.
+    //
+    // Built as the ring of the king square unioned with the ring of the square
+    // one rank in front of it, with that square's file pulled to the b--g
+    // range so a king on a1 or h1 still gets a three-file band instead of half
+    // of one falling off the board. The king square itself is removed so the
+    // zone stays a strict superset of the squares the old code counted.
+    for (Color kc : {white, black}) {
+        const int ks = p.king_square(kc);
+        const int fr = kc == white ? std::min(sq_row(ks) + 1, 7) : std::max(sq_row(ks) - 1, 0);
+        const int ff = std::clamp(sq_col(ks), 1, 6);
+        const int front = fr * 8 + ff;
+        ei.kzone[kc] = (bitboards::kmask[ks] | bitboards::squares[front] |
+                        bitboards::kmask[front]) &
+                       ~bitboards::squares[ks];
+    }
     // colored_sqs[white] is the light squares and colored_sqs[black] the dark
     // ones; see the initialiser in bitboard.cpp. These two lines are what makes
     // the bad-bishop penalty in eval_bishops do anything at all -- the masks it
@@ -403,7 +424,7 @@ template <Color c> int HCEEvaluator::eval_pawns(const position& p, einfo& ei) {
     U64 pawnAttacks = ei.pe->attacks[c];
 
     // Pawn harassment of enemy king
-    U64 kattks = pawnAttacks & ei.kmask[them];
+    U64 kattks = pawnAttacks & ei.kzone[them];
     int kAttkCount = bits::count(kattks);
     if (kAttkCount) {
         ei.kattackers[c][pawn]++;
@@ -486,7 +507,7 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
         }
 
         // King harassment
-        U64 kattks = mvs & ei.kmask[them];
+        U64 kattks = mvs & ei.kzone[them];
         if (kattks) {
             ei.kattackers[c][knight]++;
             ei.kattk_points[c][knight] |= kattks;
@@ -613,7 +634,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         score += bits::count(mvs & equeen_sq) * params_.attk_queen_bonus[bishop];
 
         // King harassment
-        U64 kattks = mvs & ei.kmask[them];
+        U64 kattks = mvs & ei.kzone[them];
         int king_attk_count = bits::count(kattks);
         if (king_attk_count) {
             ei.kattackers[c][bishop]++;
@@ -712,7 +733,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
             score += params_.rook_7th_bonus;
 
         // King harassment
-        U64 kattks = mvs & ei.kmask[them];
+        U64 kattks = mvs & ei.kzone[them];
         int king_attk_count = bits::count(kattks);
         if (king_attk_count) {
             ei.kattackers[c][rook]++;
@@ -808,7 +829,7 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
             bits::count(mvs & bitboards::big_center_mask) * params_.center_influence_bonus[queen];
 
         // King harassment
-        U64 kattks = mvs & ei.kmask[them];
+        U64 kattks = mvs & ei.kzone[them];
         int king_attk_count = bits::count(kattks);
         if (king_attk_count) {
             ei.kattackers[c][queen]++;
@@ -938,10 +959,10 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                         // color and not the other, worth 12cp with the rook and
                         // knight combination weight of 4.
                         //
-                        // twiceAttacked only ever holds squares in our own
-                        // king's mask, and attackers_of2 counts the king, so
-                        // masking the king out is what makes "undefended"
-                        // mean undefended by anything else.
+                        // twiceAttacked holds squares in our own king's zone,
+                        // and attackers_of2 counts the king, so masking the
+                        // king out is what makes "undefended" mean undefended
+                        // by anything else.
                         U64 remaining = twiceAttacked;
                         while (remaining) {
                             const Square attacked_sq = Square(bits::pop_lsb(remaining));
