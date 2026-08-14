@@ -216,7 +216,6 @@ struct parameters {
     int king_open_file_penalty = 9;
     int king_open_file_heavy_penalty = 4;
 
-    int uncastled_penalty = 5;
     /// eval_threats weights. Every one of these was a bare literal in the
     /// evaluation, so none of them could be tuned. The defaults reproduce the
     /// values that were hardcoded. The three tables are indexed

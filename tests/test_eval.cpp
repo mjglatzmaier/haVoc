@@ -777,13 +777,13 @@ TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
 
 TEST_F(EvalTest, ParameterSaveLoad) {
     havoc::parameters p;
-    p.uncastled_penalty = 42;
+    p.king_open_file_penalty = 42;
     p.opposite_bishop_scale = 77;
     p.save("/tmp/havoc_test_params.txt");
 
     havoc::parameters p2;
     p2.load("/tmp/havoc_test_params.txt");
-    EXPECT_EQ(p2.uncastled_penalty, 42);
+    EXPECT_EQ(p2.king_open_file_penalty, 42);
     EXPECT_EQ(p2.opposite_bishop_scale, 77);
 
     std::remove("/tmp/havoc_test_params.txt");
@@ -1462,12 +1462,6 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         // (b) inert by design: pawns are valued by the pawn hash, and a king
         // is never exchanged, so neither value can move an evaluation
         "material_value_0", "material_value_5",
-        // (b) genuinely dead: declared, tuned and saved, but read by nothing.
-        // attacker_weight_0 is the pawn entry of the king-danger sum, whose
-        // loop starts at knight. uncastled_penalty is a feature that was never
-        // implemented -- eval_king has a hard-coded castling bonus with no
-        // matching penalty.
-        "attacker_weight_0", "uncastled_penalty",
     };
 
     std::vector<std::string> unexpected;
