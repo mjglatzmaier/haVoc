@@ -8,11 +8,12 @@ a hand-written evaluation function.
 
 ## Strength
 
-Estimated **~2473 Elo** (CCRL Blitz scale, 95% CI ±60), measured 13 August 2026.
+Estimated **~2523 Elo** (CCRL Blitz scale, 95% CI ±53), measured 14 August 2026.
 
 | Date | Rating | 95% CI | Games | Notes |
 |------|--------|--------|-------|-------|
-| 2026-08-13 | **2473** | ±60 | 224 | Correctness batch: zobrist/material keys, phase interpolation, aspiration window, king safety |
+| 2026-08-14 | **2523** | ±53 | 240 | Eval coverage batch: connected pawns, queen mobility, tactical motifs, rook files, outposts, passer rank coverage, backward pawns |
+| 2026-08-13 | 2473 | ±60 | 224 | Correctness batch: zobrist/material keys, phase interpolation, aspiration window, king safety |
 | (earlier) | 2413 | ±82 | 150 | Prior baseline, same anchors and hardware |
 
 ### Method
@@ -43,7 +44,10 @@ parameter is fitted.
   comes from a two-opponent gauntlet on one machine, not from CCRL's own pool.
   The confidence interval is statistical only and does not cover anchor error
   or the non-transitivity of engine matchups. Treat the trend across rows as
-  more meaningful than any single absolute figure.
+  more meaningful than any single absolute figure. Consecutive rows here have
+  overlapping intervals, so a single step is suggestive rather than proven;
+  the rows are directly comparable because the anchors, hardware, book and time
+  control are held fixed across them.
 
 Every change that could plausibly affect playing strength is gated behind a
 self-play SPRT against the previous revision before it is merged.
