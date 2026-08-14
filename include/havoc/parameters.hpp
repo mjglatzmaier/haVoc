@@ -414,6 +414,9 @@ struct parameters {
     int nmp_eval_div = 200;         // extra reduction of (eval-beta)/this
     int nmp_eval_max = 3;           // ...capped here
     int futility_base = 6;          // (base + depth^2) / (2 - improving)
+    int fp_max_depth = 6;           // forward futility pruning of quiets below this depth
+    int fp_base = 100;              // ...prune when eval + base + margin*depth <= alpha
+    int fp_margin = 90;
     int history_prune_depth = 3;    // history pruning only below this depth
     int history_prune_margin = 4096; // ...and only below -margin*depth
     int see_prune_depth = 1;        // negative-SEE capture pruning depth

@@ -378,6 +378,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("nmp_eval_div", &nmp_eval_div);
         result.emplace_back("nmp_eval_max", &nmp_eval_max);
         result.emplace_back("futility_base", &futility_base);
+        result.emplace_back("fp_max_depth", &fp_max_depth);
+        result.emplace_back("fp_base", &fp_base);
+        result.emplace_back("fp_margin", &fp_margin);
         result.emplace_back("history_prune_depth", &history_prune_depth);
         result.emplace_back("history_prune_margin", &history_prune_margin);
         result.emplace_back("see_prune_depth", &see_prune_depth);
