@@ -93,10 +93,18 @@ const std::vector<Pair> kPairs = {
      "4k3/8/4p3/4P3/8/8/8/4K3 w - - 0 1",
      "e5 with no black pawn ahead is passed; e5 facing e6 is permanently blocked"},
 
+    // Only the rook moves. An earlier version of this pair kept the rook on
+    // d1 and moved the pawns from a2/b2 to d2/e2, which does isolate the open
+    // file -- but it also moves both pawns away from the king on e1, so the
+    // king's own file cover changes at the same time. That made the pair test
+    // two things at once, and once the king file penalties were given real
+    // magnitudes the shelter difference outweighed the file difference and the
+    // pair failed for a reason that had nothing to do with rooks. A pair is
+    // only evidence about a feature if it is the single thing that differs.
     {"a rook prefers an open file",
-     "4k3/8/8/8/8/8/PP6/3RK3 w - - 0 1",
-     "4k3/8/8/8/8/8/3PP3/3RK3 w - - 0 1",
-     "the d-rook is unobstructed in the first, staring at its own d2 pawn in the second"},
+     "4k3/8/8/8/8/8/2PP4/1R2K3 w - - 0 1",
+     "4k3/8/8/8/8/8/2PP4/2R1K3 w - - 0 1",
+     "the b-file has no pawn on it; the c-rook stares at its own c2 pawn"},
 
     {"a castled king beats a king in the centre",
      "4k2r/5ppp/8/8/8/8/5PPP/5RK1 w k - 0 1",
