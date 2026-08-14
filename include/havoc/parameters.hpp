@@ -182,7 +182,15 @@ struct parameters {
     /// -3 and -2 both became -1, so two distinct parameter values produced an
     /// identical evaluation and the tuner had no gradient between them. The
     /// halving is gone and these are the values it produced.
-    std::vector<int> king_shelter{-22, -10, 0, 6}; // 0,1,2,3 pawns
+    // Indexed by the distance of the nearest friendly pawn in front of the
+    // king on a given file, summed over the king file and its two neighbours.
+    // Index 0 means no pawn in front at all, 1 means the pawn is unmoved
+    // beside the king, 3 means three ranks away or further.
+    //
+    // The previous model indexed by a *count* of pawns touching the king,
+    // which could express four states in total and could not tell h3 from h4.
+    // A perfect shield now scores 3*7 = 21 and a bare king -45.
+    std::vector<int> king_shelter{-15, 7, 1, -4}; // distance 0(none),1,2,3+
     /// Charged when the king's flank holds no friendly pawn at all.
     int pawnless_flank_penalty = 12;
     /// Charged by the number of enemy pawns bearing down on the king's side of

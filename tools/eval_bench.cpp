@@ -361,10 +361,23 @@ int main(int argc, char** argv) {
                 contribs.push_back({name, d});
         }
 
-        std::sort(contribs.begin(), contribs.end(),
+        // Aggregate by family before ranking. A table like king_shelter is one
+        // idea spread over several entries, and a pair can move two of those
+        // entries in opposite directions -- +7 on the near slot, -4 on the far
+        // one -- so no single element beats an unrelated scalar even when the
+        // family as a whole is what decided the pair. Ranking parameters alone
+        // reports that as "king safety did not carry this", which is false.
+        std::map<std::string, double> by_family;
+        for (const auto& c2 : contribs)
+            by_family[family_of(c2.name)] += c2.delta;
+        std::vector<Contribution> fams;
+        for (auto& [k, v] : by_family)
+            fams.push_back({k, v});
+        std::sort(fams.begin(), fams.end(),
                   [](const Contribution& a, const Contribution& b) {
                       return std::abs(a.delta) > std::abs(b.delta);
                   });
+        contribs = fams;
 
         const double denom = r.margin != 0 ? std::abs(static_cast<double>(r.margin)) : 1.0;
         if (!contribs.empty())
