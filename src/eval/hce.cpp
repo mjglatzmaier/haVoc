@@ -852,6 +852,17 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
         U64 mvs = ei.kmask[c] & ei.empty;
 
         // King safety - attackers
+        //
+        // The danger terms below accumulate into `danger` rather than straight
+        // into `score` so they can be faded by game phase. An exposed king is
+        // a liability while the enemy still has the pieces to punish it and an
+        // asset once they are traded off, and none of this was tapered: a rook
+        // endgame collected the same safe-check and attack-combination
+        // penalties as a middlegame with two queens on, which also pulls
+        // directly against the endgame king table's wish to centralise. The
+        // shelter term further down was already faded on the middlegame
+        // weight; these were not.
+        int danger = 0;
         U64 unsafe_bb = 0ULL;
         for (Piece pc = pawn; pc <= queen; ++pc)
             unsafe_bb |= ei.kattk_points[them][pc];
@@ -890,7 +901,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             for (Piece pc = knight; pc <= queen; ++pc) {
                 const U64 checks = check_from[pc] & ei.piece_attacks[them][pc] & safe;
                 if (checks)
-                    score -= params_.safe_check_weight[pc] * bits::count(checks);
+                    danger -= params_.safe_check_weight[pc] * bits::count(checks);
             }
         }
 
@@ -903,8 +914,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 danger_score +=
                     static_cast<int>(ei.kattackers[them][j]) * params_.attacker_weight[j];
 
-            score -= (danger_score * danger_score) / params_.king_danger_divisor;
-
+            danger -= (danger_score * danger_score) / params_.king_danger_divisor;
             score += params_.king_safe_sqs[std::min(7, bits::count(mvs))];
 
             // Attack combinations
@@ -913,7 +923,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                     U64 twiceAttacked = ei.kattk_points[them][p1] & ei.kattk_points[them][p2];
                     if (twiceAttacked) {
                         int attack_penalty = params_.attack_combos[p1][p2];
-                        score -= attack_penalty;
+                        danger -= attack_penalty;
 
                         // Any twice-attacked square beside the king that only
                         // the king defends is the dangerous one, so look at all
@@ -936,7 +946,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                         while (remaining) {
                             const Square attacked_sq = Square(bits::pop_lsb(remaining));
                             if ((p.attackers_of2(attacked_sq, c) & ~sq_bb) == 0ULL) {
-                                score -= 3 * attack_penalty;
+                                danger -= 3 * attack_penalty;
                                 break;
                             }
                         }
@@ -944,6 +954,12 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 }
             }
         }
+
+        // Fade the danger by game phase. king_danger_endgame_scale is the
+        // percentage that survives at the pure-endgame end of the taper; the
+        // middlegame end stays at 100 so nothing changes where king safety is
+        // supposed to be at full strength.
+        score += (danger * ei.me->taper(100, params_.king_danger_endgame_scale)) / 100;
 
         // Pawn shelter, weighted towards the middlegame.
         {

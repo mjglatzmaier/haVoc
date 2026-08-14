@@ -43,6 +43,16 @@ struct parameters {
     int pawn_structure_category_scale = 100;
     int space_category_scale = 100;
     int king_danger_divisor = 256;
+
+    /// Percentage of the king danger terms -- safe checks, the quadratic
+    /// attacker score and the attack combinations -- that survives at the
+    /// pure-endgame end of the phase taper. None of them were tapered at all,
+    /// so a rook endgame was charged the same for an exposed king as a
+    /// middlegame with two queens on, and that pulls directly against the
+    /// endgame king table, which wants the king out in the open. The
+    /// middlegame end stays at 100. See docs/revisit-after-tuning.md: the
+    /// value here is a chess argument, not a fitted number.
+    int king_danger_endgame_scale = 40;
     /// Bonus, in centipawns, for having the move. Measured, not assumed: this
     /// term was effectively inert until the side-to-move convention was
     /// unified, because the old `stm_sign * (score + tempo)` is just

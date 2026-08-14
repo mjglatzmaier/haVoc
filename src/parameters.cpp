@@ -117,6 +117,7 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("doubled_isolated_penalty_eg", &doubled_isolated_penalty_eg);
         result.emplace_back("space_category_scale", &space_category_scale);
         result.emplace_back("king_danger_divisor", &king_danger_divisor);
+        result.emplace_back("king_danger_endgame_scale", &king_danger_endgame_scale);
         return result;
     }
 
