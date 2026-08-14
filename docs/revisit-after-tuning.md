@@ -429,3 +429,90 @@ than dividing by zero. Search constants need SPSA against game results, which
 is why the roadmap puts that after the evaluation fit -- and it must come
 after, because every centipawn-denominated margin was fitted against the
 current evaluation spread.
+
+## Where the evaluation actually spends its knowledge
+
+`havoc_eval_sensitivity` measures, per parameter, over a corpus of real
+positions:
+
+- **worth** -- mean `|eval(param := 0) - eval(param)|`, the centipawns that
+  disappear if the term is deleted. What the knowledge is worth to the engine
+  as shipped.
+- **grad** -- mean `|eval(param + 1) - eval(param)|`, what one unit buys. What
+  a tuner can see. Coordinate descent needs a strict improvement, so a term
+  with a tiny grad cannot be fitted at all.
+- **reach** -- fraction of positions where the parameter changes anything.
+
+Run on 2000 positions of `/tmp/mid.epd` and again on `/tmp/val200.epd`. The two
+corpora are drawn from different phases and produce nearly the same table, so
+what follows is a property of the evaluation and not of the sample.
+
+### The headline
+
+| group | worth (cp) |
+| --- | --- |
+| material | 357 |
+| passed pawns | ~43 + 23 + 11 |
+| piece-square tables | ~87 across six pieces |
+| mobility (four tables) | ~50 |
+| `restriction_weight` alone | 8.1 |
+| `center_influence` | 6.7 |
+| **all of king safety, net** | **8.8** |
+| **every pawn-structure term, largest single one** | **1.9** |
+
+King safety, as a category, is worth 8.8 centipawns. `restriction_weight` --
+one integer counting "I attack more squares than you do" -- is worth 8.1 on its
+own, and it is counting squares that mobility has already paid for.
+
+### The specifics that matter
+
+**`king_shelter` is worth 0.20 cp,** at 6.9% reach. The pawn cover in front of
+a castled king is the central middlegame king-safety idea and it is worth one
+fifth of a centipawn. The storm penalties beside it are 1.17 and 0.80.
+
+**`bishop_king_distance_penalty` is worth 1.94 at 72% reach, and
+`knight_king_distance_penalty` 1.63 at 62%.** Each is larger than any single
+shelter, storm or open-file term around the king. Both are also malus-only over
+a pool that is exactly a piece count, and both fire in the large majority of
+positions, which makes them very close to a constant offset per minor -- a
+hidden reduction of the knight and bishop material values wearing a positional
+costume. The protection bonuses are the same shape with the opposite sign:
+`rook_protection_bonus` 0.97 at 56% reach, bishop 0.89 at 58%, knight 0.87 at
+55%.
+
+**Nothing in pawn structure exceeds 1.92 cp.** Isolated is about 1.6, doubled
+about 0.7, backward 0.52 falling to 0.21 in the endgame. Conventional values
+are 10-20. The comment in `parameters.hpp` already worried that the evaluation
+was "biased against having pawns at all"; the measurement says the opposite
+problem is now the live one -- the terms are too small to express anything.
+
+**Several scales cannot be tuned at all.** `mobility_category_scale`,
+`mobility_endgame_scale`, `threat_category_scale`, `space_category_scale` and
+all four per-piece mobility scales have grad exactly 0.000 while carrying real
+worth: `bishop_mobility_scale` is worth 14.4 cp and a one-unit change to it
+moves nothing, because it is a percentage applied by integer division and 1% of
+a small term truncates to zero.
+
+**Several knobs are binary.** `restriction_weight`, both king-distance
+penalties, all three protection bonuses and `center_influence` have grad equal
+to their worth, which means their default is 1. The only settings available are
+off and on.
+
+**Four parameters are integer divisors** (`king_danger_divisor`,
+`pinned_scaling` for bishop, rook and queen). The smallest change a tuner can
+make to `pinned_scaling` is to halve the term.
+
+### What this explains
+
+The single-stage fit cut held-out Texel error by 7.6% relative and then
+measured **+1.4 +/- 19.9 Elo over 734 games**, LLR -1.7%. That is not a
+contradiction. Texel error is dominated by material and the fit duly repriced
+material and the piece-square tables, which is where the worth is. The
+positional terms it also moved were, and remain, worth one to two centipawns
+each -- below the resolution at which they can change a move choice.
+
+The knowledge budget is spent on counting squares. Mobility, restriction,
+centre influence and space together are worth roughly 67 cp; king safety and
+pawn structure together are worth under 30. No reweighting fixes that, because
+the terms that should carry the difference have gradients around 0.3 cp and
+several of the scales that would amplify them cannot be moved by one unit.
