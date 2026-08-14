@@ -91,6 +91,22 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
     if (stage == TuneStage::category) {
         // Stage 1: Category-level scale factors only. Tempo is FROZEN here
         // to prevent the bias term from absorbing scale changes.
+        //
+        // The individual pawn-structure weights deliberately do NOT appear
+        // here even though they used to. pawn_table.cpp sums them into
+        // pe->score_mg/eg and hce.cpp then multiplies that whole sum by
+        // pawn_structure_category_scale, so the contribution is
+        //
+        //     taper(sum_i w_i) * scale / 100
+        //
+        // Scaling every w_i by c and the scale by 1/c leaves the evaluation
+        // bit-identical. Fitting the scale and the weights it multiplies in
+        // the same stage therefore leaves an exact flat direction in the
+        // loss, and the optimiser wanders along it: two runs on different
+        // data converged to pawn_structure_category_scale 36 and 27 with
+        // doubled_pawn_penalty_mg 39 and -15 respectively, a sign flip on a
+        // penalty. The weights now live in stage 2, where the scale is held
+        // fixed and they are identified.
         result.emplace_back("sq_score_category_scale", &sq_score_category_scale);
         result.emplace_back("mobility_category_scale", &mobility_category_scale);
         result.emplace_back("mobility_endgame_scale", &mobility_endgame_scale);
@@ -99,6 +115,21 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("passed_pawn_category_scale", &passed_pawn_category_scale);
         result.emplace_back("passed_pawn_endgame_scale", &passed_pawn_endgame_scale);
         result.emplace_back("pawn_structure_category_scale", &pawn_structure_category_scale);
+        result.emplace_back("space_category_scale", &space_category_scale);
+        result.emplace_back("king_danger_divisor", &king_danger_divisor);
+        result.emplace_back("king_danger_endgame_scale", &king_danger_endgame_scale);
+        return result;
+    }
+
+    if (stage == TuneStage::shape) {
+        // Stage 2: Individual weights and curve shapes (~50-100 params)
+        // NOTE: tempo is excluded — it's a bias term that interferes with
+        // weight tuning. Set it manually to a small value (5-15cp).
+
+        // Pawn-structure weights. These are summed in pawn_table.cpp and the
+        // sum is then multiplied by pawn_structure_category_scale, which is
+        // fitted in stage 1 and held fixed here so that the weights are
+        // identified rather than free to slide against their own multiplier.
         result.emplace_back("doubled_pawn_penalty_mg", &doubled_pawn_penalty_mg);
         result.emplace_back("doubled_pawn_penalty_eg", &doubled_pawn_penalty_eg);
         result.emplace_back("backward_pawn_penalty_mg", &backward_pawn_penalty_mg);
@@ -115,16 +146,6 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("doubled_pawn_semiopen_eg", &doubled_pawn_semiopen_eg);
         result.emplace_back("doubled_isolated_penalty_mg", &doubled_isolated_penalty_mg);
         result.emplace_back("doubled_isolated_penalty_eg", &doubled_isolated_penalty_eg);
-        result.emplace_back("space_category_scale", &space_category_scale);
-        result.emplace_back("king_danger_divisor", &king_danger_divisor);
-        result.emplace_back("king_danger_endgame_scale", &king_danger_endgame_scale);
-        return result;
-    }
-
-    if (stage == TuneStage::shape) {
-        // Stage 2: Individual weights and curve shapes (~50-100 params)
-        // NOTE: tempo is excluded — it's a bias term that interferes with
-        // weight tuning. Set it manually to a small value (5-15cp).
 
         // Per-piece mobility scale factors
         result.emplace_back("knight_mobility_scale", &knight_mobility_scale);
