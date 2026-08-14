@@ -223,3 +223,17 @@ that one of its own pawns defends. The case is rare (0.34% of minors over a
 depth-15 bench) and the two values were chosen to sit beside
 `knight_outpost_bonus`, which tops out at 3, rather than from any evidence that
 a defended outpost is worth about as much again as the outpost itself.
+
+- **`king_danger_endgame_scale`, 40.** None of the king danger terms -- safe
+  checks, the quadratic attacker score, the attack combinations -- were faded
+  by game phase, so a rook endgame was charged for an exposed king at exactly
+  the rate a middlegame with two queens on was. That is wrong on the chess and
+  it fights the endgame king table, which wants the king walking into the
+  centre. The shelter term beside them was already tapered, which is what makes
+  this an oversight rather than a deliberate choice.
+
+  The taper is the confident part; 40 is not. It says a little over a third of
+  the danger survives into a pure endgame, which is a guess at "some danger is
+  real even with few pieces, because the pieces that remain still give check".
+  100 reproduces the old behaviour exactly, so the tuner can undo this
+  completely if the measurement says so.
