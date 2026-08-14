@@ -132,6 +132,48 @@ inline const std::vector<Pair>& all() {
      "4k3/8/8/4P3/8/3P4/8/4K3 w - - 0 1",
      "d5 and e5 defend each other as they advance; d3 and e5 are split",
      "passed_pawn"},
+
+    // ---- middlegame phase --------------------------------------------------
+    //
+    // Every pair above is sparse enough to sit at the endgame end of the phase
+    // interpolation, so eval_bench attributed all of them to pst_eg_*,
+    // passed_pawn_endgame_scale, mobility_endgame_scale and no_pawn_scale --
+    // not one middlegame term appeared anywhere in the report. King safety in
+    // particular was completely untested, which is precisely the family the
+    // coherent reset recalibrated. These pairs carry full middlegame material
+    // so that the middlegame half of the evaluation actually runs.
+
+    {"an intact pawn shield beats an advanced one",
+     "r1bq1rk1/pp2ppbp/2np1np1/8/2BPP3/2N2N2/PP3PPP/R1BQ1RK1 w - - 0 1",
+     "r1bq1rk1/pp2ppbp/2np1np1/8/2BPP2P/2N2N2/PP3PP1/R1BQ1RK1 w - - 0 1",
+     "only the h-pawn moves: h2 covers the castled king, h4 abandons it",
+     "king_shelter"},
+
+    {"a castled king beats one still in the centre",
+     "r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQ1RK1 w - - 0 1",
+     "r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQ - 0 1",
+     "identical material and structure; the white king is tucked away or not",
+     "king"},
+
+    {"a rook prefers an open file to a closed one",
+     "r2q1rk1/pp2bppp/2n2n2/2p5/4P3/2N1BN2/PP2QPPP/3R1RK1 w - - 0 1",
+     "r2q1rk1/pp2bppp/2n2n2/2p5/4P3/2N1BN2/PP2QPPP/R4RK1 w - - 0 1",
+     "only the queenside rook moves: d1 has no pawn on the file, a1 sits behind a2",
+     "open_file_bonus"},
+
+    // The first draft of this pair deleted the f2 pawn outright to open the
+    // file, which left the two sides a pawn apart and produced a 138cp margin
+    // that was simply the pawn. The equal-material rule is not a formality:
+    // material is worth 357cp here and will drown any positional signal.
+    // Move the king instead, and swap the rook with it so the piece count on
+    // each square is preserved.
+    {"a king behind pawns beats one on a half-open file",
+     "r2q1rk1/pp3ppp/2n1bn2/2pp4/3P4/2N1PN2/PP4PP/R1BQ1RK1 w - - 0 1",
+     "r2q1rk1/pp3ppp/2n1bn2/2pp4/3P4/2N1PN2/PP4PP/R1BQ1KR1 w - - 0 1",
+     "white has no f-pawn: on g1 the king is covered by g2/h2, on f1 it stands "
+     "on the half-open f-file. The rook trades places with it, which favours "
+     "the same side, so treat the margin as an upper bound",
+     "king_semiopen_file_penalty"},
     };
     return pairs;
 }

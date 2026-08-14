@@ -629,3 +629,32 @@ win: it removes overfitting surface and returns nodes at the same time.
 Run `havoc_eval_bench` before proposing any evaluation change. If the term
 cannot flip a decision, it cannot buy Elo, and no amount of tuning will change
 that.
+
+### King safety still does not decide king-safety positions
+
+The original discrimination corpus was entirely endgame-phase, so the
+middlegame half of the evaluation -- including all of king safety -- had no
+coverage at all. Four middlegame pairs now carry full material so that half
+actually runs. They are ordered correctly, but attribution says the king safety
+family is still not what decides them:
+
+| pair | margin | actually decided by |
+|---|---|---|
+| intact pawn shield vs h2-h4 | 4cp | `pawn_structure_category_scale`, `pst_mg_pawn`, with `space_category_scale` at -200% |
+| castled vs uncastled king | 36cp | `sq_score_category_scale`, `pst_mg_king` |
+| king behind pawns vs half-open file | 44cp | `sq_score_category_scale`, `pst_mg_king`; `king_shelter` only 20% |
+
+The coherent reset raised `king_shelter` from {-1,-1,1,1} to {-22,-10,0,6} and
+lifted the family's total worth from 8.8cp to 19.5cp, and it is *still* not the
+term that decides whether a king is safe. The king piece-square table is. That
+is worth understanding before any further king safety work: a term that cannot
+win an argument against a PST entry will not repay tuning.
+
+The 4cp margin on the pawn shield pair is the sharpest version of this. Moving
+the h-pawn two squares in front of a castled king is worth four centipawns, and
+most of that is pawn structure rather than king danger.
+
+Note also what the corpus rules are for. The first draft of the half-open file
+pair deleted the f2 pawn to open the file, leaving the sides a pawn apart and
+producing a 138cp margin that was entirely material. Equal material is checked
+mechanically by the regression test for exactly this reason.
