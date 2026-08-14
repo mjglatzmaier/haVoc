@@ -420,6 +420,8 @@ struct parameters {
     int history_prune_depth = 3;    // history pruning only below this depth
     int history_prune_margin = 4096; // ...and only below -margin*depth
     int see_prune_depth = 1;        // negative-SEE capture pruning depth
+    int see_quiet_prune_depth = 5; // quiet moves losing material pruned below this depth
+    int see_quiet_margin = 50;      // ...when see < -margin * depth
     int qs_delta_margin = 910;      // quiescence delta pruning margin
     int qs_delta_pawn7th = 775;     // ...widened by this with a pawn near promotion
     int singular_min_depth = 8;     // singular extension minimum depth
