@@ -17,6 +17,7 @@ set(HAVOC_TEST_SOURCES
     test_perft.cpp
     test_position.cpp
     test_eval.cpp
+    test_eval_discrimination.cpp
     test_search.cpp
 )
 
