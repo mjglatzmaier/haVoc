@@ -2,7 +2,7 @@
 
 A UCI chess engine written in C++20.
 
-haVoc is a hobby project that has been worked on on and off over several years.
+haVoc is a hobby chess engine I've developed on and off for several years.
 It uses bitboard move generation with magic bitboards, an alpha-beta search, and
 a hand-written evaluation function.
 
