@@ -284,3 +284,50 @@ a defended outpost is worth about as much again as the outpost itself.
   to a subtree that may really be searched at depth 2, and the rule throws away
   moves the reduced search would have looked at cheaply anyway. Switch to a
   reduced depth before touching the margins again.
+
+
+## The quiet history table cannot support the rules that read it
+
+Three measurements, all negative, all against the same baseline at 10+0.1.
+Recorded together because the conclusion only follows from the set.
+
+The starting observation, already in this document: `lmr_hist_bad` (2000) and
+`history_prune_margin` (4096) sit two orders of magnitude outside the range the
+table reaches, so neither rule can fire. Measured over a depth-10 bench the
+distribution is `n=953, min -187, p5 -90, p10 -62, p50 -4, p90 75, max 8164`.
+
+**1. Retarget all three thresholds onto the observed percentiles**, 60 / 75 /
+60, i.e. roughly the worst and best tenth. `-21.6 +/- 21.6` over 592 games,
+LOS 2.5%. Bench rose 2% because `lmr_hist_good` at 75 un-reduces about a tenth
+of all quiets.
+
+**2. Retarget only the two dead ones**, 60 / 4000 / 60, leaving
+`lmr_hist_good` alone. Bench unchanged at 754284, so this isolates the two
+rules cleanly. `-29.7 +/- 28.3` over 365 games, LOS 2.0%.
+
+That is the informative one. A history score of -60 in a table whose minimum
+over an entire bench is -187 is not evidence a move is bad; it is one or two
+fail-lows of noise. Pruning on it discards good moves, and the rules were
+harmless only because they were unreachable.
+
+**3. Develop the negative half instead**, `history_malus_pct` 0 -> 100. This
+works as designed: the distribution becomes `n=2667, min -8183, p10 -1389,
+p50 -56, max 709` and bench falls from 754857 to 728262, so ordering genuinely
+improves. It also measured `-67.4 +/- 29.3` over 373 games, LOS 0.0% -- the
+worst result of the session.
+
+The reason is visible in the distribution. The malus is charged against every
+quiet tried at every fail-low node, and fail-low nodes vastly outnumber
+cutoffs, so the whole table slides negative rather than widening: the maximum
+collapses from 8164 to 709. The positive signal that quiet ordering actually
+depends on is destroyed, and a move is punished for having been tried in a
+line that failed low for reasons having nothing to do with that move.
+
+**Conclusion.** The cutoff path already does the conventional thing -- bonus to
+the move that cut, malus to the quiets tried before it. The fail-low malus is
+not conventional and should stay off. The two thresholds reading the negative
+half stay where they are, dead, and should be treated as dead code rather than
+as parameters awaiting a fit: SPSA cannot rescue them, because both directions
+have now been measured. If quiet history is to drive pruning here it needs a
+better-conditioned table first -- the current one is keyed on (colour, from,
+to) with no piece identity -- not a different threshold.
