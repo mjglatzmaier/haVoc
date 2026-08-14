@@ -204,11 +204,22 @@ public:
         if (pert_override > 0) pert = pert_override;
         struct Bounds { int lo, hi; };
         auto bounds = [](const std::string& n) -> Bounds {
-            if (n.find("category_scale") != std::string::npos) return {10, 200};
-            if (n.find("mobility_scale") != std::string::npos) return {10, 200};
+            // These exist to keep a scale from going negative (which would
+            // invert the sign of a whole category) or running away, not to
+            // encode an opinion about the answer. The previous [10, 200] cap
+            // did encode one, and it was binding: fits on two different
+            // datasets sat on it, with pawn_structure_category_scale pinned
+            // to the 10 floor on both, threat_category_scale on the 200
+            // ceiling, and king_safety_category_scale at 199. Four of eleven
+            // stage-1 parameters were resting against a cap, so the reported
+            // fit was a property of the box rather than of the data. Zero is
+            // allowed deliberately: "this category is worthless as shaped" is
+            // a legitimate thing for the data to say.
+            if (n.find("category_scale") != std::string::npos) return {0, 800};
+            if (n.find("mobility_scale") != std::string::npos) return {0, 800};
             if (n == "king_danger_divisor") return {64, 1024};
             if (n.find("material_value") != std::string::npos) return {10, 30000};
-            if (n.find("_scale") != std::string::npos) return {1, 256};
+            if (n.find("_scale") != std::string::npos) return {0, 800};
             return {-500, 500};
         };
         // The parameters are ints, but the optimiser needs to accumulate steps
