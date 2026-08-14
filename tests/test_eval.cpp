@@ -1360,6 +1360,13 @@ TEST_F(EvalTest, EveryTunableParameterReachesTheEvaluation) {
         "4k2r/4pp2/8/n7/8/8/1P6/R2K4 w k - 0 1",
         "4k2r/4pp2/n7/8/8/1P6/8/R2K4 w k - 0 1",
         "4k2r/n3pp2/8/8/1P6/8/8/R2K4 w k - 0 1",
+        // Mobility buckets that only became reachable once mobility stopped
+        // requiring an empty square. Counting capturable enemy pieces shifts
+        // every count upward, which moves the gaps: these two positions hold a
+        // bishop with exactly ten and a queen with exactly twelve squares that
+        // are neither occupied by a friend nor covered by an enemy pawn.
+        "r5nr/p1q1kp2/1npp2pb/4BPPp/1Pb5/4PK1P/P1PP4/RN1Q1BNR b - - 0 40",
+        "4kbr1/p1p1pNpp/brn5/1pp2q2/QP5P/B2PPnPB/P4PR1/RN3K2 w - - 5 37",
     };
 
     // The pawn and material caches are keyed on structure, not on parameter

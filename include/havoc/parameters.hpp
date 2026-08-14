@@ -76,6 +76,15 @@ struct parameters {
     int rook_mobility_scale = 98;
 
     // Mobility tables (moved from hce.cpp anonymous namespace)
+    //
+    // Indexed by the number of squares the piece attacks that are not occupied
+    // by one of its own men and are not covered by an enemy pawn. Capturable
+    // enemy pieces count: a knight bearing down on a queen has that square as
+    // a real option, and calling it immobile because something stands there is
+    // backwards. The table sizes are the evidence that this was the intent all
+    // along -- 9, 15, 15 and 28 entries are the full fan-out of each piece
+    // (8, 13, 14 and 27 squares plus zero), and the earlier code, which counted
+    // only empty squares, could reach the top third of them just about never.
     std::array<int, 9> knight_mobility_table = {-50, -30, -15, -6, 2, 8, 13, 17, 20};
     std::array<int, 15> bishop_mobility_table = {-50, -30, -15, -6, 2,  8,  13, 17,
                                                  20,  22,  24,  25, 26, 27, 28};
