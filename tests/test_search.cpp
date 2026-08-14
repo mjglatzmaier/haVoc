@@ -692,6 +692,22 @@ TEST_F(SearchTest, QuiescenceIsMirrorSymmetric) {
 // The same invariant over positions nobody chose by hand. Random legal play
 // reaches material and structural shapes a curated list never will, which is
 // exactly where the evaluation mirror bugs found so far have been hiding.
+//
+// This searches with the heuristics off, for the reason spelled out above
+// ExactSearchIsMirrorSymmetric: every move-count prune reads the index a move
+// happened to land on, and the move generator's square order is not itself
+// mirror-symmetric, so the *heuristic* search is not required to be symmetric
+// and asserting that it is only produces a test that fails whenever an
+// evaluation change reshuffles the ordering. It did exactly that here: the
+// mobility change that let captures count as mobility left the evaluation
+// provably symmetric over 118,908 random positions while flipping one
+// depth-1 heuristic search by 13 centipawns, purely through move order.
+//
+// With the prunes off, alpha-beta returns the exact minimax value, which does
+// not depend on move order at all -- so this is once again a statement that
+// must hold rather than one that happens to.
+static int exact_search_score(position& pos, int depth);
+
 TEST_F(SearchTest, QuiescenceIsMirrorSymmetricOverRandomPlay) {
     std::mt19937 rng(20260812u);
     int checked = 0;
@@ -718,8 +734,8 @@ TEST_F(SearchTest, QuiescenceIsMirrorSymmetricOverRandomPlay) {
             const std::string fen = pos.to_fen();
             auto original = make_pos(fen);
             auto mirrored = make_pos(havoc::testing::mirror_fen(fen));
-            const int a = search_score(original, 1);
-            const int b = search_score(mirrored, 1);
+            const int a = exact_search_score(original, 1);
+            const int b = exact_search_score(mirrored, 1);
             ++checked;
             if (a != b) {
                 ++asymmetric;
