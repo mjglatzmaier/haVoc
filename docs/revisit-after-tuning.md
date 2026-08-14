@@ -36,16 +36,29 @@ course.
   guess in the wrong one. They are strongly collinear with the rook mobility
   table -- an open file is mostly why a rook has moves -- so expect a fit to
   move all three together, and do not read either in isolation.
-- **`king_storm_rank_penalty` {12, 8, 4, 1, 0, 0}.** A new six-entry table
+- **`king_storm_rank_penalty` {6, 4, 2, 1, 0, 0}.** A new six-entry table
   replacing an ungraded count. The shape (steeply decaying with distance) is
-  the confident part; the magnitudes are not. The first attempt peaked at 32,
-  three times the largest king safety weight beside it, and measured -22 Elo
-  over 141 games as part of a two-change batch. Introducing a term far out of
-  scale with its neighbours is a large untested weight change wearing a
-  structural fix as a disguise; both tables here are now in family with what
-  surrounds them. It overlaps `king_storm_penalty`,
-  which still charges for the number of storming pawns, and both overlap the
-  shelter and king-zone open-file terms.
+  the confident part; the magnitudes are not. Three scales were measured, and
+  the sequence is the clearest illustration in this repository of why a new
+  weight has to be scaled against the *total* a term contributes rather than
+  against its own entries: the table is summed over up to three pawns, and the
+  count table it augments tops out at 4 centipawns for a full storm.
+
+  | Peak entry | Full storm | Result |
+  | --- | --- | --- |
+  | 32 | 96 | -22 Elo over 141 games (in a two-change batch) |
+  | 12 | 36 | -37 Elo over 228 games |
+  | 6 | 18 | +4.9 +/- 14 over 484 games -- merged |
+
+  At 6 the term is still four times the old value, but it reads as an
+  adjustment to the count table rather than a replacement of it, and that is
+  the difference between -37 and neutral. It is merged on the neutral-plus-
+  structural rule: an ungraded count genuinely cannot tell a pawn on the third
+  rank from one on the sixth, so the axis is worth having in the parameter set
+  even though its present weights bought nothing. It overlaps
+  `king_storm_penalty`, which still charges for the number of storming pawns,
+  and both overlap the shelter and king-zone open-file terms -- move all three
+  together under the tuner.
 - **`cont_hist1_pct` and `cont_hist2_pct`, both 100.** The two continuation
   history planes are added to the plain history score at full weight because
   that is what other engines do, not because it was measured here. Zero
