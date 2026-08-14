@@ -724,20 +724,36 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         score += bits::count(p.attackers_of2(s, c)) * params_.rook_protection_bonus;
     }
 
-    // Connected rook bonus
-    if (rookIdx >= 2) {
-        int row0 = util::row(rookSquares[0]);
-        int row1 = util::row(rookSquares[1]);
-        int col0 = util::col(rookSquares[0]);
-        int col1 = util::col(rookSquares[1]);
-
-        if ((row0 == row1) || (col0 == col1)) {
-            U64 between_bb = bitboards::between[rookSquares[0]][rookSquares[1]];
-            U64 sq_bb = bitboards::squares[rookSquares[0]] | bitboards::squares[rookSquares[1]];
-            U64 blockers = (between_bb ^ sq_bb) & ei.all_pieces;
-
-            if (blockers == 0ULL)
-                score += params_.connected_rook_bonus;
+    // Connected rook bonus.
+    //
+    // This used to look only at rookSquares[0] and rookSquares[1] -- the first
+    // two rooks the piece list happened to yield -- and ignore any others. With
+    // a promoted third rook that silently tests the wrong pair, and because the
+    // piece list is not enumerated in a mirror-symmetric order, the same
+    // position and its reflection disagreed: black rooks on a8, b8 and h3 were
+    // enumerated a8, b8, h3 and scored the bonus, while the mirrored white
+    // rooks on a1, b1 and h6 came out h6, a1, b1 and did not. That is a real
+    // one-centipawn evaluation asymmetry, and a depth-1 search magnified it to
+    // thirteen by flipping which of two near-tied moves it chose.
+    //
+    // Every pair is now tested, and the bonus is still paid at most once, so
+    // for the two-rook case that covers virtually every real position this is
+    // bit-identical to the old code.
+    for (int i = 0; i < rookIdx; ++i) {
+        bool connected = false;
+        for (int j = i + 1; j < rookIdx && !connected; ++j) {
+            const Square a = rookSquares[i], b = rookSquares[j];
+            if (util::row(a) != util::row(b) && util::col(a) != util::col(b))
+                continue;
+            // `between` is inclusive of both endpoints, so the two rook squares
+            // have to be taken back out before asking what stands in the way.
+            const U64 sq_bb = bitboards::squares[a] | bitboards::squares[b];
+            if (((bitboards::between[a][b] ^ sq_bb) & ei.all_pieces) == 0ULL)
+                connected = true;
+        }
+        if (connected) {
+            score += params_.connected_rook_bonus;
+            break;
         }
     }
 

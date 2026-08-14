@@ -68,6 +68,12 @@ const std::vector<std::string>& mirror_test_positions() {
         "r1bqkb1r/pppppppp/2n2n2/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 2 3",
         "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1N1P/PPP1BPP1/RNBQR1K1 w - - 0 8",
         "2rr2k1/pp3ppp/2n1bn2/2q1p3/8/1NP2N1P/PP3PP1/R1BQR1K1 w - - 5 14",
+        // Three rooks a side (one promoted), which is what exposed the
+        // connected-rook bonus testing only the first two entries of the piece
+        // list. The list is not enumerated in a mirror-symmetric order, so
+        // black's a8/b8 pair was found first and scored the bonus while the
+        // mirrored white a1/b1 pair came after h6 and did not.
+        "rr6/3nk3/3pP1p1/p1NP4/P1N3P1/4P1pr/8/2R2K1Q w - - 1 81",
         // Opposite-colored bishops, pieces still on
         "r2q1rk1/1p2bppp/2n2n2/3p4/3P4/2N2N2/PP2BPPP/R2Q1RK1 w - - 0 1",
         // Pure opposite-colored bishop ending
