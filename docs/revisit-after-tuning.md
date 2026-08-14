@@ -516,3 +516,93 @@ centre influence and space together are worth roughly 67 cp; king safety and
 pawn structure together are worth under 30. No reweighting fixes that, because
 the terms that should carry the difference have gradients around 0.3 cp and
 several of the scales that would amplify them cannot be moved by one unit.
+
+## What actually decides moves, and why magnitude work keeps measuring zero
+
+Three instruments were built to answer one question: why does every sweeping
+change to this evaluation measure neutral? They agree on an answer.
+
+### Texel cannot help, and the reason is structural
+
+A parameter's gradient does not depend on its current value. Zeroing
+`bishop_king_distance_penalty` took its worth from 1.94cp to 0.00 and left its
+gradient at 1.938. The tuner therefore sees an identical landscape before and
+after any reset of the defaults, its minimum has not moved, and refitting from
+better values walks straight back to the fit that measured +1.4 +/- 19.9 Elo
+over 781 games.
+
+Texel error is dominated by material, so a fit reprices material and PSTs and
+leaves everything else at one or two centipawns -- below the resolution at
+which a term can change a move. Its quiet filter also discards the 22% of
+positions where tactical terms fire, so those terms are invisible to it by
+construction. Use it for material and piece-square tables. Nothing else.
+
+### Most of the evaluation cannot change a move at all
+
+`eval_bench --decisions` generates the legal moves in a position, scores the
+children, records which move the evaluation prefers, then deletes a parameter
+and counts how often that preference changes. On 300 middlegame positions with
+mean branching 29:
+
+| family | flip% |
+|---|---|
+| `material_value` | 36.7 (~9% per live parameter) |
+| `bishop_mobility` | 20.0 |
+| `sq_score_category_scale` | 16.3 |
+| `passed_pawn_rank_bonus` | 15.0 |
+| `king_safety_category_scale` | 8.7 |
+
+**606 of 870 live parameters -- 69% -- change no decision anywhere.** Deleted
+outright, not merely scaled down, and the engine plays the identical move in
+all 300 positions.
+
+The category scales are single parameters, so zeroing one deletes a whole
+category. Removing every square score changes the move in 16% of positions;
+removing all of king safety changes it in 9%. Entire categories of chess
+knowledge are decision-relevant in fewer than one position in six, because the
+argmax over sibling positions is very nearly always settled by material.
+
+Caveat: this is static evaluation one ply from the root. Search amplifies and
+washes out static differences, so flip% is proof that a term *cannot* matter,
+not proof that a nonzero term does.
+
+### Search has not saturated, so nodes are expensive
+
+Searching 59 middlegame positions to depth 12 and recording the preferred move
+at every depth:
+
+| depth | move changed from previous ply |
+|---|---|
+| 8 | 29% |
+| 10 | 22% |
+| 11 | 22% |
+| 12 | 12% |
+
+Median settle depth 9; 39% of positions are still changing their move at depth
+10 or beyond. Every extra ply still overturns the evaluation in a fifth of
+positions.
+
+### The consequence for where to spend effort
+
+An evaluation term is taxed twice: once in generalisation, once in the depth
+its cost surrenders. The coherent reset cost +26% nodes at fixed depth, roughly
+0.33 ply. Measured both ways it is neutral:
+
+| test | games | result |
+|---|---|---|
+| fixed time 10+0.1 | 494 | +14.5 +/- 26.9 |
+| fixed depth 8 | 576 | -4.5 +/- 25.8 |
+
+Fixed depth removes the node handicap and is the clean measure of evaluation
+quality. It says the reset did not improve decisions -- consistent with the
+flip% result, since almost every one of its 59 values lives in the
+decision-dead 69%.
+
+So the answer to "richer evaluation or better search" is asymmetric rather than
+a balance. Terms that cost time must clear a very high bar. Terms that cost
+nothing are free to keep. And deleting the decision-dead majority is a pure
+win: it removes overfitting surface and returns nodes at the same time.
+
+Run `havoc_eval_bench` before proposing any evaluation change. If the term
+cannot flip a decision, it cannot buy Elo, and no amount of tuning will change
+that.
