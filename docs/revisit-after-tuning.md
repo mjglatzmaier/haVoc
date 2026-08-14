@@ -257,3 +257,18 @@ a defended outpost is worth about as much again as the outpost itself.
   These four -- `attacker_weight`, `king_danger_divisor`, `attack_combos` and
   the `pawn_king` / piece-king count tables -- should be refit together rather
   than one at a time.
+
+- **`fp_base` 100 / `fp_margin` 90 / `fp_max_depth` 6.** Forward futility
+  pruning of quiet moves. The rule is standard and was simply missing; these
+  three numbers are conventional starting points and nothing more.
+
+  At these values it barely fires -- roughly 1.4% of bench nodes -- and it
+  measured `+2.2 +/- 19.2` over 794 games, which is what a nearly inert change
+  should measure. Dropping the base to 0 and the margin to 60 cuts about 12% of
+  nodes, so the whole useful range of this rule sits below the default it
+  shipped with.
+
+  Note also that the condition reads raw `depth`, where the convention is to
+  read the LMR-reduced depth. That makes 90 per ply mean something different
+  here than it does in the engines the number was borrowed from, and is worth
+  changing before the margins are fit.

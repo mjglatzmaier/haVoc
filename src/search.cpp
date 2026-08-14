@@ -832,6 +832,32 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             (to_mv == white ? util::row(move.f) >= Row::r6 : util::row(move.f) <= Row::r3);
         auto dangerousQuietCheck = isQuiet && pos.quiet_gives_dangerous_check(move);
 
+        // Futility pruning of quiet moves. If the static eval is so far below
+        // alpha that even a generous allowance for what a quiet move can be
+        // worth leaves it short, searching the rest of the quiets is unlikely
+        // to raise alpha.
+        //
+        // The engine had the two *conditional* forms of this rule -- history
+        // pruning, which needs a move with bad history, and move-count
+        // pruning, which needs a high move index -- but not the plain
+        // eval-based one, so a node 400cp behind at depth 2 still searched
+        // every quiet with neutral history in the first few slots.
+        //
+        // skipQuiets is set rather than just skipping this move: the margin
+        // does not depend on the move, so if it rejects one quiet it rejects
+        // all of them, and telling the picker stops it generating and scoring
+        // the rest. Excluded are moves that are not really quiet in the sense
+        // this rule assumes -- checks, advanced pawn pushes -- along with the
+        // hash move and killers, and the whole rule is off while in check,
+        // where every legal move is an evasion.
+        if (!pvNode && !in_check && hasStaticValue && isQuiet && !hashOrKiller &&
+            !dangerousQuietCheck && !advancedPawnPush && depth <= params_.fp_max_depth &&
+            bestScore > score::kMatedMaxPly &&
+            static_eval_val + params_.fp_base + params_.fp_margin * depth <= alpha) {
+            skipQuiets = true;
+            continue;
+        }
+
         // History pruning: skip quiet moves with terrible history at shallow depths
         if (!pvNode && !in_check && depth <= params_.history_prune_depth && !hashOrKiller &&
             isQuiet && bestScore > score::kMatedMaxPly) {
