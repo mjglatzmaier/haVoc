@@ -30,24 +30,24 @@ echo "--- Generating training data ($GAMES games at depth $DEPTH) ---"
 "$DATAGEN" --games "$GAMES" --depth "$DEPTH" --threads "$THREADS" --output "$DATA_FILE"
 echo ""
 
-# ── Step 3: Run staged Texel tuning ──────────────────────────────────────────
-# The category scales and the individual weights they multiply are fitted in
-# separate stages on purpose: fitting them together leaves an exact flat
-# direction in the loss. That means stage 2 changes the shapes underneath the
-# scales chosen in stage 1, so stage 1 is refitted afterwards.
-echo "--- Stage 1: category scales (coarse) ---"
-"$TUNER" --data "$DATA_FILE" --output "$PARAMS_FILE" --stage 1 \
-         --iterations "$ITERATIONS" --threads "$THREADS" --max-step 32
-echo ""
-
-echo "--- Stage 2: individual weights and curve shapes ---"
-"$TUNER" --data "$DATA_FILE" --params "$PARAMS_FILE" --output "$PARAMS_FILE" --stage 2 \
-         --iterations "$ITERATIONS" --threads "$THREADS" --max-step 24
-echo ""
-
-echo "--- Stage 1 refit: category scales against the new shapes ---"
-"$TUNER" --data "$DATA_FILE" --params "$PARAMS_FILE" --output "$PARAMS_FILE" --stage 1 \
-         --iterations "$ITERATIONS" --threads "$THREADS" --max-step 24
+# ── Step 3: Run Texel tuning ─────────────────────────────────────────────────
+# One pass over every evaluation parameter, not a ladder of stages.
+#
+# The stages existed to serve a gradient optimiser, which could not cope with
+# fitting a category scale alongside the weights it multiplies -- that pair is
+# an exact flat direction in the loss. Coordinate descent has no such problem,
+# because it moves one parameter at a time and a single-coordinate move always
+# leaves the flat manifold. Staging then became actively harmful: judging a
+# category scale against its group's *default* shapes let stage 1 crush a scale
+# to 11, and stage 2 had to inflate the weights ninefold to compensate, leaving
+# the fit working below its own resolution.
+#
+# Measured on a disjoint train/validation split of 200k CCRL positions each,
+# three sweeps took held-out error from 0.114473 to 0.108037, beating the full
+# three-stage ladder's 0.109317 training error on five times the data.
+echo "--- Fitting every evaluation parameter ---"
+"$TUNER" --data "$DATA_FILE" --output "$PARAMS_FILE" --stage 0 \
+         --iterations "$ITERATIONS" --threads "$THREADS"
 echo ""
 
 # ── Step 4: Stop ─────────────────────────────────────────────────────────────
@@ -63,10 +63,17 @@ echo "=== Fit complete ==="
 echo "Tuned parameters written to: $PARAMS_FILE"
 echo ""
 echo "This has NOT been baked into the source tree, and should not be until it"
-echo "has won a match. To evaluate it:"
+echo "has won a match. The fit can be measured without touching the source at"
+echo "all, because the engine accepts it at runtime:"
+echo ""
+echo "  cutechess-cli -engine cmd=./build/havoc option.ParamFile=$PARAMS_FILE \\"
+echo "                -engine cmd=./build/havoc ..."
+echo ""
+echo "Both sides are then the same binary and the fit is the only difference."
+echo "Once it has won, make it the default:"
 echo ""
 echo "  1. python3 scripts/bake_params.py $PARAMS_FILE"
 echo "  2. cmake --build $BUILD_DIR --parallel"
-echo "  3. SPRT the resulting binary against the current one"
+echo "  3. confirm the rebuilt binary matches the one that won the match"
 echo ""
 echo "Revert the bake if the match does not support it."

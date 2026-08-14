@@ -75,6 +75,7 @@ public:
     int num_threads = 1;
     bool quiet_filter = true;
     double max_step_override = 0.0;
+    bool tune_all = false;
 
     bool load_data(const std::string& filename) {
         // is_quiet_position() filters the training set with static exchange
@@ -189,10 +190,45 @@ public:
                   << "-------------------------------" << std::endl;
     }
 
+    /// The parameter set to fit.
+    ///
+    /// Staging existed to serve the finite-difference gradient optimiser that
+    /// used to live here. That method could not cope with the exact flat
+    /// direction created by fitting a category scale alongside the weights it
+    /// multiplies, so the parameters were split across stages to break the
+    /// collinearity by hand. Coordinate descent does not have that problem:
+    /// it moves one parameter at a time and keeps the move only if the error
+    /// on the full dataset falls, and a single-coordinate move always leaves
+    /// the flat manifold, so the accept test is never degenerate.
+    ///
+    /// Staging now costs more than it buys. Fitting a category scale against
+    /// the *default* shapes of its group, before those shapes are fitted, lets
+    /// stage 1 conclude a category is worthless and crush its scale; the later
+    /// stage then has to inflate the weights to compensate. That is how
+    /// pawn_structure_category_scale ended at 11 with its weights ~9x too
+    /// large, which put the fit below its own resolution (a 1-unit weight
+    /// change moved the eval by 0.11cp) and is the likely source of the
+    /// endgame sign flips. A single sweep over everything cannot produce that
+    /// corner, because the scale and its weights move in the same sweep.
+    ///
+    /// Search parameters are excluded deliberately. The objective is a static
+    /// evaluation of a fixed position set and never invokes search, so every
+    /// search constant has an identically zero gradient; including them only
+    /// spends two error evaluations per parameter per sweep to confirm it.
+    std::vector<std::pair<std::string, int*>> collect_tunable(TuneStage stage) {
+        if (!tune_all) return params.all_params(stage);
+        auto result = params.all_params(TuneStage::category);
+        for (auto st : {TuneStage::fine, TuneStage::pst}) {
+            auto s = params.all_params(st);
+            result.insert(result.end(), s.begin(), s.end());
+        }
+        return result;
+    }
+
     void optimize(int iters, TuneStage stage, const std::string& ckpt) {
         double K = find_optimal_K();
         diagnose(K);
-        auto tunable = params.all_params(stage);
+        auto tunable = collect_tunable(stage);
         const size_t NP = tunable.size();
         // Each parameter starts with the same step and adapts from there, so
         // the only thing a stage needs to declare is the first step to try.
@@ -224,7 +260,9 @@ public:
         for (size_t i = 0; i < NP; ++i) shadow[i] = *tunable[i].second;
 
         double cur_err = compute_error(K);
-        std::cout << "\nStage " << (int)stage+1 << " | Error: " << cur_err
+        std::cout << "\nStage " << (tune_all ? std::string("all-eval")
+                                             : std::to_string((int)stage+1))
+                  << " | Error: " << cur_err
                   << " | Params: " << NP << " | Max step: " << max_step
                   << " | Threads: " << num_threads << std::endl;
 
@@ -323,8 +361,9 @@ int main(int argc, char* argv[]) {
         else if ((k=="--max-step"||k=="--lr") && i+1<argc) lr_ov = std::stod(argv[++i]);
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
-                      << "[--iterations N] [--stage 1|2|3|4] [--K val] [--threads N] "
-                      << "[--no-quiet-filter] [--max-step F]\n"; return 0;
+                      << "[--iterations N] [--stage 0|1|2|3|4] [--K val] [--threads N] "
+                      << "[--no-quiet-filter] [--max-step F]\n"
+                      << "  --stage 0 fits every evaluation parameter in one pass\n"; return 0;
         }
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine
@@ -332,6 +371,7 @@ int main(int argc, char* argv[]) {
     bitboards::init(); magics::init(); zobrist::init(); kpk::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
     tuner.max_step_override = lr_ov;
+    tuner.tune_all = (stg == 0);
     if (!pfile.empty() && tuner.params.load(pfile))
         std::cout << "Loaded params from " << pfile << std::endl;
     if (!tuner.load_data(data)) { std::cerr << "Failed to load " << data << std::endl; return 1; }
