@@ -361,6 +361,21 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
                                           params_.passed_pawn_endgame_scale)) /
              100;
 
+    // The three totals the piece, king and pawn terms deliberately kept out of
+    // their own running score, each folded in under the category scale that
+    // actually describes it. King placement is positional, so it joins the
+    // piece-square bucket; a pawn attacking the enemy king ring is king
+    // pressure, so it joins king safety; mobility already carries its own
+    // scale and its own endgame taper, so it is added unscaled rather than
+    // being multiplied a second time by the piece-square scale.
+    const int king_placement = ei.king_placement[white] - ei.king_placement[black];
+    const int king_pressure = ei.king_pressure[white] - ei.king_pressure[black];
+    const int mobility_score = ei.mobility[white] - ei.mobility[black];
+
+    score += (king_placement * params_.sq_score_category_scale) / 100;
+    score += (king_pressure * params_.king_safety_category_scale) / 100;
+    score += mobility_score;
+
     int threat_score = eval_threats<white>(p, ei) - eval_threats<black>(p, ei);
     int space_score = eval_space<white>(p, ei) - eval_space<black>(p, ei);
 
@@ -429,7 +444,7 @@ template <Color c> int HCEEvaluator::eval_pawns(const position& p, einfo& ei) {
     if (kAttkCount) {
         ei.kattackers[c][pawn]++;
         ei.kattk_points[c][pawn] |= kattks;
-        score += params_.pawn_king[std::min(2, kAttkCount)];
+        ei.king_pressure[c] += params_.pawn_king[std::min(2, kAttkCount)];
     }
 
     // Pawn chain bases / undefended enemy pawns
@@ -462,9 +477,12 @@ template <Color c> int HCEEvaluator::eval_knights(const position& p, einfo& ei) 
             int mob = (cnt < params_.knight_mobility_table.size())
                           ? params_.knight_mobility_table[cnt]
                           : params_.knight_mobility_table.back();
-            score += ((params_.knight_mobility_scale * params_.mobility_scaling[knight] * mob) /
-                      100) *
-                     ei.me->taper(params_.mobility_category_scale, params_.mobility_endgame_scale) / 100;
+            ei.mobility[c] += ((params_.knight_mobility_scale *
+                                params_.mobility_scaling[knight] * mob) /
+                               100) *
+                              ei.me->taper(params_.mobility_category_scale,
+                                           params_.mobility_endgame_scale) /
+                              100;
         }
 
         // Outpost. A knight on a hole is good; one a friendly pawn also
@@ -572,7 +590,7 @@ template <Color c> int HCEEvaluator::eval_bishops(const position& p, einfo& ei) 
         if ((sq_bb & p.pinned<c>()) && mobility_score > 0)
             mobility_score /= params_.pinned_scaling[bishop];
 
-        score += mobility_score;
+        ei.mobility[c] += mobility_score;
 
         // King distance
         score -= std::max(util::row_dist(s, ks), util::col_dist(s, ks)) *
@@ -693,7 +711,7 @@ template <Color c> int HCEEvaluator::eval_rooks(const position& p, einfo& ei) {
         if (sq_bb & p.pinned<c>())
             mobility_score /= params_.pinned_scaling[rook];
 
-        score += mobility_score;
+        ei.mobility[c] += mobility_score;
 
         // Trapped rook. Blended by phase for the same reason as the bishop
         // penalty above: index 1 of trapped_rook_penalty was reachable only in
@@ -817,7 +835,7 @@ template <Color c> int HCEEvaluator::eval_queens(const position& p, einfo& ei) {
             if (bitboards::squares[s] & p.pinned<c>())
                 mobility_score /= params_.pinned_scaling[queen];
 
-            score += mobility_score;
+            ei.mobility[c] += mobility_score;
         }
 
         // Weak queen penalty
@@ -866,8 +884,8 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
         // king logic -- KPK through the bitbase, KRK, KBNK -- do so by adding
         // to this score, and the endgame king table already wants the king
         // centralised, so there is nothing here to double count.
-        score += params_.sq_score_scaling[king] *
-                 square_score<c>(params_, king, s, ei.me->phase_interpolant);
+        ei.king_placement[c] += params_.sq_score_scaling[king] *
+                                square_score<c>(params_, king, s, ei.me->phase_interpolant);
 
         // Mobility
         U64 mvs = ei.kmask[c] & ei.empty;

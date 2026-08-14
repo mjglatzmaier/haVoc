@@ -34,6 +34,32 @@ struct einfo {
     U64 light_sq_pawns[2]{};
     U64 dark_sq_pawns[2]{};
     unsigned kattackers[2][5]{};
+    /// Three running totals that are collected inside the piece, king and pawn
+    /// terms but must not be scaled by the category factor those terms sit
+    /// under. Each category scale is supposed to control one coherent idea,
+    /// and without these it does not:
+    ///
+    ///   mobility already carries mobility_category_scale, applied inside each
+    ///   piece function. Leaving it inside the piece total multiplied it by
+    ///   sq_score_category_scale as well, so the two scales compounded and the
+    ///   tuner could trade one against the other along a flat direction
+    ///   instead of fitting either.
+    ///
+    ///   king_placement is the king piece-square score, which is positional
+    ///   king activity, not danger. Inside the king total it was scaled by
+    ///   king_safety_category_scale, so raising king safety silently pulled
+    ///   the king towards or away from the centre.
+    ///
+    ///   king_pressure is a pawn attacking the enemy king ring. It is
+    ///   collected in the pawn term and so was scaled by
+    ///   pawn_structure_category_scale, which is a scale for weak pawns.
+    ///
+    /// All three are exact no-ops at the default scales of 100, since integer
+    /// (x * 100) / 100 is x. They change what the scales mean, not what the
+    /// evaluation currently returns.
+    int mobility[2]{};
+    int king_placement[2]{};
+    int king_pressure[2]{};
 };
 
 /// Hand-Crafted Evaluation function.

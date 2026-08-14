@@ -190,8 +190,13 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
             result.emplace_back("passed_pawn_blocked_penalty_" + std::to_string(i),
                                 &passed_pawn_blocked_penalty[i]);
 
-        // Attacker weights
-        for (size_t i = 0; i < attacker_weight.size(); ++i)
+        // Attacker weights. Index 0 is the pawn slot and is deliberately not
+        // registered: the king-danger sum in eval_king runs from knight to
+        // queen, so the entry is read by nothing and a tuner given it would
+        // spend two passes over the training set per iteration computing a
+        // gradient that is identically zero. The element itself stays so the
+        // array remains indexable by piece type.
+        for (size_t i = 1; i < attacker_weight.size(); ++i)
             result.emplace_back("attacker_weight_" + std::to_string(i), &attacker_weight[i]);
 
         // King shelter
@@ -240,8 +245,6 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
 
         result.emplace_back("bishop_own_pawn_penalty_mg", &bishop_own_pawn_penalty_mg);
         result.emplace_back("bishop_own_pawn_penalty_eg", &bishop_own_pawn_penalty_eg);
-
-        result.emplace_back("uncastled_penalty", &uncastled_penalty);
 
         // King harassment tables, the threat tables and the piece-pair combo
         // matrix. All of these were static constexpr until now, which put the
