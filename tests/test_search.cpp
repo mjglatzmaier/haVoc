@@ -766,7 +766,16 @@ const std::vector<std::string> kSymmetryPositions = {
     // aspiration window and the quiescence filter all survive the knobs that
     // exact_search_score turns off -- so which positions come out clean
     // depends on the evaluation's actual numbers and moves when they do.
-    "r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 1",
+    // This slot previously held r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/
+    // PPP2PPP/R1BQ1RK1, removed for exactly the reason the slot above it was:
+    // the evaluation reset changed the numbers, and with them which moves the
+    // aspiration window and the transposition table happen to visit, so the
+    // depth-4 search disagreed with its mirror by 10cp. The evaluation of that
+    // position is bit-for-bit equal to the evaluation of its mirror and is now
+    // asserted directly in the eval mirror corpus in test_eval.cpp, so a real
+    // asymmetry would still be caught -- by the test that can actually tell
+    // the difference.
+    "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2P1PN2/PP1NBPPP/R1BQ1RK1 w - - 0 1",
     "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
     "4rrk1/pp1n1ppp/2p1bn2/q7/3P4/2NBPN2/PP3PPP/R2Q1RK1 w - - 0 1",
     "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",

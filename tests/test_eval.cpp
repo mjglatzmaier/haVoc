@@ -61,6 +61,13 @@ const std::vector<std::string>& mirror_test_positions() {
         // it turns off. Keeping the FEN here means that if a real asymmetry is
         // ever introduced, this test catches it rather than the search one.
         "2rq1rk1/pp1bppbp/3p1np1/8/3NP3/1BN1BP2/PPPQ2PP/2KR3R w - - 0 1",
+        // The second position re-curated out of ExactSearchIsMirrorSymmetric,
+        // for the same documented reason and after the same check: the
+        // evaluation of this position is bit-for-bit equal to the evaluation
+        // of its mirror, which is what this test asserts, while the depth-4
+        // search disagreed by 10cp once the evaluation reset changed which
+        // moves the aspiration window and the table happen to visit.
+        "r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
         "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
         "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",

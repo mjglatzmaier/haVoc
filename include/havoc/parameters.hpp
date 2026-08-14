@@ -42,7 +42,7 @@ struct parameters {
     int passed_pawn_endgame_scale = 150;
     int pawn_structure_category_scale = 100;
     int space_category_scale = 100;
-    int king_danger_divisor = 256;
+    int king_danger_divisor = 64;
 
     /// Percentage of the king danger terms -- safe checks, the quadratic
     /// attacker score and the attack combinations -- that survives at the
@@ -135,26 +135,26 @@ struct parameters {
     std::vector<int> pinned_scaling{1, 1, 2, 3, 4};
 
     // Minor piece bonuses
-    std::vector<int> knight_outpost_bonus{0, 1, 2, 3, 3, 2, 1, 0};
-    std::vector<int> bishop_outpost_bonus{0, 0, 1, 2, 2, 1, 0, 0};
+    std::vector<int> knight_outpost_bonus{0, 4, 10, 16, 16, 10, 4, 0};
+    std::vector<int> bishop_outpost_bonus{0, 0, 5, 9, 9, 5, 0, 0};
     /// Extra for an outpost a friendly pawn defends, indexed by Piece. Only the
     /// knight and bishop entries are read; the rest are zero and unregistered.
     /// A defended outpost cannot be challenged by a pawn or driven off cheaply,
     /// which is the difference between an outpost and a square a piece happens
     /// to be standing on.
-    std::vector<int> outpost_defended_bonus{0, 4, 3, 0, 0, 0};
-    std::vector<int> center_influence_bonus{0, 1, 1, 1, 1, 0};
+    std::vector<int> outpost_defended_bonus{0, 10, 7, 0, 0, 0};
+    std::vector<int> center_influence_bonus{0, 0, 0, 0, 0, 0};
 
     // King harassment tables: bonus for attacking N squares of the enemy king
     // ring, indexed by that count. Together with attack_combos these are the
     // whole of the king attack weighting, and every one of them used to be
     // static constexpr -- so the single largest group of king-safety weights
     // in the evaluation was the one group the tuner could not reach.
-    std::array<int, 3> pawn_king = {1, 2, 3};
-    std::array<int, 3> knight_king = {1, 2, 3};
-    std::array<int, 3> bishop_king = {1, 2, 3};
-    std::array<int, 5> rook_king = {1, 2, 3, 3, 4};
-    std::array<int, 7> queen_king = {1, 3, 3, 4, 4, 5, 6};
+    std::array<int, 3> pawn_king = {0, 0, 0};
+    std::array<int, 3> knight_king = {0, 0, 0};
+    std::array<int, 3> bishop_king = {0, 0, 0};
+    std::array<int, 5> rook_king = {0, 0, 0, 0, 0};
+    std::array<int, 7> queen_king = {0, 0, 0, 0, 0, 0, 0};
 
     /// Extra danger when two different piece types attack the king zone
     /// together, indexed by the two piece types. Row/column order is
@@ -174,20 +174,20 @@ struct parameters {
     // hence the larger endgame figure. These were hard-coded 1 and 3 in
     // eval_bishops and are exposed here so the tuner can reach them and so
     // EveryTunableParameterReachesTheEvaluation keeps them connected.
-    int bishop_own_pawn_penalty_mg = 1;
-    int bishop_own_pawn_penalty_eg = 3;
+    int bishop_own_pawn_penalty_mg = 3;
+    int bishop_own_pawn_penalty_eg = 6;
 
     /// Shelter bonus by the number of own pawns in the king's zone, capped at
     /// three. These used to be halved at the point of use, which truncated:
     /// -3 and -2 both became -1, so two distinct parameter values produced an
     /// identical evaluation and the tuner had no gradient between them. The
     /// halving is gone and these are the values it produced.
-    std::vector<int> king_shelter{-1, -1, 1, 1}; // 0,1,2,3 pawns
+    std::vector<int> king_shelter{-22, -10, 0, 6}; // 0,1,2,3 pawns
     /// Charged when the king's flank holds no friendly pawn at all.
-    int pawnless_flank_penalty = 2;
+    int pawnless_flank_penalty = 12;
     /// Charged by the number of enemy pawns bearing down on the king's side of
     /// the board, capped at three.
-    std::vector<int> king_storm_penalty{0, 0, 2, 4};
+    std::vector<int> king_storm_penalty{0, 0, 4, 8};
 
     /// Per-pawn storm penalty, indexed by how many ranks in front of the king
     /// the storming pawn stands, minus one -- so entry 0 is a pawn on the very
@@ -203,18 +203,18 @@ struct parameters {
     /// storm is worth 18 plus the count term, which is still four times the old
     /// value but is an adjustment to it rather than a replacement of it.
     std::vector<int> king_storm_rank_penalty{6, 4, 2, 1, 0, 0};
-    std::vector<int> king_safe_sqs{-4, -2, -1, 0, 0, 1, 2, 4};
+    std::vector<int> king_safe_sqs{-12, -6, -3, 0, 0, 2, 4, 6};
 
     /// Danger per square from which an enemy piece could give check without
     /// being recaptured, indexed by the checking piece. Index 0 (pawn) is
     /// unused: a pawn check is never the threat that matters here.
-    std::vector<int> safe_check_weight{0, 6, 5, 8, 12};
+    std::vector<int> safe_check_weight{0, 15, 12, 20, 25};
     // Files beside the king with no pawn cover. A file with none of our own
     // pawns is a highway for enemy heavy pieces; one with no pawns at all is
     // worse still.
-    int king_semiopen_file_penalty = 5;
-    int king_open_file_penalty = 9;
-    int king_open_file_heavy_penalty = 4;
+    int king_semiopen_file_penalty = 12;
+    int king_open_file_penalty = 20;
+    int king_open_file_heavy_penalty = 10;
 
     /// eval_threats weights. Every one of these was a bare literal in the
     /// evaluation, so none of them could be tuned. The defaults reproduce the
@@ -223,11 +223,11 @@ struct parameters {
     /// that no entry is structurally unreachable.
     int threat_by_pawn = 1;
     std::vector<int> threat_weak_pawn{1, 1, 1, 1};
-    int queen_pin_minor = 6;
-    int queen_pin_rook = 18;
+    int queen_pin_minor = 15;
+    int queen_pin_rook = 25;
     int discovered_check_bonus = 10;
-    int restriction_weight = 1;
-    std::vector<int> skewer_bonus{4, 6, 8}; // minor, rook, queen skewered
+    int restriction_weight = 0;
+    std::vector<int> skewer_bonus{15, 25, 40}; // minor, rook, queen skewered
     /// Per-piece evaluation weights that were bare literals. Every one of
     /// these fires in ordinary middlegame positions -- protection counts, king
     /// distance, x-rays -- so unlike the endgame constants they carry real
@@ -241,29 +241,29 @@ struct parameters {
     /// reach the odd multiples the truncation used to swallow.
     int pawn_attacks_undefended = 1;
     int knight_edge_penalty = 12;
-    int knight_king_distance_penalty = 1;
+    int knight_king_distance_penalty = 0;
     int knight_behind_pawn_bonus = 12;
-    int knight_protection_bonus = 1;
-    int bishop_xray_bonus = 1;
-    int bishop_king_distance_penalty = 1;
+    int knight_protection_bonus = 0;
+    int bishop_xray_bonus = 4;
+    int bishop_king_distance_penalty = 0;
     int bishop_behind_pawn_bonus = 12;
-    int bishop_protection_bonus = 1;
-    int rook_xray_bonus = 1;
-    int rook_protection_bonus = 1;
-    int weak_queen_penalty = 1;
-    int space_bonus = 1;
-    int connected_rook_bonus = 1;
-    int doubled_bishop_bonus = 4;
+    int bishop_protection_bonus = 0;
+    int rook_xray_bonus = 5;
+    int rook_protection_bonus = 0;
+    int weak_queen_penalty = 15;
+    int space_bonus = 2;
+    int connected_rook_bonus = 8;
+    int doubled_bishop_bonus = 30;
     /// Rook on a file with no pawn of its own in front of it. `open` means no
     /// pawns of either colour, `semiopen` means only the enemy's -- the second
     /// case was not scored at all, and the first was worth one centipawn.
-    int open_file_bonus = 6;
-    int semiopen_file_bonus = 3;
+    int open_file_bonus = 18;
+    int semiopen_file_bonus = 8;
     /// Applied with a positive sign to a knight and a negative one to a bishop
     /// when the centre is locked, so the name describes the bishop's side of
     /// the trade only. A knight gains what the bishop loses.
-    int bishop_open_center_bonus = 1;
-    int rook_7th_bonus = 2;
+    int bishop_open_center_bonus = 8;
+    int rook_7th_bonus = 8;
 
 
     // Pawn structure
@@ -280,17 +280,17 @@ struct parameters {
     // at -85 +/- 35 Elo over 274 games, LLR -2.96, H0 accepted. The parameters
     // exist so Texel can fit the endgame endpoints from data; guessing them by
     // hand is what failed.
-    int doubled_pawn_penalty_mg = 4;
-    int doubled_pawn_penalty_eg = 4;
-    int backward_pawn_penalty_mg = 1;
-    int backward_pawn_penalty_eg = 1;
-    int isolated_pawn_penalty_mg = 4;
-    int isolated_pawn_penalty_eg = 4;
+    int doubled_pawn_penalty_mg = 10;
+    int doubled_pawn_penalty_eg = 20;
+    int backward_pawn_penalty_mg = 9;
+    int backward_pawn_penalty_eg = 12;
+    int isolated_pawn_penalty_mg = 12;
+    int isolated_pawn_penalty_eg = 18;
     /// A pawn no friendly pawn defends. This was a bare `score -= 1` applied
     /// identically to both accumulators, so it could neither be tuned nor
     /// tapered.
-    int undefended_pawn_penalty_mg = 1;
-    int undefended_pawn_penalty_eg = 1;
+    int undefended_pawn_penalty_mg = 3;
+    int undefended_pawn_penalty_eg = 6;
     /// The extra charge for a weak pawn standing on a file the enemy has no
     /// pawn on, where it cannot be defended by a pawn and is exposed to the
     /// heavy pieces. Each of these was `2 * ` the corresponding base penalty,
@@ -298,17 +298,17 @@ struct parameters {
     /// to fit it at all: the whole term moved only when the base penalty
     /// moved. The defaults reproduce the doubling, so nothing changes until a
     /// fit says otherwise.
-    int backward_pawn_semiopen_mg = 2;
-    int backward_pawn_semiopen_eg = 2;
-    int isolated_pawn_semiopen_mg = 8;
-    int isolated_pawn_semiopen_eg = 8;
-    int doubled_pawn_semiopen_mg = 8;
+    int backward_pawn_semiopen_mg = 6;
+    int backward_pawn_semiopen_eg = 8;
+    int isolated_pawn_semiopen_mg = 6;
+    int isolated_pawn_semiopen_eg = 10;
+    int doubled_pawn_semiopen_mg = 5;
     int doubled_pawn_semiopen_eg = 8;
     /// A doubled pawn that is also isolated -- no neighbour on either side and
     /// a friend stacked in front of it. Also frozen at double the plain
     /// doubled penalty.
-    int doubled_isolated_penalty_mg = 8;
-    int doubled_isolated_penalty_eg = 8;
+    int doubled_isolated_penalty_mg = 16;
+    int doubled_isolated_penalty_eg = 28;
 
     // Connected pawns, indexed by the pawn's rank relative to its own side.
     // Until these were added the pawn evaluation was made entirely of
@@ -332,10 +332,10 @@ struct parameters {
     // other pawn term and would simply have overridden them. Measured: at the
     // conventional scale the term was worth -12.6 +/- 22.9 Elo over 581 games.
     // The shape is unchanged; only the scale is haVoc's.
-    std::array<int, 8> phalanx_pawn_mg = {0, 0, 1, 1, 2, 4, 6, 0};
-    std::array<int, 8> phalanx_pawn_eg = {0, 1, 1, 2, 3, 6, 10, 0};
-    std::array<int, 8> supported_pawn_mg = {0, 0, 1, 1, 2, 3, 4, 0};
-    std::array<int, 8> supported_pawn_eg = {0, 1, 1, 1, 2, 4, 6, 0};
+    std::array<int, 8> phalanx_pawn_mg = {0, 0, 3, 4, 8, 16, 28, 0};
+    std::array<int, 8> phalanx_pawn_eg = {0, 2, 4, 6, 12, 24, 44, 0};
+    std::array<int, 8> supported_pawn_mg = {0, 0, 4, 5, 7, 12, 18, 0};
+    std::array<int, 8> supported_pawn_eg = {0, 3, 5, 6, 9, 16, 24, 0};
 
     // Material values
     std::array<int, 6> material_value = {100, 300, 315, 480, 910, 20000};
