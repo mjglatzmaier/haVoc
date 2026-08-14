@@ -74,7 +74,7 @@ public:
     double cached_K = 0.0;
     int num_threads = 1;
     bool quiet_filter = true;
-    double lr_override = 0.0;
+    double max_step_override = 0.0;
     int pert_override = 0;
 
     bool load_data(const std::string& filename) {
@@ -195,38 +195,56 @@ public:
         diagnose(K);
         auto tunable = params.all_params(stage);
         const size_t NP = tunable.size();
-        double lr, lr_decay, mom; int pert;
-        switch (stage) {
-        case TuneStage::category: lr=8; pert=2; lr_decay=0.7; mom=0.5; break;
-        case TuneStage::shape:    lr=3; pert=1; lr_decay=0.85; mom=0.7; break;
-        case TuneStage::fine:     lr=1.5; pert=1; lr_decay=0.9; mom=0.8; break;
-        case TuneStage::pst:      lr=3; pert=2; lr_decay=0.92; mom=0.7; break;
-        }
-        // Large-magnitude parameters (material values run into the hundreds)
-        // produce tiny gradients under a perturbation of 1, and the integer
-        // step can round to zero for every one of them -- which presents as
-        // instant convergence. Allow both to be overridden so that case can be
-        // driven out rather than guessed at.
-        if (lr_override > 0) lr = lr_override;
+        // The step size is chosen by the line search below rather than by a
+        // schedule, so the only thing a stage needs to declare is how far to
+        // perturb a parameter when measuring its gradient. max_step is just
+        // the largest first guess the line search is allowed to try.
+        int pert = (stage == TuneStage::category || stage == TuneStage::pst) ? 2 : 1;
+        double max_step = max_step_override > 0 ? max_step_override : 16.0;
         if (pert_override > 0) pert = pert_override;
         struct Bounds { int lo, hi; };
         auto bounds = [](const std::string& n) -> Bounds {
-            if (n.find("category_scale") != std::string::npos) return {10, 200};
-            if (n.find("mobility_scale") != std::string::npos) return {10, 200};
+            // These exist to keep a scale from going negative (which would
+            // invert the sign of a whole category) or running away, not to
+            // encode an opinion about the answer. The previous [10, 200] cap
+            // did encode one, and it was binding: fits on two different
+            // datasets sat on it, with pawn_structure_category_scale pinned
+            // to the 10 floor on both, threat_category_scale on the 200
+            // ceiling, and king_safety_category_scale at 199. Four of eleven
+            // stage-1 parameters were resting against a cap, so the reported
+            // fit was a property of the box rather than of the data. Zero is
+            // allowed deliberately: "this category is worthless as shaped" is
+            // a legitimate thing for the data to say.
+            if (n.find("category_scale") != std::string::npos) return {0, 800};
+            if (n.find("mobility_scale") != std::string::npos) return {0, 800};
             if (n == "king_danger_divisor") return {64, 1024};
             if (n.find("material_value") != std::string::npos) return {10, 30000};
-            if (n.find("_scale") != std::string::npos) return {1, 256};
+            if (n.find("_scale") != std::string::npos) return {0, 800};
             return {-500, 500};
         };
-        std::vector<double> vel(NP, 0.0);
+        // The parameters are ints, but the optimiser needs to accumulate steps
+        // smaller than one centipawn, so the real state is kept in doubles and
+        // rounded only when it is written back into the evaluation.
+        std::vector<double> shadow(NP);
+        for (size_t i = 0; i < NP; ++i) shadow[i] = *tunable[i].second;
+
+        auto apply = [&](const std::vector<double>& v) {
+            for (size_t i = 0; i < NP; ++i) {
+                auto b = bounds(tunable[i].first);
+                long nv = std::lround(v[i]);
+                *tunable[i].second = (int)std::max((long)b.lo, std::min((long)b.hi, nv));
+            }
+        };
+
         double cur_err = compute_error(K);
         std::cout << "\nStage " << (int)stage+1 << " | Error: " << cur_err
-                  << " | Params: " << NP << " | LR: " << lr
+                  << " | Params: " << NP << " | Max step: " << max_step
                   << " | Threads: " << num_threads << std::endl;
 
+        std::vector<double> cand(NP);
         for (int it = 0; it < iters; ++it) {
             auto t0 = std::chrono::steady_clock::now();
-            std::cout << "\n=== Iteration " << it+1 << " (lr=" << lr << ") ===" << std::endl;
+            std::cout << "\n=== Iteration " << it+1 << " ===" << std::endl;
             std::vector<double> grad(NP, 0);
             std::vector<int> orig(NP);
             for (size_t i = 0; i < NP; ++i) orig[i] = *tunable[i].second;
@@ -242,36 +260,49 @@ public:
             }
             if (NP > 20) std::cout << "  gradient: " << NP << "/" << NP << "    " << std::endl;
 
-            int updated = 0;
-            for (size_t i = 0; i < NP; ++i) {
-                vel[i] = mom * vel[i] + (1 - mom) * grad[i];
-                int delta = (int)(-lr * vel[i] * 1e6);
-                int ms = (stage == TuneStage::category) ? 20 : 8;
-                delta = std::max(-ms, std::min(ms, delta));
-                if (delta != 0) {
-                    int nv = orig[i] + delta;
-                    auto b = bounds(tunable[i].first);
-                    nv = std::max(b.lo, std::min(b.hi, nv));
-                    if (nv != orig[i]) {
-                        *tunable[i].second = nv;
-                        ++updated;
-                        std::cout << "  " << tunable[i].first << ": " << orig[i] << " -> " << nv
-                                  << " (g:" << grad[i] << " v:" << vel[i] << ")" << std::endl;
-                    }
+            // Scale the direction so the most strongly pushed parameter moves
+            // by max_step, then backtrack until the step actually reduces the
+            // error. The previous code multiplied the gradient by a fixed 1e6,
+            // clamped every coordinate to +/-8 and threw the gradient away if
+            // the result was worse. With gradients around 1e-4 that clamp was
+            // active for essentially every parameter, so each iteration moved
+            // all ~300 of them by the full 8 centipawns at once -- a step of
+            // norm 8*sqrt(300) -- which always overshot, always reverted, and
+            // halved a learning rate that needed eight halvings before it
+            // could matter. It reported "Converged!" without having moved.
+            double gmax = 0.0;
+            for (size_t i = 0; i < NP; ++i) gmax = std::max(gmax, std::abs(grad[i]));
+            if (gmax <= 0.0) { std::cout << "Zero gradient everywhere." << std::endl; break; }
+
+            double step = max_step;
+            bool accepted = false;
+            for (int ls = 0; ls < 12 && !accepted; ++ls) {
+                for (size_t i = 0; i < NP; ++i) cand[i] = shadow[i] - step * grad[i] / gmax;
+                apply(cand);
+                double e = compute_error(K);
+                if (e < cur_err) {
+                    int moved = 0;
+                    for (size_t i = 0; i < NP; ++i)
+                        if (*tunable[i].second != orig[i]) ++moved;
+                    std::cout << "  accepted step " << step << ": " << cur_err << " -> " << e
+                              << " (" << moved << "/" << NP << " params moved)" << std::endl;
+                    cur_err = e;
+                    shadow = cand;
+                    accepted = true;
+                } else {
+                    step *= 0.5;
                 }
             }
-            double ne = compute_error(K);
-            if (ne >= cur_err) {
-                std::cout << "  Reverted (" << cur_err << "->" << ne << "), halving LR" << std::endl;
-                for (size_t i = 0; i < NP; ++i) *tunable[i].second = orig[i];
-                lr *= 0.5; for (auto& v : vel) v *= 0.5;
-            } else { cur_err = ne; lr *= lr_decay; }
+            if (!accepted) {
+                apply(shadow);
+                std::cout << "No improving step at any scale down to " << step
+                          << "; stopping." << std::endl;
+                break;
+            }
 
             auto s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-            std::cout << "Updated " << updated << "/" << NP << " Error: " << cur_err
-                      << " (" << (int)s << "s)" << std::endl;
+            std::cout << "Error: " << cur_err << " (" << (int)s << "s)" << std::endl;
             if (!ckpt.empty()) { params.save(ckpt); std::cout << "  Checkpoint: " << ckpt << std::endl; }
-            if (updated == 0) { std::cout << "Converged!" << std::endl; break; }
         }
     }
 };
@@ -291,19 +322,19 @@ int main(int argc, char* argv[]) {
         else if (k=="--K" && i+1<argc) fK = std::stod(argv[++i]);
         else if ((k=="--threads"||k=="-t") && i+1<argc) thr = std::stoi(argv[++i]);
         else if (k=="--no-quiet-filter") qfilter = false;
-        else if (k=="--lr" && i+1<argc) lr_ov = std::stod(argv[++i]);
+        else if ((k=="--max-step"||k=="--lr") && i+1<argc) lr_ov = std::stod(argv[++i]);
         else if (k=="--pert" && i+1<argc) pert_ov = std::stoi(argv[++i]);
         else if (k=="--help"||k=="-h") {
             std::cerr << "Usage: " << argv[0] << " --data FILE [--params FILE] [--output FILE] "
                       << "[--iterations N] [--stage 1|2|3|4] [--K val] [--threads N] "
-                      << "[--no-quiet-filter] [--lr F] [--pert N]\n"; return 0;
+                      << "[--no-quiet-filter] [--max-step F] [--pert N]\n"; return 0;
         }
     }
     auto stage = (stg==1 ? TuneStage::category : stg==3 ? TuneStage::fine
                 : stg==4 ? TuneStage::pst : TuneStage::shape);
     bitboards::init(); magics::init(); zobrist::init(); kpk::init();
     TexelTuner tuner; tuner.num_threads = std::max(1, thr); tuner.quiet_filter = qfilter;
-    tuner.lr_override = lr_ov; tuner.pert_override = pert_ov;
+    tuner.max_step_override = lr_ov; tuner.pert_override = pert_ov;
     if (!pfile.empty() && tuner.params.load(pfile))
         std::cout << "Loaded params from " << pfile << std::endl;
     if (!tuner.load_data(data)) { std::cerr << "Failed to load " << data << std::endl; return 1; }
