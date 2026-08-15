@@ -107,3 +107,16 @@ jobs:
         run: >
           ctest -C Debug --output-on-failure --parallel 4
           -E 'EverySearchParameterReachesTheSearch'
+
+      # The unit tests drive the engine through its C++ interface, so they
+      # cannot reach the UCI layer's own parsing. Every case in this corpus
+      # crashed or hung a released build at some point. Run against the
+      # sanitizer build so a surviving-but-corrupt case is still caught.
+      #
+      # ~70s wall clock, of which only ~30s is CPU -- most of it is waiting on
+      # searches that must be given time to finish, because a "go" followed
+      # immediately by "quit" aborts the search and looks like a hang.
+      # The seed is fixed so a failure here is reproducible.
+      - name: Fuzz UCI (ASan + UBSan)
+        if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
+        run: ./scripts/testing/fuzz-uci.sh build-debug/havoc 7
