@@ -85,11 +85,12 @@ void SearchEngine::set_threads(int n) {
     // threads and wedged the engine.
     n = std::clamp(n, kMinThreads, kMaxThreads);
 
-    // Threadpool::init() destroys and recreates every Searchthread, and the
-    // move-ordering history lives on those objects. start() documents that
-    // history persists through a game and is reset only by ucinewgame, and a
-    // GUI may change Threads at any point, so carry the tables across instead
-    // of quietly returning every thread to ordering-blind mid-game.
+    // Threadpool::init() destroys and recreates every Searchthread, so every
+    // piece of engine-owned per-thread state has to be put back afterwards.
+    // History is carried because start() documents that it persists through a
+    // game and resets only on ucinewgame, and a GUI may change Threads at any
+    // point; the tuned parameters are carried because otherwise the freshly
+    // constructed threads evaluate with the compiled-in defaults.
     const bool had_threads = search_threads_.size() > 0;
     Movehistory carried;
     if (had_threads)
@@ -97,9 +98,8 @@ void SearchEngine::set_threads(int n) {
 
     search_threads_.init(n);
 
-    if (had_threads)
-        for (unsigned i = 0; i < search_threads_.size(); ++i)
-            search_threads_[i]->history = carried;
+    for (unsigned i = 0; i < search_threads_.size(); ++i)
+        configure_thread(i, had_threads ? &carried : nullptr);
 }
 
 bool SearchEngine::set_hash_size(int mb) {
@@ -118,20 +118,27 @@ void SearchEngine::clear() {
         search_threads_[i]->history.clear();
 }
 
+void SearchEngine::configure_thread(unsigned i, const Movehistory* carried) {
+    Searchthread* t = search_threads_[i];
+
+    t->params = params_;
+
+    // The pawn and material tables cache scores computed under the old
+    // parameters. They are keyed by pawn/material structure, not by the
+    // parameter set, so without an explicit clear the new values would be
+    // masked by stale hits for the rest of the session.
+    t->pawn_tbl.clear();
+    t->material_tbl.clear();
+    t->evaluator = std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params);
+
+    if (carried)
+        t->history = *carried;
+}
+
 void SearchEngine::load_params(const std::string& filename) {
     params_.load(filename);
-    for (unsigned i = 0; i < search_threads_.size(); ++i) {
-        search_threads_[i]->params = params_;
-        // The pawn and material tables cache scores computed under the old
-        // parameters. They are keyed by pawn/material structure, not by the
-        // parameter set, so without an explicit clear the new values would be
-        // masked by stale hits for the rest of the session.
-        search_threads_[i]->pawn_tbl.clear();
-        search_threads_[i]->material_tbl.clear();
-        search_threads_[i]->evaluator = std::make_unique<HCEEvaluator>(
-            search_threads_[i]->pawn_tbl, search_threads_[i]->material_tbl,
-            search_threads_[i]->params);
-    }
+    for (unsigned i = 0; i < search_threads_.size(); ++i)
+        configure_thread(i, nullptr);
 }
 
 // ─── Pruning helpers ────────────────────────────────────────────────────────
