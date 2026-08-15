@@ -1181,8 +1181,11 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
 // ─── Quiescence search ──────────────────────────────────────────────────────
 
+// The remaining depth is not consulted: quiescence bounds itself by the ply
+// guard and by which moves it is willing to generate, and it stores at a fixed
+// depth. The parameter stays for signature parity with search().
 template <Nodetype type>
-int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNode* stack,
+int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, SearchNode* stack,
                           int thread_id) {
     if (signals_.stop.load())
         return score::kDraw;
@@ -1284,15 +1287,15 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
             alpha = best_score;
     }
 
-    U16 moves_searched = 0;
-    // Counted separately from moves_searched so that a pruning rule can never
-    // make a position with legal evasions look like checkmate.
+    // Counted so that a pruning rule can never make a position with legal
+    // evasions look like checkmate. Quiescence keeps no separate "moves tried"
+    // counter: it has no late-move reduction or move-count pruning to feed one,
+    // and the one it used to declare was incremented and never read.
     U16 legal_moves = 0;
     QMoveorder mvs(p, ttm, stack, &history_);
     Move move;
     Move pre_move = (stack - 1)->curr_move;
     Move pre_pre_move = (stack - 2)->curr_move;
-    Color to_mv = p.to_move();
 
     while (mvs.next_move(p, move, pre_move, pre_pre_move, stack->threat_move, false)) {
         if (signals_.stop.load())
@@ -1350,7 +1353,6 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
 
         int score_val = -qsearch<type>(p, -beta, -alpha, 0, stack + 1, thread_id);
 
-        ++moves_searched;
         p.undo_move(move);
 
         if (score_val > best_score) {
@@ -1372,7 +1374,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 depth, SearchNod
     Bound bound = (best_score >= beta              ? bound_low
                    : pv_type && best_score > alpha_orig ? bound_exact
                                                        : bound_high);
-    tt_.save(p.key(), qsdepth, static_cast<U8>(bound), best_move,
+    tt_.save(p.key(), static_cast<U8>(qsdepth), static_cast<U8>(bound), best_move,
              score_to_tt(best_score, stack->ply), pv_type);
 
     return best_score;
@@ -1388,7 +1390,7 @@ void SearchEngine::update_pv(Move* root_pv, const Move& move, Move* child) {
 
 // ─── PV readout ─────────────────────────────────────────────────────────────
 
-void SearchEngine::readout_pv(SearchNode* stack, const Rootmoves& mRoots, int eval, int alpha,
+void SearchEngine::readout_pv(SearchNode* /*stack*/, const Rootmoves& mRoots, int eval, int alpha,
                               int beta, U16 depth) {
     std::unique_lock<std::mutex> lock(output_mutex_);
 

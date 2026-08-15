@@ -433,7 +433,11 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
 
 // ─── eval_pawns ─────────────────────────────────────────────────────────────
 
-template <Color c> int HCEEvaluator::eval_pawns(const position& p, einfo& ei) {
+// The position is not consulted: every pawn term here is read from the cached
+// pawn entry (ei.pe) that pawn_table::fetch already computed, which is the
+// whole point of the pawn hash. The parameter stays for signature parity with
+// the other eval_* stages.
+template <Color c> int HCEEvaluator::eval_pawns(const position& /*p*/, einfo& ei) {
     int score = 0;
     constexpr Color them = Color(c ^ 1);
     U64 pawnAttacks = ei.pe->attacks[c];
@@ -1544,7 +1548,7 @@ float HCEEvaluator::eval_passed_krrk(const position& p, einfo& /*ei*/, Square f,
 
     // Inactive enemy king
     auto kingPawnDist = std::max(util::row_dist(eks, f), util::col_dist(eks, f));
-    score += kingPawnDist;
+    score += static_cast<float>(kingPawnDist);
 
     // Distance to queening
     int dist = (c == white ? 7 - row : row);
@@ -1592,7 +1596,7 @@ float HCEEvaluator::eval_passed_knbk(const position& p, einfo& /*ei*/, Square f,
 
     // Inactive enemy king
     auto kingPawnDist = std::max(util::row_dist(eks, f), util::col_dist(eks, f));
-    score += kingPawnDist;
+    score += static_cast<float>(kingPawnDist);
 
     if (hasBishop) {
         auto bishopSquareBB = bitboards::squares[bishopSquare];
@@ -1618,7 +1622,7 @@ float HCEEvaluator::eval_passed_knbk(const position& p, einfo& /*ei*/, Square f,
         // Inactive enemy knight
         auto knightPawnDist =
             std::max(util::row_dist(knightSquare, f), util::col_dist(knightSquare, f));
-        score += knightPawnDist;
+        score += static_cast<float>(knightPawnDist);
     }
 
     // Distance to queening

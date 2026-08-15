@@ -239,7 +239,7 @@ void position::do_move(const Move& m) {
     // when the rook leaves its corner, and when the rook is *captured* on its
     // corner -- the last of which nothing used to handle, so the engine went on
     // believing in a rook that was no longer on the board.
-    ifo.cmask &= castle_rights_after(from) & castle_rights_after(to);
+    ifo.cmask = static_cast<U16>(ifo.cmask & castle_rights_after(from) & castle_rights_after(to));
 
     ifo.captured = no_piece;
 

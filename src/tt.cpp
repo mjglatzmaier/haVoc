@@ -29,7 +29,11 @@ void hash_table::resize(size_t size_mb) {
 }
 
 void hash_table::clear() {
-    std::memset(entries_.get(), 0, sizeof(hash_cluster) * cluster_count_);
+    // Value-initialisation rather than memset: every member of `entry` carries a
+    // zero default initialiser, so the two are equivalent here, but the type is
+    // not trivially default-constructible and memset on it is what -Wclass-memaccess
+    // objects to. GCC still lowers this to a memset.
+    std::fill_n(entries_.get(), cluster_count_, hash_cluster{});
 }
 
 bool hash_table::fetch(U64 key, hash_data& e) {

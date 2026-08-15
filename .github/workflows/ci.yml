@@ -3,10 +3,8 @@ name: CI
 on:
   push:
     branches: [main, develop, 'feature/**']
-    paths: ['remake/**']
   pull_request:
     branches: [main, develop]
-    paths: ['remake/**']
 
 jobs:
   build-and-test:
@@ -55,7 +53,6 @@ jobs:
       # Configure
       - name: Configure (Unix)
         if: matrix.os != 'windows-latest'
-        working-directory: remake
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
@@ -64,10 +61,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DHAVOC_ENABLE_TESTS=ON
           -DHAVOC_NATIVE=OFF
+          -DHAVOC_WERROR=ON
 
       - name: Configure (Windows)
         if: matrix.os == 'windows-latest'
-        working-directory: remake
         run: >
           cmake -B build
           -DHAVOC_ENABLE_TESTS=ON
@@ -75,18 +72,16 @@ jobs:
 
       # Build
       - name: Build
-        working-directory: remake
         run: cmake --build build --config Release --parallel
 
       # Test
       - name: Test
-        working-directory: remake/build
+        working-directory: build
         run: ctest --config Release --output-on-failure --parallel
 
       # Debug build with sanitizers (Linux GCC only, to keep CI fast)
       - name: Configure Debug + Sanitizers
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
-        working-directory: remake
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
@@ -96,13 +91,13 @@ jobs:
           -DHAVOC_ENABLE_TESTS=ON
           -DHAVOC_ENABLE_SANITIZERS=ON
           -DHAVOC_NATIVE=OFF
+          -DHAVOC_WERROR=ON
 
       - name: Build Debug
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
-        working-directory: remake
         run: cmake --build build-debug --config Debug --parallel
 
       - name: Test Debug (ASan + UBSan)
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
-        working-directory: remake/build-debug
+        working-directory: build-debug
         run: ctest --config Debug --output-on-failure --parallel
