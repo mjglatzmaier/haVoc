@@ -471,6 +471,93 @@ TEST(TimeManagement, MovetimeIsHonouredExactly) {
     lims.movetime = 1234;
     lims.wtime = 60000;
     EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), 1234.0);
+
+    // ...and *only* the hard deadline applies. A soft limit here would be
+    // scaled by root stability like any other, so a settled search would stop
+    // at 0.6 * 1234ms and hand back time the GUI explicitly asked it to spend.
+    const auto b = estimate_time_budget(lims, true);
+    EXPECT_DOUBLE_EQ(b.soft, kNoTimeLimit);
+    EXPECT_DOUBLE_EQ(soft_time_target(b.soft, 5), kNoTimeLimit);
+}
+
+TEST(TimeManagement, StabilityScalingNeverBreachesTheFloor) {
+    // A spent clock budgets exactly kMinSearchTime, and that is a floor, not an
+    // aim: it is the least time in which a move can be produced at all. The
+    // stability factor bottoms out at 0.6, so scaling it unguarded would turn
+    // the guarantee into 30ms in the one case that relies on it.
+    for (int stable = 0; stable <= 8; ++stable)
+        EXPECT_GE(soft_time_target(kMinSearchTime, stable), kMinSearchTime) << "stable=" << stable;
+
+    // Above the floor the scaling is live and monotonically decreasing.
+    EXPECT_DOUBLE_EQ(soft_time_target(1000.0, 0), 1000.0 * kSoftTimeUnstable);
+    EXPECT_LT(soft_time_target(1000.0, 5), soft_time_target(1000.0, 0));
+    EXPECT_DOUBLE_EQ(soft_time_target(1000.0, 9), soft_time_target(1000.0, kSoftTimeMaxStable));
+}
+
+TEST(TimeManagement, SoftLimitNeverExceedsTheHardOne) {
+    // The soft limit is what the main thread aims at and the hard one is what
+    // the timer enforces. If they ever crossed, the timer would cut the search
+    // off before it had a chance to decide for itself, and the whole point of
+    // the split -- being cheap on an obvious move and generous on a hard one --
+    // would be unreachable.
+    for (int clock : {60, 200, 1000, 10000, 300000}) {
+        for (int inc : {0, 100, 1000, 60000}) {
+            for (int mtg : {0, 1, 5, 40}) {
+                SearchLimits lims{};
+                lims.wtime = clock;
+                lims.winc = inc;
+                lims.movestogo = mtg;
+                const auto b = estimate_time_budget(lims, true);
+                EXPECT_LE(b.soft, b.hard)
+                    << "clock=" << clock << " inc=" << inc << " mtg=" << mtg;
+                EXPECT_LE(b.hard, std::max(kMinSearchTime, clock * 0.33))
+                    << "clock=" << clock << " inc=" << inc << " mtg=" << mtg;
+            }
+        }
+    }
+}
+
+TEST(TimeManagement, TheSoftLimitIsTheBudgetTheEngineUsedToSpendOutright) {
+    // The split did not change what a move is *worth*, only what happens when
+    // the search wants more than that. So the soft limit has to reproduce the
+    // old single budget exactly: clock/25 + 0.9*inc, capped at a third of the
+    // clock and floored at kMinSearchTime.
+    for (int clock : {1000, 10000, 300000}) {
+        for (int inc : {0, 100, 1000}) {
+            SearchLimits lims{};
+            lims.wtime = clock;
+            lims.winc = inc;
+            const double base = clock / 25.0 + inc * 0.9;
+            const double expected = std::max(kMinSearchTime, std::min(base, clock * 0.33));
+            EXPECT_DOUBLE_EQ(estimate_time_budget(lims, true).soft, expected)
+                << "clock=" << clock << " inc=" << inc;
+        }
+    }
+}
+
+TEST(TimeManagement, AHardLimitExistsToBeSpentOnHardMoves) {
+    // A position the engine keeps changing its mind about must be able to buy
+    // real extra time, otherwise the stability scaling has nothing to scale
+    // into. Equally, it must not be able to buy the whole clock.
+    SearchLimits lims{};
+    lims.wtime = 60000;
+    lims.winc = 100;
+    const auto b = estimate_time_budget(lims, true);
+    EXPECT_GT(b.hard, b.soft * 2.0);
+    EXPECT_LT(b.hard, lims.wtime * 0.34);
+}
+
+TEST(TimeManagement, UntimedSearchesHaveNeitherLimit) {
+    for (auto set : {+[](SearchLimits& l) { l.infinite = true; },
+                     +[](SearchLimits& l) { l.ponder = true; },
+                     +[](SearchLimits& l) { l.depth = 12; }}) {
+        SearchLimits lims{};
+        lims.wtime = 60000;
+        set(lims);
+        const auto b = estimate_time_budget(lims, true);
+        EXPECT_DOUBLE_EQ(b.soft, kNoTimeLimit);
+        EXPECT_DOUBLE_EQ(b.hard, kNoTimeLimit);
+    }
 }
 
 
