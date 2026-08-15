@@ -1267,9 +1267,17 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 // site applied the same idea twice, reducing non-PV moves by 2
                 // plies more than PV moves instead of 1.
 
-                // Reduce less for moves with good history
-                if (hist > params_.lmr_hist_good)
-                    R = std::max(0u, R - 1);
+                // Reduce less for moves with good history.
+                // R is unsigned and reduction() returns 0 for PV nodes at low
+                // depth and move count (bitboards::reductions[1][..] is built
+                // as 0 whenever the log product is below 1.0), so the previous
+                // std::max(0u, R - 1) wrapped to UINT_MAX rather than clamping:
+                // R - 1 underflows first, and the max then sees a huge value.
+                // static_cast<int>(R) is -1 from there, so LMR became
+                // newdepth + 1 and the move was quietly *extended* a ply
+                // instead of reduced one less.
+                if (hist > params_.lmr_hist_good && R > 0)
+                    --R;
 
                 // Don't reduce into qsearch
                 LMR = std::max(1, newdepth - static_cast<int>(R));
