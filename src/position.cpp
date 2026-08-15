@@ -119,24 +119,20 @@ bool position::setup(std::istringstream& fen) {
         ifo.repkey ^= zobrist::ep(util::col(ifo.eps));
     }
 
-    // half-moves since last pawn move/capture
+    // half-moves since last pawn move/capture, then the move counter.
+    //
+    // Both are optional and both are routinely replaced by EPD operations:
+    // "8/8/... w - - bm Qg6; id "WAC.001";" is a normal line in a published
+    // test suite. Anything that is not a number is treated as the start of the
+    // operations and the counters keep their defaults, rather than failing the
+    // position -- they only feed the fifty-move rule, so a position is fully
+    // determined without them. std::stoi used to terminate the process here.
     unsigned counter = 0;
-    if (!(fen >> token))
-        token = "-";
-    if (!parse_fen_counter(token, counter)) {
-        clear();
-        return false;
+    if ((fen >> token) && parse_fen_counter(token, counter)) {
+        ifo.move50 = U8(counter);
+        if ((fen >> token) && parse_fen_counter(token, counter))
+            ifo.hmvs = U16(counter);
     }
-    ifo.move50 = U8(counter);
-
-    // move counter
-    if (!(fen >> token))
-        token = "-";
-    if (!parse_fen_counter(token, counter)) {
-        clear();
-        return false;
-    }
-    ifo.hmvs = U16(counter);
 
     // A chess position has two kings. Without both, ifo.ks keeps its no_square
     // initialiser, and no_square is 65 -- one past the end of the 64-entry

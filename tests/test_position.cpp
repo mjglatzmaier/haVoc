@@ -705,10 +705,21 @@ TEST_F(PositionTest, RejectsPawnOnFirstOrLastRank) {
     EXPECT_FALSE(parses("4k3/8/8/8/8/8/8/4K2p w - - 0 1")) << "black pawn on rank 1";
 }
 
-TEST_F(PositionTest, RejectsMalformedCountersInsteadOfTerminating) {
-    EXPECT_FALSE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - abc 1"));
-    EXPECT_FALSE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 xyz"));
-    EXPECT_FALSE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 99999999999999 1"));
+TEST_F(PositionTest, TreatsNonNumericCountersAsEpdOperations) {
+    // Published EPD suites put operations exactly where the counters go, and
+    // std::stoi used to terminate the process on them. The position is fully
+    // determined without the counters, so it parses and they keep their
+    // defaults.
+    EXPECT_TRUE(parses("2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - bm Qg6;"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - abc 1"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 xyz"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 99999999999999 1"));
+
+    // A counter that is present and valid is still read.
+    std::istringstream ss("4k3/8/8/8/8/8/8/4K3 w - - 17 42");
+    position p;
+    ASSERT_TRUE(p.setup(ss));
+    EXPECT_NE(p.to_fen().find(" 17 42"), std::string::npos) << p.to_fen();
 }
 
 TEST_F(PositionTest, RejectsPlacementThatRunsOffTheBoard) {
