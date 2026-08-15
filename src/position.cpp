@@ -43,6 +43,7 @@ position& position::operator=(const position& p) {
         return *this;
     history_ = p.history_;
     root_moves = p.root_moves;
+    sel_depth = p.sel_depth;
     ifo = p.ifo;
     pcs = p.pcs;
     nodes_searched = p.nodes_searched;

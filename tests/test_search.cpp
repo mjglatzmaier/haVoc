@@ -1420,5 +1420,49 @@ TEST_F(SearchTest, InfoLinesCarryTimeNpsAndHashfull) {
     EXPECT_GT(info_lines, 0) << "the search reported nothing at all";
 }
 
+TEST_F(SearchTest, SelectiveDepthIsPerThreadNotShared) {
+    // Selective depth was a single atomic on the engine. Every thread reset it
+    // to zero at the top of every aspiration window and every thread
+    // incremented it, so with Threads > 1 the number reported described no
+    // thread in particular -- it was whatever the race left behind.
+    //
+    // The invariant that catches it: the principal variation at depth d
+    // reaches ply d, so seldepth can never be less than depth. Before the fix
+    // this engine reported "depth 6 seldepth 0" and "depth 7 seldepth 2".
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    SearchEngine engine;
+    engine.set_threads(8);
+    SearchLimits lims{};
+    lims.depth = 12;
+
+    std::ostringstream captured;
+    std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
+    engine.start(pos, lims, /*silent=*/false);
+    engine.wait();
+    std::cout.rdbuf(saved);
+
+    std::istringstream lines(captured.str());
+    std::string line;
+    int checked = 0;
+    while (std::getline(lines, line)) {
+        if (line.rfind("info", 0) != 0)
+            continue;
+        std::istringstream fields(line);
+        std::string tok;
+        int depth = -1, seldepth = -1;
+        while (fields >> tok) {
+            if (tok == "depth")
+                fields >> depth;
+            else if (tok == "seldepth")
+                fields >> seldepth;
+        }
+        if (depth < 0 || seldepth < 0)
+            continue;
+        ++checked;
+        EXPECT_GE(seldepth, depth) << "seldepth below depth in: " << line;
+    }
+    EXPECT_GT(checked, 0) << "no info line carried both depth and seldepth";
+}
+
 } // namespace
 } // namespace havoc
