@@ -108,6 +108,18 @@ that manufactures dead evaluation parameters at 300 positions operates here.
 - **Hand-halving the shelter values.** Restores the old dynamic range but loses
   both the discrimination (9cp → 4cp) and the node win (697583 → 790209). The
   effects cannot be separated by hand.
+- **Link-time optimisation.** The obvious free win: `havoc_core` is a static
+  library, so nothing in `search.cpp` can currently inline into `eval/hce.cpp` or
+  `movegen.cpp`, and LTO costs only build time. Measured on an idle machine,
+  pinned to one P-core to keep the scheduler off the E-cores, 20 interleaved
+  bench runs per configuration: **+0.28% nps, SE 0.81%, t = 0.35**. Node count
+  identical at 697583, as expected. There is no speed win here to have. The
+  binary does shrink 19% (425KB → 346KB), which is not worth a build-system
+  option on its own. The likely reason — untested — is that the cross-TU calls
+  are once-per-node into large callees, where inlining buys nothing; the
+  per-node inner loops are already within a single translation unit. Note also
+  that faster does not imply stronger in this engine: see TT prefetch above,
+  which was node-identical, genuinely faster, and −14 Elo.
 - **Obscure engines as rating anchors.** GopherCheck and Rusty-Rival implied 2284
   and 2507 for the same candidate. Sungorus 1.4 implied 2192 where Fruit and
   Glaurung implied 2429 and 2397 in the same run, despite 1583 CCRL games behind
