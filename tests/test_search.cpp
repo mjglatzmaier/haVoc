@@ -16,6 +16,8 @@
 #include <limits>
 #include <utility>
 #include <set>
+#include <chrono>
+#include <thread>
 
 #include "mirror.hpp"
 
@@ -547,8 +549,71 @@ TEST(TimeManagement, AHardLimitExistsToBeSpentOnHardMoves) {
     EXPECT_LT(b.hard, lims.wtime * 0.34);
 }
 
-TEST(TimeManagement, UntimedSearchesHaveNeitherLimit) {
-    for (auto set : {+[](SearchLimits& l) { l.infinite = true; },
+TEST_F(SearchTest, PonderhitPutsTheSearchOnTheClock) {
+    // A ponder search has no deadline: the GUI has not yet confirmed the move
+    // it assumes, and the engine's clock is not running. When ponderhit says
+    // the guess was right, the search must keep going *and* start charging
+    // itself for the time.
+    //
+    // Before this existed, nothing in the engine read the word: the search ran
+    // until stdin closed. Measured against a 2-second clock, that was 20+
+    // seconds of thinking, which is a lost game every time a GUI ponders.
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.wtime = 2000;
+    lims.btime = 2000;
+    lims.winc = 100;
+    lims.binc = 100;
+    lims.ponder = true;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.start(pos, lims, /*silent=*/true);
+
+    // Let it settle into the ponder, and confirm it has *not* stopped: an
+    // engine that finished here would be answering the GUI before the GUI has
+    // committed to anything.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_TRUE(engine.searching()) << "a ponder search must not stop on its own";
+
+    engine.ponder_hit();
+
+    // Poll rather than wait(). An engine that ignores ponderhit never stops, so
+    // wait() would hang the whole suite instead of failing this one test --
+    // which is how the bug behaved: it searched until stdin closed. A test that
+    // hangs CI is worse than a test that fails it.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (engine.searching() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    const bool stopped_itself = !engine.searching();
+    if (!stopped_itself) {
+        engine.stop();
+        engine.wait();
+    }
+
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+
+    EXPECT_TRUE(stopped_itself) << "ponderhit did not put the search on a clock";
+    // The hard limit for a 2s clock is min(2.5 x (2000/25 + 90), 660) = 425 ms,
+    // and the 300 ms ponder before it was free. Generous upper bound so a
+    // loaded CI machine does not fail this, but far below "never stops".
+    EXPECT_LT(ms, 5000) << "took " << ms << " ms";
+    EXPECT_FALSE(pos.root_moves.empty());
+}
+
+TEST_F(SearchTest, PonderhitOnAnIdleEngineIsHarmless) {
+    // GUIs do send it spuriously, and the UCI layer forwards whatever arrives.
+    SearchEngine engine;
+    engine.ponder_hit();
+    engine.ponder_hit();
+    SUCCEED();
+}
+
+TEST(TimeManagement, UntimedSearchesHaveNeitherLimit) {    for (auto set : {+[](SearchLimits& l) { l.infinite = true; },
                      +[](SearchLimits& l) { l.ponder = true; },
                      +[](SearchLimits& l) { l.depth = 12; }}) {
         SearchLimits lims{};
