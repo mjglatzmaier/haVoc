@@ -76,6 +76,9 @@ class SearchEngine {
     U64 total_nodes() const;
 
     void set_threads(int n);
+    /// Number of search threads currently running. Exposed so the clamp on
+    /// set_threads() is testable.
+    [[nodiscard]] unsigned threads() const { return search_threads_.size(); }
     /// Returns false if the table could not be resized, in which case the
     /// previous table is still in place.
     bool set_hash_size(int mb);

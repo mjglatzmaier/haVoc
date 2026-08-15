@@ -912,5 +912,60 @@ TEST_F(SearchTest, SeeUsesTheTunedMaterialValues) {
     EXPECT_EQ(position::see_values()[1], restore.material_value[1]);
 }
 
+// ─── UCI option bounds ──────────────────────────────────────────────────────
+//
+// The "uci" handshake advertises Threads min 1 max 1024 and Hash min 1 max
+// 33554432, but nothing enforced either range. "Hash value -1" was cast to
+// SIZE_MAX and aborted on the allocation, and "Threads value 99999" tried to
+// start 99999 threads.
+
+TEST_F(SearchTest, HashResizeRefusesImpossibleSizeAndKeepsTheOldTable) {
+    hash_table tt;
+    ASSERT_TRUE(tt.resize(1));
+
+    // The advertised maximum is 32 TB. No machine running this test has it, so
+    // the allocation must fail as an error rather than as an exception.
+    EXPECT_FALSE(tt.resize(static_cast<size_t>(kMaxHashMb)));
+
+    // resize() used to release the old table before allocating the new one, so
+    // a failed resize left entries_ null with a non-zero cluster_count_. The
+    // table has to still be usable after a refusal.
+    EXPECT_TRUE(tt.resize(1));
+}
+
+TEST_F(SearchTest, SetHashSizeClampsInsteadOfAborting) {
+    SearchEngine engine;
+    EXPECT_TRUE(engine.set_hash_size(-1));
+    EXPECT_TRUE(engine.set_hash_size(0));
+    EXPECT_TRUE(engine.set_hash_size(1));
+
+    // And the engine still plays afterwards.
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    SearchLimits lims{};
+    lims.depth = 4;
+    engine.start(pos, lims, /*silent=*/true);
+    engine.wait();
+    EXPECT_FALSE(pos.root_moves.empty());
+}
+
+TEST_F(SearchTest, SetThreadsClampsToTheAdvertisedRange) {
+    SearchEngine engine;
+
+    engine.set_threads(0);
+    EXPECT_EQ(engine.threads(), unsigned(kMinThreads));
+
+    engine.set_threads(-4);
+    EXPECT_EQ(engine.threads(), unsigned(kMinThreads));
+
+    engine.set_threads(2);
+    EXPECT_EQ(engine.threads(), 2u);
+
+    // The upper clamp is the one that used to hang. Deliberately not asserted
+    // by asking for 99999 here: that would still start kMaxThreads threads and
+    // make the test suite pay for it on every runner.
+    engine.set_threads(1);
+    EXPECT_EQ(engine.threads(), 1u);
+}
+
 } // namespace
 } // namespace havoc
