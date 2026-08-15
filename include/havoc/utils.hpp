@@ -24,11 +24,16 @@ namespace havoc::util {
 [[nodiscard]] constexpr int col(int s) {
     return s & 7;
 }
+/// std::abs is not constexpr until C++23. GCC and Clang accept it in a
+/// constant expression as an extension; MSVC does not, which broke the
+/// Windows build. Subtract and negate by hand instead.
 [[nodiscard]] constexpr int row_dist(int s1, int s2) {
-    return std::abs(row(s1) - row(s2));
+    const int d = row(s1) - row(s2);
+    return d < 0 ? -d : d;
 }
 [[nodiscard]] constexpr int col_dist(int s1, int s2) {
-    return std::abs(col(s1) - col(s2));
+    const int d = col(s1) - col(s2);
+    return d < 0 ? -d : d;
 }
 [[nodiscard]] constexpr bool on_board(int s) {
     return s >= 0 && s <= 63;
