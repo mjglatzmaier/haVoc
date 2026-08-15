@@ -286,15 +286,36 @@ void load_position(const std::string& pos, position& uci_pos) {
 
     ss >> token; // eat "moves" token
     while (ss >> token) {
+        // Promotions are compared against move_to_string, which spells the
+        // piece in lower case. A GUI that sends "a7a8Q" is not wrong -- the
+        // case of the promotion letter is a long-standing interop wart -- and
+        // matching it exactly meant the move was quietly dropped.
+        std::transform(token.begin(), token.end(), token.begin(),
+                       [](unsigned char c) { return static_cast<char>(::tolower(c)); });
+
         Movegen mvs(uci_pos);
         mvs.generate<pseudo_legal, pieces>();
+
+        bool played = false;
         for (int j = 0; j < mvs.size(); ++j) {
             if (!uci_pos.is_legal(mvs[j]))
                 continue;
             if (move_to_string(mvs[j]) == token) {
                 uci_pos.do_move(mvs[j]);
+                played = true;
                 break;
             }
+        }
+
+        // Skipping the move silently is the worst thing to do here. The engine
+        // is now a move behind the GUI and every later move in the list is
+        // applied to the wrong position, so it goes on to answer a position
+        // nobody is playing -- and the first move it returns that is not legal
+        // in the real game loses it. Say so, and stop rather than compound it.
+        if (!played) {
+            std::cout << "info string ignoring unplayable move '" << token
+                      << "' -- position may be out of sync with the GUI" << std::endl;
+            return;
         }
     }
 }
