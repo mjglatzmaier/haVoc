@@ -294,7 +294,7 @@ found.
 for the decision and the arithmetic behind it.** In short: the engine targets
 an incrementally-updatable NNUE on CPU, and the transformer in `~/code/chess`
 is repositioned from a per-node evaluator (ruled out on throughput: it needs
-5-219 TMAC/s against ~0.5 fp32 / ~2 int8 available) to a sparse policy oracle
+14-585 TMAC/s against ~0.5 fp32 / ~2 int8 available) to a sparse policy oracle
 for move ordering, which costs about 3% of a move.
 
 `feature/trainer` (27 commits, last touched March) is this line of work,

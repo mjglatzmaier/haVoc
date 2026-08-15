@@ -97,21 +97,24 @@ An NNUE evaluation, *after* its incremental accumulator update, is
 **~0.01-0.02 MMACs** — three to four orders of magnitude cheaper.
 
 The machine (i9-13900KS) sustains roughly **0.5 TMAC/s fp32 (AVX2)** and
-**~2 TOP/s int8 (VNNI)**. Holding the engine's current 685k nps with a
-transformer value evaluation at every node would require:
+**~2 TOP/s int8 (VNNI)**. The engine benches **~1.83M nps single-threaded** on
+an idle box. (An earlier draft of this document used 685k nps; that figure was
+measured while a 30-way match was running and understates the gap. Re-measure
+before quoting either.) Holding 1.83M nps with a transformer value evaluation
+at every node would require:
 
 | config | required throughput | available |
 |---|---|---|
-| tiny | 5.1 TMAC/s | ~0.5 fp32 / ~2 int8 |
-| default | 37.9 TMAC/s | ~0.5 fp32 / ~2 int8 |
-| med | 219.0 TMAC/s | ~0.5 fp32 / ~2 int8 |
+| tiny | 13.7 TMAC/s | ~0.5 fp32 / ~2 int8 |
+| default | 101.4 TMAC/s | ~0.5 fp32 / ~2 int8 |
+| med | 585.1 TMAC/s | ~0.5 fp32 / ~2 int8 |
 
 Equivalently, the default config yields ~9,000 evals/sec in fp32 and ~36,000
-in int8, against 685,000 needed.
+in int8, against 1,830,000 needed — **51x short even with perfect int8**.
 
-**Even the tiny two-layer net misses by 2.5x in the best case, and it is too
-small to be worth training.** This is not an optimisation gap. It is the
-architecture being wrong for the deployment.
+**Even the tiny two-layer net misses by 6.9x against int8 and 27x against
+fp32, and it is too small to be worth training.** This is not an optimisation
+gap. It is the architecture being wrong for the deployment.
 
 ### Why "not incrementally updatable" is the root cause
 
@@ -145,8 +148,8 @@ attention, and speculative decoding all target *autoregressive generation*.
 Chess evaluation is a single non-autoregressive forward pass over a fixed-size
 board. What does transfer is narrow: quantisation (2-4x), distillation
 (5-10x), operator fusion, and batching. Note that even perfect int8 leaves the
-default config 19x short, so **efficiency engineering alone cannot rescue the
-per-node design**.
+default config **51x short**, so **efficiency engineering alone cannot rescue
+the per-node design**.
 
 ---
 
@@ -156,7 +159,7 @@ per-node design**.
 |---|---|---|---|
 | alpha-beta + NNUE | 10^6-10^7 | CPU | **chosen** — proven route past 3000 |
 | MCTS + transformer | 10^4-10^5 batched | GPU | viable, proven by Lc0, but see §7 |
-| alpha-beta + transformer value at every node | 10^6-10^7 | CPU | **ruled out** — 19x to 1500x short |
+| alpha-beta + transformer value at every node | 10^6-10^7 | CPU | **ruled out** — 51x to 1200x short |
 | alpha-beta + NNUE value + **sparse transformer policy** | 10^6 cheap + 10^3 expensive | CPU | **the differentiator**, see §8 |
 
 ---
