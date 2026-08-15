@@ -144,6 +144,18 @@ inline void apply_history_bonus(int& h, int bonus) {
     h += bonus - h * std::abs(bonus) / kMaxHistory;
 }
 
+static_assert(kMaxHistory <= std::numeric_limits<int16_t>::max(),
+              "capture history values must fit the narrow type they are stored in");
+
+/// Narrow overload for tables held as int16_t to keep their cache footprint
+/// down. The arithmetic is done at full width and the result is bounded by
+/// kMaxHistory, which the assertion above pins inside the narrow range.
+inline void apply_history_bonus(int16_t& h, int bonus) {
+    int wide = h;
+    apply_history_bonus(wide, bonus);
+    h = static_cast<int16_t>(wide);
+}
+
 struct Movehistory {
     Movehistory();
     Movehistory& operator=(const Movehistory& mh);
@@ -269,14 +281,29 @@ struct Movehistory {
 
     /// Resolves the (color, moved, to, captured) slot for `m`, or nullptr if
     /// `m` is not a capture or either piece cannot be identified in `p`.
-    const int* capture_slot(const position& p, const Move& m) const;
-    int* capture_slot(const position& p, const Move& m);
+    const int16_t* capture_slot(const position& p, const Move& m) const;
+    int16_t* capture_slot(const position& p, const Move& m);
 
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
-    /// Indexed by [color][moved piece][destination][captured piece]. 18 KB,
-    /// small enough to stay resident, so it is held inline rather than behind
-    /// the indirection the continuation tables need.
-    std::array<std::array<std::array<std::array<int, pieces>, squares>, pieces>, colors>
+    /// Indexed by [color][destination][moved piece][captured piece].
+    ///
+    /// Both the element type and the index order are chosen for the cache
+    /// rather than for looks, because this table is read in qsearch, which
+    /// previously touched no history table at all. Adding an 18 KB random
+    /// access stream to the hottest loop in the engine cost 2.55% nps, which
+    /// was more than the better ordering was winning back.
+    ///
+    /// int16_t halves the footprint to 9 KB, which is free: values are bounded
+    /// by kMaxHistory, asserted below to fit.
+    ///
+    /// Keying on the destination *before* the moving piece matters more. The
+    /// captures being scored at one node are not scattered uniformly -- they
+    /// pile up on a handful of contested squares, because every recapture in a
+    /// sequence lands on the same square. Putting the destination outermost
+    /// puts all 36 (mover, victim) combinations for one square in 72
+    /// contiguous bytes, so scoring an entire recapture fight touches one or
+    /// two cache lines instead of one per capture.
+    std::array<std::array<std::array<std::array<int16_t, pieces>, pieces>, squares>, colors>
         capture_history_{};
     /// Indexed by [side to move][pawn key]. Two colours because the same pawn
     /// structure is a different proposition depending on whose move it is.

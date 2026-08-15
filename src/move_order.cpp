@@ -98,7 +98,7 @@ void Movehistory::malus_continuation(const position& p, const SearchNode* stack,
 
 // ─── Capture history ────────────────────────────────────────────────────────
 
-const int* Movehistory::capture_slot(const position& p, const Move& m) const {
+const int16_t* Movehistory::capture_slot(const position& p, const Move& m) const {
     const auto mt = static_cast<Movetype>(m.type);
     if (!is_capture(mt))
         return nullptr;
@@ -110,27 +110,27 @@ const int* Movehistory::capture_slot(const position& p, const Move& m) const {
     if (taken == no_piece || moved == no_piece)
         return nullptr;
 
-    return &capture_history_[p.to_move()][moved][m.t][taken];
+    return &capture_history_[p.to_move()][m.t][moved][taken];
 }
 
-int* Movehistory::capture_slot(const position& p, const Move& m) {
-    return const_cast<int*>(static_cast<const Movehistory*>(this)->capture_slot(p, m));
+int16_t* Movehistory::capture_slot(const position& p, const Move& m) {
+    return const_cast<int16_t*>(static_cast<const Movehistory*>(this)->capture_slot(p, m));
 }
 
 int Movehistory::capture_score(const position& p, const Move& m) const {
-    const int* h = capture_slot(p, m);
+    const int16_t* h = capture_slot(p, m);
     return h ? *h : 0;
 }
 
 void Movehistory::update_capture(const position& p, const Move& best, int bonus,
                                  const std::vector<Move>& captures) {
-    if (int* h = capture_slot(p, best))
+    if (int16_t* h = capture_slot(p, best))
         apply_history_bonus(*h, bonus);
 
     for (const auto& c : captures) {
         if (c == best)
             continue;
-        if (int* h = capture_slot(p, c))
+        if (int16_t* h = capture_slot(p, c))
             apply_history_bonus(*h, -bonus);
     }
 }
@@ -188,9 +188,9 @@ void Movehistory::clear() {
         std::fill(c.begin(), c.end(), 0);
 
     for (auto& color : capture_history_)
-        for (auto& moved : color)
-            for (auto& to : moved)
-                std::fill(to.begin(), to.end(), 0);
+        for (auto& to : color)
+            for (auto& moved : to)
+                std::fill(moved.begin(), moved.end(), 0);
 }
 
 void Movehistory::update_correction(Color c, U64 pawnkey, int depth, int diff) {

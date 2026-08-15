@@ -53,13 +53,76 @@ verify the round-trip reproduces the default bench node count exactly before
 trusting it**. `havoc_texel` embeds compiled-in defaults, so it must be rebuilt
 after any `parameters.hpp` change or it silently dumps stale values.
 
-### Accumulated-drift check
+## How many games to spend
+
+The hard constraint is precision per unit time, and it is worse than intuition
+suggests. Measured on the 24-core box at `10+0.1` with `CONC=30`, roughly 55
+games/minute, at the draw rate this book produces:
+
+| games | 95% CI | wall clock |
+|---|---|---|
+| 1000 | ±16.0 Elo | 18 min |
+| 2000 | ±11.3 Elo | 36 min |
+| 3000 | ±9.2 Elo | 55 min |
+| 4000 | ±8.0 Elo | 73 min |
+| 8000 | ±5.7 Elo | 2 h 25 |
+| 16000 | ±4.0 Elo | 4 h 51 |
+
+Read the last two rows carefully. **An 8000-game run resolves ±5.7 Elo.** A
+change genuinely worth +3 Elo needs 30–60k games — twelve to twenty-four hours
+— before a single test can distinguish it from nothing. So running every
+candidate to 8000 games is not merely expensive, it does not answer the
+question either. It buys a number that still contains zero.
+
+The way out is not more games per change. It is to stop asking each change to
+prove its own gain, and instead ask each change not to do damage, then measure
+gain in batches where the effect is large enough to see.
+
+### Tier 0 — no match at all
+
+Docs, tests, CI, refactors, and any change whose bench node count is
+byte-identical. An identical bench is a *stronger* proof of inertness than any
+match could provide, and it is free. Do not spend games on it.
+
+### Tier A — sanity check, cap 1200 games, ~20 min
+
+Every functional PR. `elo0=-10 elo1=0`, a non-regression test. It is not
+trying to prove the change is good; it is trying to catch the change being
+bad, which is a much cheaper question.
+
+- LLR crosses the upper bound → merge.
+- LLR crosses the lower bound → do not merge; investigate.
+- Cap reached undecided → merge only if the point estimate is ≥ −8 Elo **and**
+  there is independent evidence: fewer bench nodes, a mechanism that explains
+  the gain, and a clean review.
+
+That last clause is what makes the tier safe, and it is a real gate. A change
+with no evidence beyond "it measured neutral" should be parked as an issue, not
+merged. Tier A cannot tell those two cases apart, so the judgement has to come
+from somewhere else.
+
+### Tier B — cumulative measurement, 3000 games, ~55 min, every 7–10 PRs
+
+Current `main` against the previous Tier B tag. This is the number to report as
+progress; no Tier A result should ever be quoted as an Elo gain.
 
 Individually a change can measure neutral — say −5 ± 25 — and still be merged
-under the structural-change policy. Ten such merges can hide a real regression
-that no single SPRT was ever powered to see. Periodically SPRT current `main`
-against a snapshot from 5–10 PRs back: the accumulated delta is larger, so it
-resolves faster and in one direction.
+under the rules above. Ten such merges can hide a real regression that no
+single run was ever powered to see. Batching fixes that: eight PRs worth +3
+each is +24 Elo, which 3000 games resolves comfortably, and it resolves in one
+direction rather than as a scatter of overlapping intervals.
+
+### Tier C — 8000+ games
+
+Release candidates, or one specific change that has to be banked as a known
+quantity. Rare, and scheduled deliberately rather than reached by default.
+
+### Standing rule
+
+One machine-occupying job at a time. A second match, a build, or a datagen run
+sharing the box does not just slow an SPRT down — the test is a *timing*
+measurement at a fixed time control, so competing load corrupts the result
+rather than merely delaying it.
 
 ## Parameter optimisation
 
