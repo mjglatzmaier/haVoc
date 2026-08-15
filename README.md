@@ -140,7 +140,7 @@ also be driven directly from a terminal:
 
 ```
 $ ./build/havoc
-haVoc v2.0.0
+haVoc v2.1.0
 by M.Glatzmaier
 uci
 position startpos moves e2e4
