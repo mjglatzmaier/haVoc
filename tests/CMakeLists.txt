@@ -18,6 +18,7 @@ set(HAVOC_TEST_SOURCES
     test_position.cpp
     test_eval.cpp
     test_eval_discrimination.cpp
+    test_incremental_eval.cpp
     test_search.cpp
 )
 

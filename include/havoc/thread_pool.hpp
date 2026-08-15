@@ -50,13 +50,33 @@ class Searchthread : public Workerthread {
     Movehistory history;
     pawn_table pawn_tbl{params};
     material_table material_tbl{params};
-    std::unique_ptr<IEvaluator> evaluator;
 
-    Searchthread() { evaluator = std::make_unique<HCEEvaluator>(pawn_tbl, material_tbl, params); }
+    Searchthread() { set_evaluator(std::make_unique<HCEEvaluator>(pawn_tbl, material_tbl, params)); }
 
     explicit Searchthread(std::function<void()> func) : Workerthread(std::move(func)) {
-        evaluator = std::make_unique<HCEEvaluator>(pawn_tbl, material_tbl, params);
+        set_evaluator(std::make_unique<HCEEvaluator>(pawn_tbl, material_tbl, params));
     }
+
+    /// Installs the evaluator and caches whether it wants move deltas.
+    ///
+    /// The two travel together deliberately: the cached flag is read on every
+    /// node, and a flag that disagreed with the installed evaluator would
+    /// either silently stop feeding an incremental evaluator -- desynchronising
+    /// its accumulator from the board -- or pay for calls nobody consumes.
+    void set_evaluator(std::unique_ptr<IEvaluator> e) {
+        evaluator_ = std::move(e);
+        wants_deltas_ = evaluator_->wants_deltas();
+    }
+
+    [[nodiscard]] IEvaluator& evaluator() { return *evaluator_; }
+    [[nodiscard]] const IEvaluator& evaluator() const { return *evaluator_; }
+
+    /// Cached `evaluator().wants_deltas()`; see `IEvaluator::wants_deltas`.
+    [[nodiscard]] bool wants_deltas() const { return wants_deltas_; }
+
+  private:
+    std::unique_ptr<IEvaluator> evaluator_;
+    bool wants_deltas_ = false;
 };
 
 // ─── Thread pool ────────────────────────────────────────────────────────────

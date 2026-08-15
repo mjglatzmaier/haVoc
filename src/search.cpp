@@ -129,10 +129,18 @@ void SearchEngine::configure_thread(unsigned i, const Movehistory* carried) {
     // masked by stale hits for the rest of the session.
     t->pawn_tbl.clear();
     t->material_tbl.clear();
-    t->evaluator = std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params);
+    t->set_evaluator(evaluator_factory_
+                         ? evaluator_factory_(*t)
+                         : std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params));
 
     if (carried)
         t->history = *carried;
+}
+
+void SearchEngine::set_evaluator_factory(EvaluatorFactory factory) {
+    evaluator_factory_ = std::move(factory);
+    for (unsigned i = 0; i < search_threads_.size(); ++i)
+        configure_thread(i, nullptr);
 }
 
 void SearchEngine::load_params(const std::string& filename) {
@@ -164,7 +172,7 @@ int SearchEngine::futility_move_count(bool improving, U16 depth) {
 /// needed but the position cannot be searched any further.
 int SearchEngine::static_eval(position& p, int thread_id) {
     auto* sthread = search_threads_[thread_id];
-    return sthread->evaluator->evaluate(p, -1);
+    return sthread->evaluator().evaluate(p, -1);
 }
 
 // ─── Start search ───────────────────────────────────────────────────────────
@@ -208,6 +216,14 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     // Create per-thread copies
     for (unsigned i = 0; i < search_threads_.size(); ++i) {
         positions_.emplace_back(std::make_unique<position>(p));
+
+        // The root arrives by a jump, not by a move, so there is no delta that
+        // gets an incremental evaluator from wherever it was to here. Every
+        // search therefore starts by rebuilding that state from the board.
+        // Without this an accumulator would be one game's worth of moves out of
+        // date and every evaluation after it silently wrong.
+        if (search_threads_[i]->wants_deltas())
+            search_threads_[i]->evaluator().refresh(*positions_[i]);
     }
     completed_depth_.assign(search_threads_.size(), 0);
 
@@ -773,7 +789,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         static_eval_val = score::kNegInf;
     } else {
         auto* sthread = search_threads_[thread_id];
-        static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator->evaluate(pos)));
+        static_eval_val = static_cast<int16_t>(std::lround(sthread->evaluator().evaluate(pos)));
 
         // Correction history adjusts the raw evaluation, before the TT gets a
         // say. The TT value has a real search behind it and needs no help; the
@@ -854,12 +870,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // looking at. Record the null explicitly.
         stack->curr_move = Move{};
         stack->push_context(no_piece, 0);
-        pos.do_null_move();
+        do_null_move(pos, thread_id);
         int null_eval =
             (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
                          : -search<non_pv>(pos, -beta, -beta + 1, static_cast<U16>(ndepth),
                                            stack + 1, thread_id));
-        pos.undo_null_move();
+        undo_null_move(pos, thread_id);
         (stack + 1)->null_search = false;
 
         if (null_eval >= beta) {
@@ -919,7 +935,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 continue;
 
             stack->push_context(pos.piece_on(static_cast<Square>(pc_move.f)), pc_move.t);
-            pos.do_move(pc_move);
+            do_move(pos, pc_move, thread_id);
             stack->curr_move = pc_move;
 
             // Qsearch first: it is nearly free and rejects most candidates, so
@@ -930,7 +946,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 pc_score = -search<non_pv>(pos, -probcut_beta, -probcut_beta + 1,
                                            static_cast<U16>(probcut_depth), stack + 1, thread_id);
             }
-            pos.undo_move(pc_move);
+            undo_move(pos, pc_move, thread_id);
 
             if (signals_.stop.load())
                 return score::kDraw;
@@ -1096,7 +1112,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         }
 
         stack->push_context(pos.piece_on(static_cast<Square>(move.f)), move.t);
-        pos.do_move(move);
+        do_move(pos, move, thread_id);
         stack->curr_move = move;
 
         bool givesCheck = pos.in_check();
@@ -1227,7 +1243,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         if (move.type == static_cast<U8>(Movetype::quiet))
             quiets.emplace_back(move);
 
-        pos.undo_move(move);
+        undo_move(pos, move, thread_id);
 
         if (signals_.stop.load())
             return score::kDraw;
@@ -1410,7 +1426,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, Searc
 
     if (!in_check) {
         auto* sthread = search_threads_[thread_id];
-        best_score = static_cast<int>(std::lround(sthread->evaluator->evaluate(p)));
+        best_score = static_cast<int>(std::lround(sthread->evaluator().evaluate(p)));
 
         // As in search(): a TT score has a search behind it and is the better
         // estimate, but only in the direction its bound supports. This was an
@@ -1513,12 +1529,12 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, Searc
         if (!in_check && p.see(move) < 0)
             continue;
 
-        p.do_move(move);
+        do_move(p, move, thread_id);
         p.adjust_qnodes(1);
 
         int score_val = -qsearch<type>(p, -beta, -alpha, 0, stack + 1, thread_id);
 
-        p.undo_move(move);
+        undo_move(p, move, thread_id);
 
         if (score_val > best_score) {
             best_score = score_val;
