@@ -1319,5 +1319,42 @@ TEST_F(SearchTest, StateChangingCommandsWaitForTheSearch) {
     }
 }
 
+TEST_F(SearchTest, PromotionsAreAcceptedInEitherCase) {
+    // The move list is matched against move_to_string, which spells the
+    // promotion piece in lower case. A GUI that sends "a7a8Q" is not wrong --
+    // the case of that letter is a long-standing interop wart -- and matching
+    // it exactly meant the move was quietly dropped. The engine was then a move
+    // behind the GUI for the rest of the game, answering a position nobody was
+    // playing, and the first reply that was not legal in the real game lost it.
+    for (const std::string& mv : {std::string("a7a8q"), std::string("a7a8Q")}) {
+        auto pos = make_pos("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+        uci::load_position("moves " + mv, pos);
+        EXPECT_EQ(pos.to_fen(), "Q3k3/8/8/8/8/8/8/4K3 b - - 0 2") << "sent " << mv;
+    }
+
+    // Under-promotions too, so this is about the case and not about queens.
+    auto knight = make_pos("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    uci::load_position("moves a7a8N", knight);
+    EXPECT_EQ(knight.to_fen(), "N3k3/8/8/8/8/8/8/4K3 b - - 0 2");
+}
+
+TEST_F(SearchTest, AnUnplayableMoveStopsRatherThanDesyncing) {
+    // Applying the rest of the list after dropping one move is strictly worse
+    // than stopping: every later move lands on the wrong position.
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+    std::ostringstream captured;
+    std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
+    uci::load_position("moves e2e4 e7e5 e2e5 g1f3", pos);
+    std::cout.rdbuf(saved);
+
+    // e2e5 is not legal, so the position must hold after e2e4 e7e5 -- with g1f3
+    // *not* applied, since applying it would put the engine a move ahead of a
+    // GUI that thinks e2e5 was played.
+    EXPECT_EQ(pos.to_fen(), "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 3");
+    EXPECT_NE(captured.str().find("info string"), std::string::npos)
+        << "the desync was not reported at all";
+}
+
 } // namespace
 } // namespace havoc
