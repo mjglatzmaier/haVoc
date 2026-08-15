@@ -62,6 +62,15 @@ parameter is fitted.
   produced implied ratings 223 points apart for the same candidate, which is
   what a lumpy evaluation surface and a thinly-played published rating do to a
   fit that assumes a single strength scale.
+
+  Both anchors sit ~200 points *above* haVoc, where it scores about 22%. A
+  score that lopsided carries little information per game, and with no anchor
+  below the engine the fit is extrapolating rather than interpolating — which
+  is a large part of why two anchors can disagree by 90 points. Three
+  bracketing anchors have since been added for future runs: Zurichess Fribourg
+  (2412), Arasan 12.2 (2505) and Phalanx XXIV (2521). Rows above this note were
+  measured against the original two only, so they remain mutually comparable
+  but are not comparable to later rows.
 - **Conditions.** 20+0.2 on one thread with a 64 MB hash, `OwnBook=false` and
   `Ponder=false` forced on every engine, from a fixed opening book with colours
   reversed on each pair. All engines run on the same machine at the same time
@@ -77,6 +86,10 @@ parameter is fitted.
 
 Every change that could plausibly affect playing strength is gated behind a
 self-play SPRT against the previous revision before it is merged.
+
+The scripts that produce every number in this section live in
+[`scripts/testing/`](scripts/testing/README.md), together with the opening book
+and the rules for choosing anchors.
 
 To reproduce a rating from a gauntlet PGN:
 
