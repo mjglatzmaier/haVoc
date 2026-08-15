@@ -3,6 +3,7 @@
 /// @file thread_pool.hpp
 /// @brief Thread pool for search workers and timer threads.
 
+#include "havoc/move_order.hpp"
 #include "havoc/eval/evaluator.hpp"
 #include "havoc/eval/hce.hpp"
 #include "havoc/material_table.hpp"
@@ -41,6 +42,12 @@ class Workerthread {
 class Searchthread : public Workerthread {
   public:
     parameters params;
+    /// Move-ordering statistics. Per thread, not shared: Lazy SMP has every
+    /// thread writing these tables concurrently, and they are plain ints with
+    /// no synchronisation, so a shared instance is a data race. Sharing also
+    /// defeats the point of running different threads down different parts of
+    /// the tree -- they would all be steered by one another's statistics.
+    Movehistory history;
     pawn_table pawn_tbl{params};
     material_table material_tbl{params};
     std::unique_ptr<IEvaluator> evaluator;
@@ -99,6 +106,7 @@ template <class T> class Threadpool {
     }
 
     T* operator[](int idx) { return workers_[idx].get(); }
+    const T* operator[](int idx) const { return workers_[idx].get(); }
 
     void init(int numThreads) {
         if (!stop_.load())
