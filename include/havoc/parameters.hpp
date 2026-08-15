@@ -439,6 +439,18 @@ struct parameters {
     int see_quiet_margin = 50;      // ...when see < -margin * depth
     int qs_delta_margin = 910;      // quiescence delta pruning margin
     int qs_delta_pawn7th = 775;     // ...widened by this with a pawn near promotion
+
+    /// Margin on the qsearch capture futility test, on both the fail-low and
+    /// the fail-high side. Lived as a bare `int margin = 200;` in the middle of
+    /// qsearch, so no tuning run could ever reach it.
+    int qs_capture_margin = 200;
+
+    /// Half-width of the first aspiration window at each iteration, before any
+    /// widening. Both this and `aspiration_reseed_delta` were function-local
+    /// constants and so were invisible to the tuner.
+    int aspiration_delta = 65;
+    /// Half-width used to re-seed the window from the last *completed* score.
+    int aspiration_reseed_delta = 33;
     int singular_min_depth = 8;     // singular extension minimum depth
     int singular_margin = 2;        // singular beta = ttvalue - margin*depth
     int probcut_min_depth = 5;      // ProbCut needs at least this much depth

@@ -412,6 +412,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("see_quiet_margin", &see_quiet_margin);
     result.emplace_back("qs_delta_margin", &qs_delta_margin);
     result.emplace_back("qs_delta_pawn7th", &qs_delta_pawn7th);
+        result.emplace_back("qs_capture_margin", &qs_capture_margin);
+        result.emplace_back("aspiration_delta", &aspiration_delta);
+        result.emplace_back("aspiration_reseed_delta", &aspiration_reseed_delta);
         result.emplace_back("singular_min_depth", &singular_min_depth);
         result.emplace_back("singular_margin", &singular_margin);
         result.emplace_back("probcut_min_depth", &probcut_min_depth);

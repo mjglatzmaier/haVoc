@@ -419,9 +419,9 @@ double SearchEngine::estimate_max_time(position& p) const {
 void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int thread_id) {
     int alpha = score::kNegInf;
     int beta = score::kInf;
-    const int baseDelta = 65;
+    const int baseDelta = params_.aspiration_delta;
     int delta = baseDelta;
-    int smallDelta = 33;
+    int smallDelta = params_.aspiration_reseed_delta;
     int eval = score::kNegInf;
     // The score of the last *completed* iteration. The aspiration window has to
     // be anchored on this and not on `eval`, because between the two `eval`
@@ -1473,7 +1473,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, Searc
                 else if (move.type == static_cast<U8>(capture_promotion_n))
                     capture_score = kMaterialVals[idx] + kMaterialVals[knight];
             }
-            int margin = 200;
+            const int margin = params_.qs_capture_margin;
             if (capture_score > 0 &&
                 (best_score + static_cast<int>(capture_score) + margin < alpha))
                 continue;
