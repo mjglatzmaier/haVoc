@@ -272,11 +272,21 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
         // Copy results back to the original position
         p.root_moves = bestRoots;
 
-        if (!silent && !bestRoots.empty()) {
-            std::cout << "bestmove " << uci::move_to_string(bestRoots[0].pv[0]);
-            if (bestRoots[0].pv.size() > 1)
-                std::cout << " ponder " << uci::move_to_string(bestRoots[0].pv[1]);
-            std::cout << std::endl;
+        if (!silent) {
+            // Every "go" must be answered. Checkmate and stalemate leave no
+            // root move, and saying nothing at all left the GUI waiting on a
+            // reply that was never coming -- an unbounded hang on any terminal
+            // position, which is exactly what an analysis GUI sends when it
+            // reaches the end of a game. "(none)" is the established way to
+            // say there is no move.
+            if (bestRoots.empty() || bestRoots[0].pv.empty()) {
+                std::cout << "bestmove (none)" << std::endl;
+            } else {
+                std::cout << "bestmove " << uci::move_to_string(bestRoots[0].pv[0]);
+                if (bestRoots[0].pv.size() > 1)
+                    std::cout << " ponder " << uci::move_to_string(bestRoots[0].pv[1]);
+                std::cout << std::endl;
+            }
         }
 
         searching_ = false;
