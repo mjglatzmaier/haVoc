@@ -1270,6 +1270,7 @@ TEST_F(SearchTest, TerminalPositionsStillAnswerWithBestmove) {
 
         EXPECT_NE(captured.str().find("bestmove"), std::string::npos)
             << name << " produced no bestmove at all: \"" << captured.str() << "\"";
+    }
 }
 
 TEST_F(SearchTest, StateChangingCommandsWaitForTheSearch) {
