@@ -88,35 +88,68 @@ Two design constraints that matter for keeping this extensible:
   `pawn_table`, `material_table`, `parameters` and the `IEvaluator` already
   live — and which, as of #110, is also where `Movehistory` lives.
 
-`IEvaluator` gains two optional hooks with empty defaults, so the HCE is
-unaffected and the interface stays honest about what it needs:
+`IEvaluator` gained four hooks with empty defaults, so the HCE is unaffected
+and the interface stays honest about what it needs:
 
 ```
+virtual bool wants_deltas() const { return false; }
 virtual void push(const position& after, const FeatureDelta&) {}
 virtual void pop() {}
+virtual void refresh(const position&) {}
 ```
+
+`wants_deltas()` is not decoration. It is cached on `Searchthread` and checked
+before every hook call, so an evaluator that does not want deltas pays a
+predicted branch instead of an indirect call that cannot be inlined away.
 
 ## 4. Order of work
 
 Each step is verifiable on its own, against the HCE, before the next begins.
 
-1. **Record the delta.** Populate `FeatureDelta` in the three primitives.
-   Nothing consumes it. Verify: bench node count unchanged, and measure the
-   nps cost — if recording alone is not free, the design is wrong.
-2. **Assert the delta is complete.** A debug-only check that replaying the
-   recorded events against the pre-move board reproduces the post-move board
-   exactly, run over a perft or the bench suite. This is the step that catches
-   a missed case in castling or en passant, and it is much cheaper to do here
-   than to debug as a wrong evaluation later.
-3. **Wire the hooks.** `IEvaluator::push`/`pop` called from the search
-   alongside `do_move`/`undo_move`. Still no consumer.
-4. **A trivial incremental evaluator.** Implement material counting *twice* —
-   once from scratch, once incrementally through the accumulator hooks — and
-   assert they agree at every node. This exercises the whole mechanism with an
-   evaluation whose correct answer is known, and it is the last point at which
-   a bug is easy to find.
-5. Only then: the real accumulator, the network, and the king-bucket refresh
-   policy.
+**Steps 1-4 are done and merged (#116, #117). The seam exists and is tested;
+what remains is step 5, the network itself.**
+
+1. ~~**Record the delta.**~~ Done in #116. `FeatureDelta` is populated by the
+   three primitives; bench is 697583 nodes before and after, identical.
+2. ~~**Assert the delta is complete.**~~ Done in #116.
+   `FeatureDeltaReproducesEveryMoveOnTheBoard` replays the recorded events onto
+   the pre-move squares and requires the post-move squares exactly, over every
+   legal move of a four-position walk, pinning the event count per move type
+   and asserting a move-type histogram so it cannot pass without generating
+   castling, en passant and all four promotion and promotion-capture types.
+3. ~~**Wire the hooks.**~~ Done in #117. `push`/`pop`/`refresh`, called from
+   four helpers in `SearchEngine` rather than from `position` directly, so a
+   new call site cannot make a move without telling the evaluator.
+4. ~~**A trivial incremental evaluator.**~~ Done in #117,
+   `tests/test_incremental_eval.cpp`, driven by the **real search** so that
+   pruning, re-searches, null moves and quiescence all exercise it.
+5. **Still to do: the real accumulator, the network, and the king-bucket
+   refresh policy.** See §7 for what the earlier steps established about this.
+
+### What was learned doing it
+
+- **`undo_move` runs the same primitives as `do_move`**, so it records the
+  *inverse* events. The delta must therefore be cleared on the way in as well
+  as on the way out. Getting this wrong overflowed the fixed buffer into
+  adjacent board state — found by the step-2 test as a segfault. Recording now
+  also drops surplus events rather than writing past the buffer, so the failure
+  mode stays a visible count rather than corruption.
+- **Hooks must be free when unwanted.** An unconditional virtual call per
+  `do_move` is an indirect branch the compiler cannot inline away, taken
+  millions of times a second for an empty body. Evaluators declare
+  `wants_deltas()` once and `Searchthread` caches it.
+- **The root arrives by a jump, not a move.** `refresh()` per thread at the
+  start of every search is what stops an accumulator being a whole game out of
+  date. `refresh` is called unconditionally, not gated on `wants_deltas()`, so
+  an evaluator that keeps state without wanting deltas cannot be silently
+  skipped.
+- **Material alone is a weak oracle.** It is invariant under piece *movement*,
+  so a material-only check accepts an evaluator that drops every quiet move or
+  gets every square wrong — exactly what breaks a network. The test therefore
+  also carries the exact active-feature set, which is the shape an NNUE input
+  layer is indexed by.
+- **Swapping the evaluator during a live search is a use-after-free.**
+  `set_evaluator_factory` settles the engine first.
 
 ## 5. Data pipeline status
 
@@ -140,3 +173,35 @@ The network architecture, the quantisation scheme, and the CPU inference kernel
 are all still open, and §6 of `neural-direction.md` holds the candidate
 designs. This document is deliberately narrower: it is about making the engine
 *able* to support any of them, using a seam that is testable today.
+
+## 7. Notes for step 5
+
+The seam carries enough information for a HalfKA/HalfKP accumulator, but a few
+contracts are worth stating before anything is built on it.
+
+- **The delta reference is ephemeral.** `push` receives a reference to the
+  board's single scratch buffer, which the next move overwrites. Consume it or
+  copy it inside `push`; do not retain the reference.
+- **A stack frame must save everything that is incremental**, not just a sum:
+  both perspectives' accumulators, their king-bucket identifiers, and whether
+  each is valid. `pop` restores the frame, which is why the search does not
+  need to replay events backwards.
+- **King moves may cross a bucket boundary.** The information is all present —
+  `push` receives the post-move board, and a king move appears as a remove and
+  an add naming both squares — but a bucket change means rebuilding that
+  perspective from the position rather than updating it. Test bucket-crossing
+  king moves against full recomputation specifically; the generic sync test
+  cannot distinguish "refreshed correctly" from "updated correctly".
+- **`refresh` must clear the whole frame stack**, not just recompute the
+  current accumulator.
+- **Network weights are immutable and may be shared across threads.
+  Accumulators are per-thread**, and belong on `Searchthread` next to the
+  evaluator, which is where the per-thread eval state already lives.
+- **`wants_deltas()` must be fixed for an evaluator's lifetime.** It is cached
+  when the evaluator is installed. If loading a network is what decides whether
+  deltas are wanted, that decision has to be made in the constructor, or the
+  evaluator has to be reinstalled through the factory afterwards.
+- **The hooks are assumed not to throw.** The helpers pair them with
+  `do_move`/`undo_move` directly rather than through an RAII guard, so an
+  exception escaping a hook would leave the pair unbalanced. Nothing in the
+  engine throws during search today; if that changes, make the pairing a guard.
