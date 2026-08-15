@@ -268,6 +268,8 @@ inline void piece_data::clear() {
     for (auto& v : square_of)
         for (auto& w : v)
             std::fill(w.begin(), w.end(), no_square);
+
+    delta.clear();
 }
 
 inline void piece_data::do_quiet(const Color& c, const Piece& p, const Square& f, const Square& t,

@@ -823,6 +823,29 @@ void walk_and_check_deltas(position& p, int depth, long& checked, std::array<lon
     if (depth == 0 || !failure.empty())
         return;
 
+    // Replaying to the right board proves nothing was missed, but not that
+    // nothing spurious was added: a balanced remove/add pair for an unrelated
+    // feature replays to the same board while making an accumulator do work,
+    // and on a king move would trigger a needless bucket refresh. So the event
+    // count is pinned exactly. A piece moving is a remove plus an add, which
+    // fixes every entry here.
+    auto expected_events = [](Movetype t) -> int {
+        switch (t) {
+        case quiet:
+            return 2;
+        case capture:
+        case ep:
+            return 3;
+        case castle_ks:
+        case castle_qs:
+            return 4;
+        default:
+            // Promotion is remove pawn + add piece; promotion-capture is that
+            // plus removing the captured piece.
+            return t < capture_promotion_q ? 2 : 3;
+        }
+    };
+
     Movegen mv(p);
     mv.generate<pseudo_legal, pieces>();
     for (int i = 0; i < mv.size(); ++i) {
@@ -837,10 +860,18 @@ void walk_and_check_deltas(position& p, int depth, long& checked, std::array<lon
         ++checked;
         ++by_type[static_cast<std::size_t>(m.type) & 15u];
 
-        const auto r = delta_reproduces_board(
-            before, p.delta(), after,
-            "move type " + std::to_string(int(m.type)) + " " + std::to_string(int(m.f)) + "->" +
-                std::to_string(int(m.t)));
+        const std::string what = "move type " + std::to_string(int(m.type)) + " " +
+                                 std::to_string(int(m.f)) + "->" + std::to_string(int(m.t));
+
+        const int want = expected_events(Movetype(m.type));
+        if (p.delta().n != want) {
+            failure = what + ": recorded " + std::to_string(p.delta().n) +
+                      " events but this move type changes exactly " + std::to_string(want);
+            p.undo_move(m);
+            return;
+        }
+
+        const auto r = delta_reproduces_board(before, p.delta(), after, what);
         if (!r) {
             failure = r.message();
             p.undo_move(m);
@@ -849,6 +880,15 @@ void walk_and_check_deltas(position& p, int depth, long& checked, std::array<lon
 
         walk_and_check_deltas(p, depth - 1, checked, by_type, failure);
         p.undo_move(m);
+
+        // The delta describes the move that was just made and nothing else, so
+        // once it is taken back there is nothing left to describe. Leaving the
+        // inverse events here would let an evaluator apply them twice.
+        if (p.delta().n != 0) {
+            failure = what + ": undo_move left " + std::to_string(p.delta().n) +
+                      " events behind instead of an empty delta";
+            return;
+        }
         if (!failure.empty())
             return;
     }
@@ -881,14 +921,19 @@ TEST_F(PositionTest, FeatureDeltaReproducesEveryMoveOnTheBoard) {
     EXPECT_GT(checked, 500000) << "the walk did not actually cover much";
 
     // Without this the test could pass by never generating the move types that
-    // are hardest to decompose, which are exactly the ones worth testing.
+    // are hardest to decompose, which are exactly the ones worth testing. Each
+    // promotion type is named separately because underpromotions travel a
+    // different branch of do_move's dispatch than queen promotions do.
     EXPECT_GT(by_type[quiet], 0) << "no quiet moves were exercised";
     EXPECT_GT(by_type[capture], 0) << "no captures were exercised";
     EXPECT_GT(by_type[ep], 0) << "no en passant captures were exercised";
     EXPECT_GT(by_type[castle_ks], 0) << "no kingside castling was exercised";
     EXPECT_GT(by_type[castle_qs], 0) << "no queenside castling was exercised";
-    EXPECT_GT(by_type[promotion_q], 0) << "no promotions were exercised";
-    EXPECT_GT(by_type[capture_promotion_q], 0) << "no promotion-captures were exercised";
+    for (const Movetype t : {promotion_q, promotion_r, promotion_b, promotion_n})
+        EXPECT_GT(by_type[t], 0) << "promotion type " << int(t) << " was never exercised";
+    for (const Movetype t :
+         {capture_promotion_q, capture_promotion_r, capture_promotion_b, capture_promotion_n})
+        EXPECT_GT(by_type[t], 0) << "promotion-capture type " << int(t) << " was never exercised";
 }
 
 // A null move changes no features, so the delta must report none rather than
