@@ -363,7 +363,7 @@ TEST_F(EvalTest, EvaluationIsMirrorSymmetricOverRandomPlay) {
 
 TEST_F(EvalTest, TTStoreAndFetch) {
     havoc::hash_table tt;
-    tt.resize(1); // 1 MB
+    ASSERT_TRUE(tt.resize(1)); // 1 MB
 
     havoc::Move m(havoc::E2, havoc::E4, havoc::quiet);
     tt.save(0x123456789ABCDEF0ULL, 10, havoc::bound_exact, m, 150, true);
@@ -380,7 +380,7 @@ TEST_F(EvalTest, TTStoreAndFetch) {
 
 TEST_F(EvalTest, TTNegativeScore) {
     havoc::hash_table tt;
-    tt.resize(1);
+    ASSERT_TRUE(tt.resize(1));
 
     havoc::Move m(havoc::D7, havoc::D5, havoc::quiet);
     tt.save(0xFEDCBA9876543210ULL, 5, havoc::bound_low, m, -300, false);
@@ -393,7 +393,7 @@ TEST_F(EvalTest, TTNegativeScore) {
 
 TEST_F(EvalTest, TTEvictsShallowestOnFullCluster) {
     havoc::hash_table tt;
-    tt.resize(1);
+    ASSERT_TRUE(tt.resize(1));
     tt.clear();
 
     // Keys that differ only in their high bits land in the same cluster, since
@@ -422,7 +422,7 @@ TEST_F(EvalTest, TTEvictsShallowestOnFullCluster) {
 
 TEST_F(EvalTest, TTPrefersEvictingOlderGenerations) {
     havoc::hash_table tt;
-    tt.resize(1);
+    ASSERT_TRUE(tt.resize(1));
     tt.clear();
 
     auto key_for = [](havoc::U64 i) { return (i << 40) | 0x5678ULL; };
@@ -443,7 +443,7 @@ TEST_F(EvalTest, TTPrefersEvictingOlderGenerations) {
 }
 
 TEST_F(EvalTest, TTHashfull) {    havoc::hash_table tt;
-    tt.resize(1);
+    ASSERT_TRUE(tt.resize(1));
     tt.clear();
     EXPECT_EQ(tt.hashfull(), 0);
 }

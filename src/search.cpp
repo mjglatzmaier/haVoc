@@ -80,12 +80,21 @@ SearchEngine::~SearchEngine() {
 }
 
 void SearchEngine::set_threads(int n) {
-    n = std::max(n, 1);
+    // The bounds the "uci" handshake advertises. They were advertised but never
+    // enforced: "setoption name Threads value 99999" tried to start 99999
+    // threads and wedged the engine.
+    n = std::clamp(n, kMinThreads, kMaxThreads);
     search_threads_.init(n);
 }
 
-void SearchEngine::set_hash_size(int mb) {
-    tt_.resize(static_cast<size_t>(mb));
+bool SearchEngine::set_hash_size(int mb) {
+    // Refused, not clamped. Clamping an out-of-range request up to the
+    // advertised maximum turns a typo into a 32 TB allocation attempt, which an
+    // overcommitting kernel grants and then OOM-kills on first touch. A size the
+    // engine cannot honour leaves the existing table alone instead.
+    if (mb < kMinHashMb || mb > kMaxHashMb)
+        return false;
+    return tt_.resize(static_cast<size_t>(mb));
 }
 
 void SearchEngine::clear() {

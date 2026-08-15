@@ -16,6 +16,15 @@
 
 namespace havoc {
 
+/// Bounds for the spin options advertised by the "uci" handshake. Declared here
+/// so the advertised range and the enforced range cannot drift apart: uci.cpp
+/// prints these and set_threads() clamps to them. The Hash bounds live in
+/// tt.hpp, next to the table they constrain; unlike Threads, an out-of-range
+/// Hash is refused rather than clamped, because the maximum is far larger than
+/// any real machine can allocate.
+constexpr int kMinThreads = 1;
+constexpr int kMaxThreads = 1024;
+
 // ─── Search limits (from UCI go command) ────────────────────────────────────
 
 /// All values are milliseconds or plain counts and are never negative: the UCI
@@ -67,7 +76,12 @@ class SearchEngine {
     U64 total_nodes() const;
 
     void set_threads(int n);
-    void set_hash_size(int mb);
+    /// Number of search threads currently running. Exposed so the clamp on
+    /// set_threads() is testable.
+    [[nodiscard]] unsigned threads() const { return search_threads_.size(); }
+    /// Returns false if the table could not be resized, in which case the
+    /// previous table is still in place.
+    bool set_hash_size(int mb);
     void clear();
     void load_params(const std::string& filename);
 

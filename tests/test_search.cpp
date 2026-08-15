@@ -912,5 +912,76 @@ TEST_F(SearchTest, SeeUsesTheTunedMaterialValues) {
     EXPECT_EQ(position::see_values()[1], restore.material_value[1]);
 }
 
+// ─── UCI option bounds ──────────────────────────────────────────────────────
+//
+// The "uci" handshake advertises Threads min 1 max 1024 and Hash min 1 max
+// 33554432, but nothing enforced either range. "Hash value -1" was cast to
+// SIZE_MAX and aborted on the allocation, and "Threads value 99999" tried to
+// start 99999 threads.
+
+TEST_F(SearchTest, HashResizeRefusesImpossibleSizeAndKeepsTheOldTable) {
+    hash_table tt;
+    ASSERT_TRUE(tt.resize(1));
+
+    // Out of the advertised range, so this is refused up front without any
+    // allocation being attempted. An earlier version of this test asked for the
+    // advertised maximum of 32 TB and relied on the allocator saying no; that
+    // is not portable -- a kernel that overcommits hands the memory over and
+    // then kills the process when the table is first touched, which is exactly
+    // what happened on the macOS runner.
+    EXPECT_FALSE(tt.resize(size_t(kMaxHashMb) + 1));
+    EXPECT_FALSE(tt.resize(0));
+
+    // resize() used to release the old table before allocating the new one, so
+    // a failed resize left entries_ null with a non-zero cluster_count_. Prove
+    // the table still stores and fetches after a refusal, rather than only that
+    // a later resize succeeds.
+    const Move m(E2, E4, quiet);
+    tt.save(0x123456789ABCDEF0ULL, 10, bound_exact, m, 150, true);
+    hash_data hd;
+    EXPECT_TRUE(tt.fetch(0x123456789ABCDEF0ULL, hd));
+    EXPECT_EQ(hd.score, 150);
+
+    EXPECT_TRUE(tt.resize(1));
+}
+
+TEST_F(SearchTest, SetHashSizeRefusesSizesOutsideTheAdvertisedRange) {
+    SearchEngine engine;
+    // "setoption name Hash value -1" used to reach the allocator as a huge
+    // unsigned size and abort the process.
+    EXPECT_FALSE(engine.set_hash_size(-1));
+    EXPECT_FALSE(engine.set_hash_size(0));
+    EXPECT_FALSE(engine.set_hash_size(kMaxHashMb + 1));
+    EXPECT_TRUE(engine.set_hash_size(kMinHashMb));
+    EXPECT_TRUE(engine.set_hash_size(1));
+
+    // And the engine still plays afterwards.
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    SearchLimits lims{};
+    lims.depth = 4;
+    engine.start(pos, lims, /*silent=*/true);
+    engine.wait();
+    EXPECT_FALSE(pos.root_moves.empty());
+}
+
+TEST_F(SearchTest, SetThreadsClampsToTheAdvertisedRange) {
+    SearchEngine engine;
+
+    engine.set_threads(0);
+    EXPECT_EQ(engine.threads(), unsigned(kMinThreads));
+
+    engine.set_threads(-4);
+    EXPECT_EQ(engine.threads(), unsigned(kMinThreads));
+
+    engine.set_threads(2);
+    EXPECT_EQ(engine.threads(), 2u);
+
+    // The upper clamp is the one that used to hang. Deliberately not asserted
+    // by asking for 99999 here: that would still start kMaxThreads threads and
+    // make the test suite pay for it on every runner.
+    engine.set_threads(1);
+    EXPECT_EQ(engine.threads(), 1u);
+}
+
 } // namespace
 } // namespace havoc
