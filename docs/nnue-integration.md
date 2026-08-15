@@ -111,6 +111,11 @@ what remains is step 5, the network itself.**
 
 1. ~~**Record the delta.**~~ Done in #116. `FeatureDelta` is populated by the
    three primitives; bench is 697583 nodes before and after, identical.
+   **Measured free:** on an idle box, `-march=native`, interleaved runs of the
+   pre-seam and post-seam binaries, 8 each — 1 871 386 nps against 1 864 740
+   nps, a 0.36% difference inside a 3% run-to-run spread. Recording the delta
+   and checking the cached `wants_deltas()` flag together cost less than the
+   measurement can resolve, which is what the design needed.
 2. ~~**Assert the delta is complete.**~~ Done in #116.
    `FeatureDeltaReproducesEveryMoveOnTheBoard` replays the recorded events onto
    the pre-move squares and requires the post-move squares exactly, over every
@@ -150,6 +155,12 @@ what remains is step 5, the network itself.**
   layer is indexed by.
 - **Swapping the evaluator during a live search is a use-after-free.**
   `set_evaluator_factory` settles the engine first.
+- **Comparison builds must have identical flags.** A first attempt at the nps
+  measurement had the seam build "13% faster" than the baseline, which is not a
+  thing adding stores can do. `HAVOC_NATIVE` was `ON` in one and `OFF` in the
+  other, because pointing `cmake -B` at an existing directory reuses its cache
+  rather than applying the defaults. Check `CMakeCache.txt` on both sides
+  before believing any A/B.
 
 ## 5. Data pipeline status
 
