@@ -473,6 +473,72 @@ TEST(TimeManagement, MovetimeIsHonouredExactly) {
     EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), 1234.0);
 }
 
+TEST(TimeManagement, SoftLimitNeverExceedsTheHardOne) {
+    // The soft limit is what the main thread aims at and the hard one is what
+    // the timer enforces. If they ever crossed, the timer would cut the search
+    // off before it had a chance to decide for itself, and the whole point of
+    // the split -- being cheap on an obvious move and generous on a hard one --
+    // would be unreachable.
+    for (int clock : {60, 200, 1000, 10000, 300000}) {
+        for (int inc : {0, 100, 1000, 60000}) {
+            for (int mtg : {0, 1, 5, 40}) {
+                SearchLimits lims{};
+                lims.wtime = clock;
+                lims.winc = inc;
+                lims.movestogo = mtg;
+                const auto b = estimate_time_budget(lims, true);
+                EXPECT_LE(b.soft, b.hard)
+                    << "clock=" << clock << " inc=" << inc << " mtg=" << mtg;
+                EXPECT_LE(b.hard, std::max(kMinSearchTime, clock * 0.33))
+                    << "clock=" << clock << " inc=" << inc << " mtg=" << mtg;
+            }
+        }
+    }
+}
+
+TEST(TimeManagement, TheSoftLimitIsTheBudgetTheEngineUsedToSpendOutright) {
+    // The split did not change what a move is *worth*, only what happens when
+    // the search wants more than that. So the soft limit has to reproduce the
+    // old single budget exactly: clock/25 + 0.9*inc, capped at a third of the
+    // clock and floored at kMinSearchTime.
+    for (int clock : {1000, 10000, 300000}) {
+        for (int inc : {0, 100, 1000}) {
+            SearchLimits lims{};
+            lims.wtime = clock;
+            lims.winc = inc;
+            const double base = clock / 25.0 + inc * 0.9;
+            const double expected = std::max(kMinSearchTime, std::min(base, clock * 0.33));
+            EXPECT_DOUBLE_EQ(estimate_time_budget(lims, true).soft, expected)
+                << "clock=" << clock << " inc=" << inc;
+        }
+    }
+}
+
+TEST(TimeManagement, AHardLimitExistsToBeSpentOnHardMoves) {
+    // A position the engine keeps changing its mind about must be able to buy
+    // real extra time, otherwise the stability scaling has nothing to scale
+    // into. Equally, it must not be able to buy the whole clock.
+    SearchLimits lims{};
+    lims.wtime = 60000;
+    lims.winc = 100;
+    const auto b = estimate_time_budget(lims, true);
+    EXPECT_GT(b.hard, b.soft * 2.0);
+    EXPECT_LT(b.hard, lims.wtime * 0.34);
+}
+
+TEST(TimeManagement, UntimedSearchesHaveNeitherLimit) {
+    for (auto set : {+[](SearchLimits& l) { l.infinite = true; },
+                     +[](SearchLimits& l) { l.ponder = true; },
+                     +[](SearchLimits& l) { l.depth = 12; }}) {
+        SearchLimits lims{};
+        lims.wtime = 60000;
+        set(lims);
+        const auto b = estimate_time_budget(lims, true);
+        EXPECT_DOUBLE_EQ(b.soft, kNoTimeLimit);
+        EXPECT_DOUBLE_EQ(b.hard, kNoTimeLimit);
+    }
+}
+
 
 // ─── Draws that arrive while in check ───────────────────────────────────────
 // The draw test in search() was guarded by !in_check, so a repetition or a
