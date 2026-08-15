@@ -68,6 +68,16 @@ measured +52 in self-play and did not show up in the gauntlet at all.
 as neutral under policy; several in a row can be real regressions. Periodically
 SPRT `main` against a snapshot 5–10 PRs back.
 
+The first such check was run against PR #67, seven PRs back, at 10+0.1. It is
+**unresolved and mildly negative: −13.0 ± 27.2 over 494 games** (LOS 17.3%, LLR
+−0.68 of ±2.94), stopped early to move to faster hardware. Two things to carry
+forward from it. The concern is live — the accumulated delta leans the wrong way
+and needs finishing. And the run is its own cautionary tale: at 86 games it read
+**+39.3 ± 67.5 with LOS 87.5%**, and was reported as "leaning positive, no
+accumulated regression". It reversed completely by 400 games. An early lean in a
+low-power run is not a weak version of the answer, it is noise, and the same trap
+that manufactures dead evaluation parameters at 300 positions operates here.
+
 ---
 
 ## 3. What has been tried
@@ -210,7 +220,15 @@ what the user independently identified as the honest version of this problem.
   concluding by accumulation.
 - Current `main` runs about **10% lower nps** than the state seven PRs earlier
   while searching about 8% fewer nodes, so bench time is a wash. Whether that
-  trade is favourable in games is exactly what the drift check measures.
+  trade is favourable in games is exactly what the drift check measures, and the
+  partial answer so far (−13.0 ± 27.2) is not encouraging. Note the trade is
+  TC-dependent: the node saving should matter more at longer time controls and
+  the nps loss more at shorter ones, so this deserves measuring at two TCs rather
+  than one.
+- **Does the accumulated delta over PRs #68–#74 come out negative?** Unresolved at
+  494 games. If it does, the two structural merges accepted under policy —
+  the coherent reset and the shelter magnitude — are the first place to look, and
+  the policy itself needs revisiting rather than just those two changes.
 
 ---
 
