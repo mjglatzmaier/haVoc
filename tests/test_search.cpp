@@ -7,6 +7,9 @@
 #include "havoc/uci.hpp"
 #include "havoc/zobrist.hpp"
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -1547,6 +1550,63 @@ TEST_F(SearchTest, HistorySurvivesThreadCountChange) {
     EXPECT_EQ(engine.threads(), 4u);
 }
 
+// ─── Tuned parameters survive a Threads change ─────────────────────────────
+//
+// Threadpool::init() destroys and recreates every Searchthread, and the
+// evaluation parameters live on those objects -- each new thread default
+// constructs its own `parameters` and builds its evaluator against that copy.
+// Nothing put the loaded values back, so
+//
+//     setoption name ParamFile value tuned.txt
+//     setoption name Threads value 8
+//
+// silently reverted the evaluation to the compiled-in defaults. Search-side
+// heuristics read the engine's own params_ and were unaffected, which is why
+// this was invisible except as a strength change.
+//
+// Measured through node counts, which are deterministic at one thread: a
+// reverted evaluation searches a different tree.
+TEST_F(SearchTest, TunedParametersSurviveThreadCountChange) {
+    // Not "/tmp": that path does not exist on Windows, where this silently
+    // failed to open and the test asserted on a file it had never written.
+    const std::string pf =
+        (std::filesystem::temp_directory_path() / "havoc_test_params.txt").string();
+    {
+        std::ofstream out(pf);
+        ASSERT_TRUE(out.good()) << "could not write " << pf;
+        out << "knight_mobility_scale=400\n";
+    }
+
+    auto nodes_at = [&](bool reload, bool bounce) {
+        SearchEngine engine;
+        if (reload)
+            engine.load_params(pf);
+        if (bounce)
+            engine.set_threads(1);
+        auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        SearchLimits lims{};
+        lims.depth = 9;
+        engine.start(pos, lims, /*silent=*/true);
+        engine.wait();
+        // Not pos.nodes(): start() searches per-thread copies of the position,
+        // so the caller's object never sees a node.
+        return engine.total_nodes();
+    };
+
+    const U64 baseline = nodes_at(/*reload=*/false, /*bounce=*/false);
+    const U64 tuned = nodes_at(/*reload=*/true, /*bounce=*/false);
+    const U64 tuned_after_bounce = nodes_at(/*reload=*/true, /*bounce=*/true);
+
+    std::remove(pf.c_str());
+
+    // Without this the test cannot distinguish "parameters were kept" from
+    // "the parameter had no effect", and would pass on the broken build.
+    ASSERT_NE(tuned, baseline) << "param file changed nothing; test is vacuous";
+
+    EXPECT_EQ(tuned_after_bounce, tuned)
+        << "set_threads() reverted the tuned evaluation parameters: searched "
+        << tuned_after_bounce << " nodes, expected " << tuned << " (untuned is " << baseline << ")";
+}
 
 } // namespace
 } // namespace havoc

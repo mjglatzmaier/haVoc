@@ -182,6 +182,14 @@ class SearchEngine {
     /// context later is then a change to this function and nothing else.
     Movehistory& thread_history(int thread_id) { return search_threads_[thread_id]->history; }
 
+    /// Push every piece of engine-owned state onto one search thread.
+    /// Threadpool::init() destroys and recreates Searchthread objects, so this
+    /// is also the restore path after a Threads change: anything per-thread
+    /// that the engine owns must be listed here exactly once, or it silently
+    /// reverts to its default the next time the pool is resized. `carried` is
+    /// the history to restore, or nullptr to leave the thread's own alone.
+    void configure_thread(unsigned i, const Movehistory* carried);
+
     // Search methods
     void iterative_deepening(position& p, U16 depth, bool silent, int thread_id);
 
