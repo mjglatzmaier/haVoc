@@ -1242,5 +1242,36 @@ TEST_F(SearchTest, SetThreadsClampsToTheAdvertisedRange) {
     EXPECT_EQ(engine.threads(), 1u);
 }
 
+TEST_F(SearchTest, TerminalPositionsStillAnswerWithBestmove) {
+    // A "go" on a position with no legal move produced no output at all: the
+    // emission was guarded on the root move list being non-empty, so checkmate
+    // and stalemate silently swallowed the reply and left the GUI waiting on
+    // one that was never coming. That is an unbounded hang, and reaching the
+    // end of a game is exactly when an analysis GUI asks.
+    for (const auto& [name, fen] : std::vector<std::pair<std::string, std::string>>{
+             {"checkmate", "7k/5KQ1/8/8/8/8/8/8 b - - 0 1"},
+             {"stalemate", "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"}}) {
+        auto pos = make_pos(fen);
+
+        SearchLimits lims{};
+        lims.wtime = 1000;
+        lims.btime = 1000;
+
+        // The reply goes to stdout, which is the thing under test, so capture
+        // it rather than running the search silently.
+        std::ostringstream captured;
+        std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
+        {
+            SearchEngine engine;
+            engine.start(pos, lims, /*silent=*/false);
+            engine.wait();
+        }
+        std::cout.rdbuf(saved);
+
+        EXPECT_NE(captured.str().find("bestmove"), std::string::npos)
+            << name << " produced no bestmove at all: \"" << captured.str() << "\"";
+    }
+}
+
 } // namespace
 } // namespace havoc
