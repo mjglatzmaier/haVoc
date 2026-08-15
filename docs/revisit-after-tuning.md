@@ -362,6 +362,24 @@ collapses from 8164 to 709. The positive signal that quiet ordering actually
 depends on is destroyed, and a move is punished for having been tried in a
 line that failed low for reasons having nothing to do with that move.
 
+**Later corroboration.** The history-pruning site was instrumented directly
+over a full bench: `seen=61534 fire=0 min=-193`. It is reached sixty-one
+thousand times and prunes nothing, and the most negative score ever seen there
+is -193 against a depth-1 threshold of -4096. This measures the rule rather
+than the table and reaches the same conclusion.
+
+That re-derivation cost a session's work because nothing at the parameter
+definitions pointed here. The constants in `parameters.hpp` now carry the
+measurements and a pointer to this section. If you are reading this because you
+just discovered these thresholds are unreachable: that is the documented
+finding, not a new one, and both repair directions are already measured.
+
+One real defect did come out of that pass. `lmr_hist_good` was applied as
+`R = std::max(0u, R - 1)` with `R` unsigned, so when `reduction()` returned 0 --
+which it does for PV nodes at low depth and move count -- `R - 1` wrapped to
+`UINT_MAX` before the max ran, and the move was extended a ply instead of
+reduced one ply less. Fixed in #123, `+11.4 +/- 14.6` over 1124 games.
+
 **Conclusion.** The cutoff path already does the conventional thing -- bonus to
 the move that cut, malus to the quiets tried before it. The fail-low malus is
 not conventional and should stay off. The two thresholds reading the negative

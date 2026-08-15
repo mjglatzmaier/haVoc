@@ -433,6 +433,17 @@ struct parameters {
     int fp_base = 100;              // ...prune when eval + base + margin*depth <= alpha
     int fp_margin = 90;
     int history_prune_depth = 3;    // history pruning only below this depth
+    // DEAD RULE -- DO NOT RETUNE. See docs/revisit-after-tuning.md, "The quiet
+    // history table cannot support the rules that read it". This margin sits
+    // far outside the range the butterfly table reaches, so the rule never
+    // fires: instrumenting a full bench gives 61534 evaluations of the site and
+    // 0 firings, with an observed minimum of -193 against a depth-1 threshold
+    // of -4096. Retargeting it onto the observed percentiles has been measured
+    // twice (-21.6 +/- 21.6 and -29.7 +/- 28.3) and developing the negative
+    // half of the table to meet it once (-67.4 +/- 29.3). Both directions are
+    // measured, so SPSA cannot rescue it either. The prerequisite is a
+    // better-conditioned table -- the key carries no piece identity -- not a
+    // different number here.
     int history_prune_margin = 4096; // ...and only below -margin*depth
     int see_prune_depth = 1;        // negative-SEE capture pruning depth
     int see_quiet_prune_depth = 5; // quiet moves losing material pruned below this depth
@@ -457,6 +468,8 @@ struct parameters {
     int probcut_margin = 180;       // probcut beta = beta + this
     int probcut_depth_reduction = 4; // verification search depth = depth - this
     int lmr_min_depth = 3;          // late move reductions minimum depth
+    // lmr_hist_bad is dead for the same reason as history_prune_margin above,
+    // and under the same measurements -- do not retune it in isolation.
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
     int lmr_hist_good = 4000;       // reduce one less ply above this
     int best_move_bonus = 2;        // best-move history bonus, times depth
