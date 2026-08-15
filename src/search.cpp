@@ -303,10 +303,11 @@ TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move) {
     if (lims.infinite || lims.ponder || lims.depth > 0)
         return {kNoTimeLimit, kNoTimeLimit};
     if (lims.movetime != 0) {
-        // The GUI asked for exactly this much. There is nothing to ration, so
-        // the soft limit is the hard one and the search runs the clock out.
-        const double t = static_cast<double>(lims.movetime);
-        return {t, t};
+        // The GUI asked for exactly this much, so there is nothing to ration
+        // and no later move to bank the savings for. Leaving a soft limit here
+        // would be actively wrong: the stability scaling would cut a settled
+        // search off at 0.6 of the time the GUI asked it to spend.
+        return {kNoTimeLimit, static_cast<double>(lims.movetime)};
     }
 
     double our_time = (white_to_move ? lims.wtime : lims.btime);
@@ -341,6 +342,18 @@ TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move) {
 
 double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     return estimate_time_budget(lims, white_to_move).hard;
+}
+
+double soft_time_target(double soft, int stable_iterations) {
+    if (soft <= 0.0)
+        return kNoTimeLimit;
+    const double factor =
+        kSoftTimeUnstable - kSoftTimeStep * std::min(stable_iterations, kSoftTimeMaxStable);
+    // kMinSearchTime is a floor, so it has to survive the scaling. Without this
+    // clamp a settled root turns the 50ms the engine is guaranteed on a spent
+    // clock into 30ms, which is the one situation where the margin is being
+    // relied on.
+    return std::max(kMinSearchTime, soft * factor);
 }
 
 double SearchEngine::estimate_max_time(position& p) const {
@@ -500,10 +513,8 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
                 stable_iterations = (best == prev_best) ? stable_iterations + 1 : 0;
                 prev_best = best;
 
-                const double factor =
-                    kSoftTimeUnstable -
-                    kSoftTimeStep * std::min(stable_iterations, kSoftTimeMaxStable);
-                if (search_clock_.elapsed_ms() >= soft_limit_ * factor) {
+                const double target = soft_time_target(soft_limit_, stable_iterations);
+                if (search_clock_.elapsed_ms() >= target) {
                     signals_.stop = true;
                     break;
                 }

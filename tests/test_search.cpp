@@ -471,6 +471,27 @@ TEST(TimeManagement, MovetimeIsHonouredExactly) {
     lims.movetime = 1234;
     lims.wtime = 60000;
     EXPECT_DOUBLE_EQ(estimate_move_time(lims, true), 1234.0);
+
+    // ...and *only* the hard deadline applies. A soft limit here would be
+    // scaled by root stability like any other, so a settled search would stop
+    // at 0.6 * 1234ms and hand back time the GUI explicitly asked it to spend.
+    const auto b = estimate_time_budget(lims, true);
+    EXPECT_DOUBLE_EQ(b.soft, kNoTimeLimit);
+    EXPECT_DOUBLE_EQ(soft_time_target(b.soft, 5), kNoTimeLimit);
+}
+
+TEST(TimeManagement, StabilityScalingNeverBreachesTheFloor) {
+    // A spent clock budgets exactly kMinSearchTime, and that is a floor, not an
+    // aim: it is the least time in which a move can be produced at all. The
+    // stability factor bottoms out at 0.6, so scaling it unguarded would turn
+    // the guarantee into 30ms in the one case that relies on it.
+    for (int stable = 0; stable <= 8; ++stable)
+        EXPECT_GE(soft_time_target(kMinSearchTime, stable), kMinSearchTime) << "stable=" << stable;
+
+    // Above the floor the scaling is live and monotonically decreasing.
+    EXPECT_DOUBLE_EQ(soft_time_target(1000.0, 0), 1000.0 * kSoftTimeUnstable);
+    EXPECT_LT(soft_time_target(1000.0, 5), soft_time_target(1000.0, 0));
+    EXPECT_DOUBLE_EQ(soft_time_target(1000.0, 9), soft_time_target(1000.0, kSoftTimeMaxStable));
 }
 
 TEST(TimeManagement, SoftLimitNeverExceedsTheHardOne) {

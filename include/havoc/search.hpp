@@ -76,6 +76,15 @@ TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move);
 /// The hard deadline alone, for callers that only need the ceiling.
 double estimate_move_time(const SearchLimits& lims, bool white_to_move);
 
+/// The elapsed time at which a search holding `soft` as its budget should
+/// decline to start another iteration, given how many consecutive completed
+/// iterations have agreed on the root best move.
+///
+/// Free-standing so the scaling can be tested without running a search.
+/// Returns kNoTimeLimit when there is no soft budget, which is the signal to
+/// leave the decision entirely to the hard deadline.
+double soft_time_target(double soft, int stable_iterations);
+
 // ─── Search signals ─────────────────────────────────────────────────────────
 
 struct SearchSignals {
