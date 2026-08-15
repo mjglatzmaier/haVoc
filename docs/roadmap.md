@@ -134,6 +134,44 @@ which is the question the check exists to answer.
   per-node inner loops are already within a single translation unit. Note also
   that faster does not imply stronger in this engine: see TT prefetch above,
   which was node-identical, genuinely faster, and −14 Elo.
+- **Profile-guided optimisation.** The other obvious free win, and the one that
+  usually pays where LTO does not: gcc `-fprofile-generate`, a training run over
+  `bench` plus a depth-18 search, then `-fprofile-use`. It does produce a real
+  speedup, and it is smaller than it needs to be.
+
+  Measured on an idle machine against five positions **not in the training set**,
+  at fixed depth 18, three interleaved runs each. Node count identical at
+  93,510,976 in every run, which is the proof that both binaries search the same
+  tree and only the codegen differs:
+
+  | build | mean wall time | nps |
+  |---|---|---|
+  | `-O3 -march=native` | 48.900 s | 1,912,298 |
+  | the same, plus PGO | 48.291 s | 1,936,434 |
+
+  **+1.26%**, and every PGO run beat every plain run. On the training workload
+  itself (15 benches in one warm process) it reaches +2.0% — that figure is the
+  ceiling, not the expectation, because the profile was trained on that exact
+  workload.
+
+  1.3% is worth on the order of 1 Elo. Against that: PGO makes the build a
+  two-stage affair, makes the binary depend on a training run that has to be
+  kept representative, and makes builds irreproducible. That is a poor trade for
+  a hobby engine, and the TT prefetch result above is the standing reminder that
+  a percent of nps is not owed to us as Elo. **Not adopted.** Revisit only if
+  someone finds a training workload that gets this into the 5–10% range that
+  other engines report.
+
+  **If you do retry this, note the trap that made the first measurement read
+  0.0%.** gcc names its `.gcda` files after the *mangled absolute path of the
+  object file*, so a profile generated in `/tmp/b-pgogen` is invisible to a
+  `-fprofile-use` build in `/tmp/b-pgouse`: the compiler silently finds nothing
+  and emits ordinary code. It does warn — `-Wmissing-profile` — but the
+  `-Wno-missing-profile` that everyone copies off the internet to quiet the
+  handful of genuinely unexercised files suppresses exactly the warning that
+  tells you the whole thing did nothing. Generate and use in the *same* build
+  directory, and count the `missing-profile` warnings rather than hiding them:
+  two is right for this tree, sixteen means you are measuring nothing.
 - **Obscure engines as rating anchors.** GopherCheck and Rusty-Rival implied 2284
   and 2507 for the same candidate. Sungorus 1.4 implied 2192 where Fruit and
   Glaurung implied 2429 and 2397 in the same run, despite 1583 CCRL games behind
