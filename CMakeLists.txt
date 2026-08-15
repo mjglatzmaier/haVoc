@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(haVoc
-    VERSION 2.0.0
+    VERSION 2.1.0
     DESCRIPTION "A modern UCI chess engine"
-    HOMEPAGE_URL "https://github.com/mjglatzmaier/chess"
+    HOMEPAGE_URL "https://github.com/mjglatzmaier/haVoc"
     LANGUAGES CXX
 )
 

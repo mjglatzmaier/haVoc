@@ -8,9 +8,9 @@
 namespace havoc {
 
 inline constexpr int VERSION_MAJOR = 2;
-inline constexpr int VERSION_MINOR = 0;
+inline constexpr int VERSION_MINOR = 1;
 inline constexpr int VERSION_PATCH = 0;
-inline constexpr std::string_view VERSION_STRING = "2.0.0";
+inline constexpr std::string_view VERSION_STRING = "2.1.0";
 inline constexpr std::string_view ENGINE_NAME = "haVoc";
 inline constexpr std::string_view ENGINE_AUTHOR = "M.Glatzmaier";
 
