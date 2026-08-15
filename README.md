@@ -1,5 +1,10 @@
 # haVoc
 
+[![CI](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/mjglatzmaier/haVoc.svg)](LICENSE)
+
 A UCI chess engine written in C++20.
 
 haVoc is a hobby chess engine I've developed on and off for several years.
