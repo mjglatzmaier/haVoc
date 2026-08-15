@@ -115,6 +115,15 @@ which is the question the check exists to answer.
 ### Did not work
 
 - **Texel tuning.** Covered in section 5 — do not retry it.
+- **Moving `moves_left` off 25.** The sudden-death divisor in the time budget
+  (`our_time / moves_left + inc * 0.9`) is the single largest lever in a formula
+  that is worth +35–42 Elo, and 25 was never measured — it was assumed. Swept as
+  a 4-engine gauntlet against the shipped build rather than as serial SPRTs, so
+  all three candidates shared one machine occupancy: **4400 games at 10+0.1,
+  base(25) +7, 30 +7, 18 −12, 22 −16, ±13**. 25 is not beaten, and 30 only ties
+  it. Left alone. Worth knowing the shape: the curve is flat between 25 and 30
+  and falls away below, so if this is ever revisited the interesting direction is
+  *up*, not down, and it will need far more games than this to resolve.
 - **Spending extra time when the score drops.** The standard trick: when the score
   at the top of an iteration is worse than the previous completed iteration,
   extend the soft limit in proportion to the drop (`kSoftTimeDropPerCp = 0.006`,
