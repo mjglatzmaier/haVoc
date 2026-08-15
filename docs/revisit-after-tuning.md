@@ -389,6 +389,55 @@ have now been measured. If quiet history is to drive pruning here it needs a
 better-conditioned table first -- the current one is keyed on (colour, from,
 to) with no piece identity -- not a different threshold.
 
+## Conditioning the quiet history table on the moving piece: measured, negative
+
+The section above ends by saying the prerequisite for any rule reading the
+negative half of quiet history is a better-conditioned table, "the current one
+is keyed on (colour, from, to) with no piece identity". That prescription has
+now been tested directly, and it does not hold. Every way of putting the piece
+into the key made move ordering worse.
+
+All figures are bench nodes at the same depth, lower is better, against a
+baseline of 694503.
+
+| keying | bench | vs baseline |
+| --- | --- | --- |
+| `[colour][from][to]` (current) | 694503 | -- |
+| `[colour][piece][to]` | 771931 | +11.1% |
+| `[colour][piece][from][to]` | 963945 | +38.8% |
+| `[colour][from][to]` + summed `[colour][piece][to]` plane | 814764 | +17.3% |
+| ...same, piece plane at quarter weight | 909552 | +31.0% |
+
+The runs went through a single `history_slot()` accessor, and a control that
+routed the *original* key through that same new plumbing reproduced 694503
+byte for byte. So the plumbing is not what moved these numbers.
+
+**Why adding the piece hurts.** Within any one position the from-square already
+determines the piece, so the piece is only new information across positions --
+where sliding lines are shared and d1-d4 might be a queen in one game and a
+rook in the next. That is a real but small gain in resolution, and it is bought
+by splitting every counter six ways. The table then needs roughly six times the
+samples to reach the same confidence, and quiet history is already sparse: a
+cutoff node has tried a mean of 0.34 quiets before it cuts. Dilution dominates
+resolution. Dropping the from-square instead (`[piece][to]`) avoids the
+dilution but throws away the finer move identity, and also loses: it is close
+to an unconditioned marginal of what continuation history already stores.
+
+**A caution on these numbers.** Bench node count is chaotic with respect to
+ordering and pruning changes -- small parameter moves swing it 20%, and the
+quarter-weight row above is *worse* than the full-weight row, which a smooth
+signal would not do. No single row here should be read as a precise effect
+size. What is solid is the pattern: four independent variants, none of them
+within reach of baseline, against a control that reproduced it exactly. None
+of them earned an SPRT.
+
+**Conclusion.** (colour, from, to) is not an oversight, it is a reasonable
+optimum for a table this sparse, and "condition it better" is not the
+unexplored lever the previous section assumed. If the negative half of quiet
+history is ever to drive pruning, the constraint to attack is the *sparsity* --
+how few samples each slot gets -- not the key. Nothing here changes the
+standing advice that the thresholds themselves stay dead.
+
 ## Why Texel tuning never produced anything
 
 Three independent defects, stacked. Any one alone would have been enough to
