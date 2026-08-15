@@ -17,6 +17,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <random>
 #include <sstream>
 #include <string>
@@ -783,17 +784,23 @@ TEST_F(EvalTest, OppositeColorBishops_NotScaledWithPiecesOnBoard) {
 // ─── Parameter round-trip ──────────────────────────────────────────────────
 
 TEST_F(EvalTest, ParameterSaveLoad) {
+    // Not /tmp: it does not exist on Windows, so save() failed silently and the
+    // test reported a mismatch against the untouched defaults rather than the
+    // write error that actually happened.
+    const auto path =
+        (std::filesystem::temp_directory_path() / "havoc_test_params.txt").string();
+
     havoc::parameters p;
     p.king_open_file_penalty = 42;
     p.opposite_bishop_scale = 77;
-    p.save("/tmp/havoc_test_params.txt");
+    ASSERT_TRUE(p.save(path)) << "could not write " << path;
 
     havoc::parameters p2;
-    p2.load("/tmp/havoc_test_params.txt");
+    ASSERT_TRUE(p2.load(path)) << "could not read " << path;
     EXPECT_EQ(p2.king_open_file_penalty, 42);
     EXPECT_EQ(p2.opposite_bishop_scale, 77);
 
-    std::remove("/tmp/havoc_test_params.txt");
+    std::filesystem::remove(path);
 }
 
 // ─── Tablebase stub ────────────────────────────────────────────────────────
