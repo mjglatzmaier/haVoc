@@ -57,6 +57,14 @@ function(havoc_set_warnings target)
     set(MSVC_WARNINGS
         /W4
         /permissive-
+        # Do not apply any of the above to headers reached through <angle
+        # brackets>, i.e. the standard library. /w14242 below is on by intent
+        # for our code, but MSVC's own <xutility> trips it repeatedly inside
+        # std::fill, and with /WX that fails the build over code we do not own
+        # and cannot fix. GCC and Clang exempt system headers by default; MSVC
+        # has to be told.
+        /external:anglebrackets
+        /external:W0
         /w14242  # conversion, possible loss of data
         /w14254  # operator conversion, possible loss of data
         /w14263  # function does not override base class virtual
