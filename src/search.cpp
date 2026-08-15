@@ -129,15 +129,32 @@ void SearchEngine::configure_thread(unsigned i, const Movehistory* carried) {
     // masked by stale hits for the rest of the session.
     t->pawn_tbl.clear();
     t->material_tbl.clear();
-    t->set_evaluator(evaluator_factory_
-                         ? evaluator_factory_(*t)
-                         : std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params));
+
+    auto e = evaluator_factory_
+                 ? evaluator_factory_(*t)
+                 : std::unique_ptr<IEvaluator>(
+                       std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params));
+    // A factory that returns nothing would leave the thread with no evaluator
+    // at all, which is a null dereference on the first node rather than
+    // anything diagnosable.
+    assert(e && "evaluator factory returned nullptr");
+    if (!e)
+        e = std::make_unique<HCEEvaluator>(t->pawn_tbl, t->material_tbl, t->params);
+    t->set_evaluator(std::move(e));
 
     if (carried)
         t->history = *carried;
 }
 
 void SearchEngine::set_evaluator_factory(EvaluatorFactory factory) {
+    // configure_thread() destroys the evaluator a search thread may be calling
+    // into right now, so reconfiguring under a live search is a use-after-free.
+    // Waiting rather than refusing, as the UCI layer does for "position": a
+    // caller changing the evaluator has no use for the answer being computed
+    // with the old one.
+    stop();
+    wait();
+
     evaluator_factory_ = std::move(factory);
     for (unsigned i = 0; i < search_threads_.size(); ++i)
         configure_thread(i, nullptr);
@@ -222,8 +239,12 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
         // search therefore starts by rebuilding that state from the board.
         // Without this an accumulator would be one game's worth of moves out of
         // date and every evaluation after it silently wrong.
-        if (search_threads_[i]->wants_deltas())
-            search_threads_[i]->evaluator().refresh(*positions_[i]);
+        //
+        // Unconditional, unlike push/pop: this happens once per search rather
+        // than per node, so it is not worth making an evaluator that keeps
+        // state but does not want deltas -- a cache, say -- opt in separately
+        // and be silently skipped if it forgets.
+        search_threads_[i]->evaluator().refresh(*positions_[i]);
     }
     completed_depth_.assign(search_threads_.size(), 0);
 

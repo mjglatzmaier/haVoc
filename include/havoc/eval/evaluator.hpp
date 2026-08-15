@@ -59,7 +59,10 @@ class IEvaluator {
     ///
     /// Needed whenever the board changes by something other than a move --
     /// setting up a new position, or replaying a game from UCI -- since there
-    /// is no delta to follow across such a jump.
+    /// is no delta to follow across such a jump. The search calls this once per
+    /// thread at the start of every search, unconditionally: unlike push/pop it
+    /// is not per-node, so an evaluator that keeps state without wanting deltas
+    /// still gets it.
     virtual void refresh(const position& pos) { (void)pos; }
 };
 
