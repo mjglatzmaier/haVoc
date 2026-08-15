@@ -693,6 +693,53 @@ TEST_F(EvalTest, WrongRookPawnAndWrongBishopIsDrawn) {
     }
 }
 
+TEST_F(EvalTest, WrongRookPawnIsDrawnWhenTheKingCanStillReachTheCorner) {
+    havoc::parameters params;
+    havoc::pawn_table pt(params);
+    havoc::material_table mt(params);
+    havoc::HCEEvaluator eval(pt, mt, params);
+
+    struct Case {
+        const char* fen;
+        const char* why;
+    };
+
+    // The theorem does not require the defending king to be in the corner
+    // already, only that it gets there before the pawn does. Requiring it to
+    // have arrived put a cliff in the evaluation: with the pawn on h2, a black
+    // king on h7 scored 0 while the same king on h6 scored +417, and the search
+    // steered for the higher side of the cliff and reported +132 on a position
+    // it cannot win.
+    const Case drawn[] = {
+        {"8/8/7k/8/8/8/7P/5BK1 w - - 0 1", "h6 is two moves from h8, the pawn needs five"},
+        {"8/8/8/7k/8/8/7P/5BK1 w - - 0 1", "h5 is three moves from h8"},
+        {"5k2/8/8/8/8/8/7P/5BK1 w - - 0 1", "f8 walks to h8 along the back rank"},
+        {"8/8/8/8/7k/8/7P/5BK1 w - - 0 1", "h4 needs four moves and the pawn five, so even"
+                                           " with White to move the king is there first"},
+    };
+    for (const auto& c : drawn) {
+        auto pos = make_pos(c.fen);
+        EXPECT_EQ(eval.evaluate(pos), 0)
+            << "king arrives in time, so still a dead draw: " << c.why << " (" << c.fen << ")";
+    }
+
+    // A king that does not arrive in time must still lose. The first case is
+    // the one that pins the pawn's travel time down: a2 promotes in five moves
+    // rather than six because of the double step, and a black king on g8 needs
+    // six, so counting ranks instead of moves would call this a draw.
+    const Case winning[] = {
+        {"6k1/8/8/8/8/8/PB6/6K1 w - - 0 1", "g8 needs six moves, the a2 pawn only five"},
+        {"8/8/6KP/7k/8/8/8/5B2 w - - 0 1", "the pawn is on h6 and h5 is three moves away"},
+        {"3k4/8/8/8/7P/8/8/1B4K1 w - - 0 1", "d8 and the h4 pawn are both four moves from h8,"
+                                             " and White moves first"},
+    };
+    for (const auto& c : winning) {
+        auto pos = make_pos(c.fen);
+        EXPECT_GT(eval.evaluate(pos), 200)
+            << "king is too slow, so this is still won: " << c.why << " (" << c.fen << ")";
+    }
+}
+
 TEST_F(EvalTest, OpenFilesBesideTheKingAreScoredAsDanger) {
     havoc::parameters on;
     havoc::parameters off;
