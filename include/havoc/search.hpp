@@ -10,6 +10,8 @@
 #include "havoc/utils.hpp"
 
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -159,6 +161,27 @@ class SearchEngine {
     /// only for a single-threaded search -- which is what the tests run.
     const Movehistory& history() const { return search_threads_[0]->history; }
 
+    /// How each search thread's evaluator is built.
+    ///
+    /// The engine owns one evaluator per thread and rebuilds them whenever the
+    /// thread count changes, so "which evaluator" cannot be a property of a
+    /// thread the caller hands in -- it has to be a rule the engine can reapply.
+    /// This is that rule. It is the seam an NNUE evaluator will be installed
+    /// through, and the one tests use to substitute an instrumented evaluator
+    /// without the engine knowing anything about it.
+    using EvaluatorFactory = std::function<std::unique_ptr<IEvaluator>(Searchthread&)>;
+
+    /// Installs a factory and rebuilds every thread's evaluator with it.
+    /// Passing nullptr restores the built-in hand-crafted evaluation.
+    void set_evaluator_factory(EvaluatorFactory factory);
+
+    /// Name of the evaluator installed on one search thread. Which evaluator a
+    /// thread ended up with is otherwise unobservable, and it is exactly what
+    /// silently reverts when the pool is rebuilt.
+    [[nodiscard]] std::string evaluator_name(unsigned thread_id) const {
+        return search_threads_[static_cast<int>(thread_id)]->evaluator().name();
+    }
+
   private:
     hash_table tt_;
     Threadpool<Searchthread> search_threads_;
@@ -189,6 +212,36 @@ class SearchEngine {
     /// reverts to its default the next time the pool is resized. `carried` is
     /// the history to restore, or nullptr to leave the thread's own alone.
     void configure_thread(unsigned i, const Movehistory* carried);
+
+    /// See set_evaluator_factory. Null means the built-in HCE.
+    EvaluatorFactory evaluator_factory_;
+
+    /// Make the move and tell an incremental evaluator what changed. Both
+    /// halves live here so that a new call site cannot make a move without
+    /// telling the evaluator, which would silently desynchronise it.
+    void do_move(position& pos, const Move& m, int thread_id) {
+        pos.do_move(m);
+        if (search_threads_[thread_id]->wants_deltas())
+            search_threads_[thread_id]->evaluator().push(pos, pos.delta());
+    }
+
+    void undo_move(position& pos, const Move& m, int thread_id) {
+        if (search_threads_[thread_id]->wants_deltas())
+            search_threads_[thread_id]->evaluator().pop();
+        pos.undo_move(m);
+    }
+
+    void do_null_move(position& pos, int thread_id) {
+        pos.do_null_move();
+        if (search_threads_[thread_id]->wants_deltas())
+            search_threads_[thread_id]->evaluator().push(pos, pos.delta());
+    }
+
+    void undo_null_move(position& pos, int thread_id) {
+        if (search_threads_[thread_id]->wants_deltas())
+            search_threads_[thread_id]->evaluator().pop();
+        pos.undo_null_move();
+    }
 
     // Search methods
     void iterative_deepening(position& p, U16 depth, bool silent, int thread_id);
