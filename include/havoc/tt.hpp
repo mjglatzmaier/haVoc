@@ -10,6 +10,13 @@
 
 namespace havoc {
 
+/// Bounds for the Hash spin option advertised by the "uci" handshake. uci.cpp
+/// prints these and hash_table::resize() enforces them, so the advertised range
+/// and the enforced range cannot drift apart.
+constexpr int kMinHashMb = 1;
+constexpr int kMaxHashMb = 33554432;
+constexpr int kDefaultHashMb = 1024;
+
 // ─── Bounds ─────────────────────────────────────────────────────────────────
 
 enum Bound { bound_low, bound_high, bound_exact, no_bound };

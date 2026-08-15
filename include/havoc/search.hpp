@@ -18,12 +18,10 @@ namespace havoc {
 
 /// Bounds for the spin options advertised by the "uci" handshake. Declared here
 /// so the advertised range and the enforced range cannot drift apart: uci.cpp
-/// prints these, and set_threads()/set_hash_size() clamp to them.
+/// prints these, and set_threads() clamps to them. The Hash bounds live in
+/// tt.hpp, next to the table they constrain.
 constexpr int kMinThreads = 1;
 constexpr int kMaxThreads = 1024;
-constexpr int kMinHashMb = 1;
-constexpr int kMaxHashMb = 33554432;
-constexpr int kDefaultHashMb = 1024;
 
 // ─── Search limits (from UCI go command) ────────────────────────────────────
 

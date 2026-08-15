@@ -923,13 +923,25 @@ TEST_F(SearchTest, HashResizeRefusesImpossibleSizeAndKeepsTheOldTable) {
     hash_table tt;
     ASSERT_TRUE(tt.resize(1));
 
-    // The advertised maximum is 32 TB. No machine running this test has it, so
-    // the allocation must fail as an error rather than as an exception.
-    EXPECT_FALSE(tt.resize(static_cast<size_t>(kMaxHashMb)));
+    // Out of the advertised range, so this is refused up front without any
+    // allocation being attempted. An earlier version of this test asked for the
+    // advertised maximum of 32 TB and relied on the allocator saying no; that
+    // is not portable -- a kernel that overcommits hands the memory over and
+    // then kills the process when the table is first touched, which is exactly
+    // what happened on the macOS runner.
+    EXPECT_FALSE(tt.resize(size_t(kMaxHashMb) + 1));
+    EXPECT_FALSE(tt.resize(0));
 
     // resize() used to release the old table before allocating the new one, so
-    // a failed resize left entries_ null with a non-zero cluster_count_. The
-    // table has to still be usable after a refusal.
+    // a failed resize left entries_ null with a non-zero cluster_count_. Prove
+    // the table still stores and fetches after a refusal, rather than only that
+    // a later resize succeeds.
+    const Move m(E2, E4, quiet);
+    tt.save(0x123456789ABCDEF0ULL, 10, bound_exact, m, 150, true);
+    hash_data hd;
+    EXPECT_TRUE(tt.fetch(0x123456789ABCDEF0ULL, hd));
+    EXPECT_EQ(hd.score, 150);
+
     EXPECT_TRUE(tt.resize(1));
 }
 

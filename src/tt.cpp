@@ -22,6 +22,12 @@ hash_table::hash_table() {
     (void)resize(128);
 }
 bool hash_table::resize(size_t size_mb) {
+    // Refuse out-of-range requests outright rather than discovering they are
+    // impossible partway through an allocation. set_hash_size() clamps, but
+    // resize() is public and is called directly by tests and tools.
+    if (size_mb < size_t(kMinHashMb) || size_mb > size_t(kMaxHashMb))
+        return false;
+
     size_t clusters = 1024ULL * 1024 * size_mb / sizeof(hash_cluster);
     clusters = next_pow2(clusters);
     if (clusters < 1024)
@@ -31,6 +37,11 @@ bool hash_table::resize(size_t size_mb) {
     // machine has, and throwing out of here killed the process; dropping the
     // existing table first would leave a null entries_ behind even if the caller
     // did catch. Refusing the change keeps the engine playable.
+    //
+    // This catches an allocator that reports failure. It cannot catch a kernel
+    // that overcommits and then kills the process when the table is first
+    // touched -- that needs a physical-memory query, which is per-platform and
+    // is not attempted here.
     std::unique_ptr<hash_cluster[]> fresh;
     try {
         fresh = std::make_unique<hash_cluster[]>(clusters);
