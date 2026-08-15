@@ -237,6 +237,29 @@ bool position::is_material_draw() const {
     if (w <= 1 && b <= 1)
         return true;
 
+    // Bishops only, and every bishop on the board standing on the same color
+    // complex. No mate exists, however many bishops there are.
+    //
+    // Mating needs the losing king attacked with no legal reply. Only bishops
+    // of the shared color can give that check, so the mated king has to stand
+    // on that color, which leaves it at least two adjacent squares of the other
+    // color that no bishop can ever see. Even in the corner -- king on a1, dark
+    // bishops -- the flight squares a2 and b1 are light, and the only piece
+    // that could cover both is the enemy king on b2, which is adjacent to a1
+    // and therefore illegal. So the position is dead.
+    //
+    // This is reachable only by underpromotion, but the engine does not need to
+    // reach it to be hurt by it: without this test it scores king and two
+    // same-colored bishops against a bare king at +6.7 pawns and will happily
+    // trade into it. It also generalises the KB-vs-KB case above to any number
+    // of bishops sharing a color.
+    if (wn == 0 && bn == 0) {
+        const U64 bishops = get_pieces<white, bishop>() | get_pieces<black, bishop>();
+        if (bishops && ((bishops & bitboards::colored_sqs[white]) == 0ULL ||
+                        (bishops & bitboards::colored_sqs[black]) == 0ULL))
+            return true;
+    }
+
     // Two knights against a bare king cannot be forced, and the arbiter will
     // never award it, so treating it as anything but a draw only makes the
     // engine trade into it.

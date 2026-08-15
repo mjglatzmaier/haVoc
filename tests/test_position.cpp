@@ -372,10 +372,17 @@ TEST_F(PositionTest, RecognisesDeadDrawnMaterial) {
     EXPECT_TRUE(material_draw("8/8/2b1k3/8/8/3NK3/8/8 w - - 0 1")); // KN vs KB
     // Two knights cannot force mate, and no arbiter will ever award it.
     EXPECT_TRUE(material_draw("8/8/4k3/8/8/2NNK3/8/8 w - - 0 1")); // KNN vs K
+    // Bishops that all share a color complex can never mate, whatever the
+    // count: the mated king would have to stand on that color, and its
+    // opposite-colored flight squares are unreachable to every bishop.
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/3BKB2/8/8 w - - 0 1"));  // d3+f3, both light
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/2B1K1B1/8/8 w - - 0 1")); // c3+g3, both dark
+    EXPECT_TRUE(material_draw("8/8/2b1k3/8/8/3BKB2/8/8 w - - 0 1")); // all three light
+    EXPECT_TRUE(material_draw("8/8/4k3/8/8/1B1BKB2/8/8 w - - 0 1")); // three light bishops
 
     // These are genuinely winnable and must not be written off.
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3BK3/4P3/8 w - - 0 1")); // KBP vs K
-    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3BKB2/8/8 w - - 0 1"));  // KBB vs K
+    EXPECT_FALSE(material_draw("8/8/4k3/8/8/3BKB2/3B4/8 w - - 0 1")); // d3+f3 light, d2 dark
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3NKB2/8/8 w - - 0 1"));  // KBN vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3RK3/8/8 w - - 0 1"));   // KR vs K
     EXPECT_FALSE(material_draw("8/8/4k3/8/8/3QK3/8/8 w - - 0 1"));   // KQ vs K
