@@ -68,15 +68,29 @@ measured +52 in self-play and did not show up in the gauntlet at all.
 as neutral under policy; several in a row can be real regressions. Periodically
 SPRT `main` against a snapshot 5–10 PRs back.
 
-The first such check was run against PR #67, seven PRs back, at 10+0.1. It is
-**unresolved and mildly negative: −13.0 ± 27.2 over 494 games** (LOS 17.3%, LLR
-−0.68 of ±2.94), stopped early to move to faster hardware. Two things to carry
-forward from it. The concern is live — the accumulated delta leans the wrong way
-and needs finishing. And the run is its own cautionary tale: at 86 games it read
-**+39.3 ± 67.5 with LOS 87.5%**, and was reported as "leaning positive, no
-accumulated regression". It reversed completely by 400 games. An early lean in a
-low-power run is not a weak version of the answer, it is noise, and the same trap
-that manufactures dead evaluation parameters at 300 positions operates here.
+The first such check was run against PR #67, seven PRs back, at 10+0.1. It was
+stopped early at **−13.0 ± 27.2 over 494 games** to move to faster hardware, and
+was recorded as unresolved and mildly negative.
+
+It has now been repeated on the faster machine, `main` against #69, again at
+10+0.1 and again seven PRs of accumulated change. **There is no regression:
+−3.4 ± 16.1 over 1357 games** (499−519−339, LOS 34.1%). The concern is closed.
+
+The two runs together are the useful artefact, because both of them lied early
+and in opposite directions. The first read **+39.3 ± 67.5 with LOS 87.5%** at 86
+games and was reported as "leaning positive, no accumulated regression"; it
+reversed completely by 400. The second read **−52 Elo** at 120 games and was
+reported as a real regression; it decayed monotonically — −13.3 at 877, −9.1 at
+1159, −3.7 at 1300 — to nothing. Neither early reading was a weak version of the
+final answer. Both were noise with a confident sign attached, and in each case
+the sign was the thing that got reported. This is the same trap that manufactures
+dead evaluation parameters at 300 positions. Do not report a direction from a
+drift check below roughly 800 games; report that it is running.
+
+What this does *not* establish is that the last seven PRs were individually
+sound. A ±16 interval still admits several −5 merges hiding inside it. It
+establishes that the accumulated delta is not large enough to be worth chasing,
+which is the question the check exists to answer.
 
 ---
 
