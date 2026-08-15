@@ -329,6 +329,7 @@ void position::do_move(const Move& m) {
     ifo.cmask = static_cast<U16>(ifo.cmask & castle_rights_after(from) & castle_rights_after(to));
 
     ifo.captured = no_piece;
+    pcs.delta.clear();
 
     if (t == quiet) {
         pcs.do_quiet(us, p, from, to, ifo);
@@ -422,6 +423,12 @@ void position::undo_move(const Move& m) {
     const Color us = Color(to_move() ^ 1);
     Piece cp = ifo.captured;
 
+    // Cleared on the way in as well as on the way out: undoing runs the same
+    // primitives, so without this the move's own events would still be present
+    // and the inverse events would be appended to them, overflowing a buffer
+    // sized for one mutation.
+    pcs.delta.clear();
+
     if (t == quiet) {
         pcs.do_quiet(us, p, from, to, ifo);
     } else if (t == capture) {
@@ -450,6 +457,13 @@ void position::undo_move(const Move& m) {
     }
     ifo = history_.back();
     history_.pop_back();
+
+    // Undoing runs the same primitives, so they have just recorded the inverse
+    // events. Those describe a mutation no evaluator asked about -- an
+    // accumulator pops its own stack rather than replaying backwards -- so the
+    // delta is emptied here. That keeps the rule simple enough to rely on: the
+    // delta is non-empty only immediately after a move was made.
+    pcs.delta.clear();
 }
 
 // ─── null moves ─────────────────────────────────────────────────────────────
@@ -459,6 +473,7 @@ void position::do_null_move() {
     const Color them = Color(us ^ 1);
 
     history_.push_back(ifo);
+    pcs.delta.clear();
 
     if (ifo.eps != no_square) {
         ifo.key ^= zobrist::ep(util::col(ifo.eps));
@@ -480,6 +495,7 @@ void position::do_null_move() {
 void position::undo_null_move() {
     ifo = history_.back();
     history_.pop_back();
+    pcs.delta.clear();
 }
 
 // ─── SEE ────────────────────────────────────────────────────────────────────
