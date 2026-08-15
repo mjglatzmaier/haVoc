@@ -84,7 +84,22 @@ void SearchEngine::set_threads(int n) {
     // enforced: "setoption name Threads value 99999" tried to start 99999
     // threads and wedged the engine.
     n = std::clamp(n, kMinThreads, kMaxThreads);
+
+    // Threadpool::init() destroys and recreates every Searchthread, and the
+    // move-ordering history lives on those objects. start() documents that
+    // history persists through a game and is reset only by ucinewgame, and a
+    // GUI may change Threads at any point, so carry the tables across instead
+    // of quietly returning every thread to ordering-blind mid-game.
+    const bool had_threads = search_threads_.size() > 0;
+    Movehistory carried;
+    if (had_threads)
+        carried = search_threads_[0]->history;
+
     search_threads_.init(n);
+
+    if (had_threads)
+        for (unsigned i = 0; i < search_threads_.size(); ++i)
+            search_threads_[i]->history = carried;
 }
 
 bool SearchEngine::set_hash_size(int mb) {
