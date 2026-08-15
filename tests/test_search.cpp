@@ -1270,6 +1270,52 @@ TEST_F(SearchTest, TerminalPositionsStillAnswerWithBestmove) {
 
         EXPECT_NE(captured.str().find("bestmove"), std::string::npos)
             << name << " produced no bestmove at all: \"" << captured.str() << "\"";
+}
+
+TEST_F(SearchTest, StateChangingCommandsWaitForTheSearch) {
+    // "stop" only raises a flag and returns, so a GUI that stops and then sets
+    // up the next position -- which is what a GUI does -- was rewriting state
+    // the search threads were still reading.
+    //
+    // Two of these were reproducible segfaults in a plain release build, not
+    // merely theory: "setoption name Hash" reallocates the table the search is
+    // reading, and "setoption name Threads" reallocates the pool the running
+    // threads live in. ThreadSanitizer additionally reported "position" and
+    // "ucinewgame" tearing the position and table out from under the search --
+    // ~2600 and ~3200 reports against a 6-report baseline for an undisturbed
+    // search, the baseline being the intentional lockless races in the table.
+    //
+    // Asserting the search has actually finished is what pins it. Relying on
+    // the crash would mean a test that takes the whole suite down with it, and
+    // would say nothing at all on the runs where the race happened to be lost.
+    for (const std::string& command : {std::string("position startpos moves e2e4"),
+                                       std::string("ucinewgame"),
+                                       std::string("setoption name Hash value 8"),
+                                       std::string("setoption name Threads value 2"),
+                                       std::string("go depth 4")}) {
+        auto pos = make_pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+        SearchEngine engine;
+        SearchLimits lims{};
+        lims.infinite = true;
+
+        engine.start(pos, lims, /*silent=*/true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        ASSERT_TRUE(engine.searching()) << "an infinite search should still be running";
+
+        auto scratch = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        uci::parse_command(command, engine, scratch);
+
+        // "go" starts a fresh search of its own, so it is finished rather than
+        // idle that matters; the others must leave the engine idle outright.
+        if (command.rfind("go", 0) == 0)
+            engine.wait();
+
+        EXPECT_FALSE(engine.searching())
+            << '"' << command << "\" returned while the search was still running";
+
+        engine.stop();
+        engine.wait();
     }
 }
 

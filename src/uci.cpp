@@ -54,10 +54,31 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
     std::string cmd;
     bool running = true;
 
+    // Anything that rewrites state the search is reading has to wait for the
+    // search to be over first. "stop" only raises a flag and returns, so a GUI
+    // that sends "stop" and then sets up the next position -- which is what a
+    // GUI does -- was racing the search threads on their way out.
+    //
+    // Two of these were hard crashes rather than theory. "setoption name Hash"
+    // reallocates the table the search threads are reading, and "setoption name
+    // Threads" reallocates the pool the running threads live in; both segfault
+    // reproducibly in a plain release build. ThreadSanitizer also reports
+    // "position" and "ucinewgame" tearing the position and the table out from
+    // under the search.
+    //
+    // Waiting rather than refusing: a GUI that has moved on to the next
+    // position has no use for the answer to the old one, so there is nothing to
+    // preserve by declining.
+    auto settle = [&engine]() {
+        engine.stop();
+        engine.wait();
+    };
+
     while (instream >> std::skipws >> cmd) {
         std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
 
         if (cmd == "position" && instream >> cmd) {
+            settle();
             std::string tmp;
             if (cmd == "startpos") {
                 std::getline(instream, tmp);
@@ -85,6 +106,7 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                 }
             }
         } else if (cmd == "setoption" && instream >> cmd && instream >> cmd) {
+            settle();
             std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
             if (cmd == "hash" && instream >> cmd && instream >> cmd) {
                 int sz = 0;
@@ -131,7 +153,10 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
         } else if (cmd == "isready") {
             std::cout << "readyok" << std::endl;
         } else if (cmd == "go") {
-            engine.wait(); // ensure any prior search is done
+            // A new "go" supersedes whatever is running. Plain wait() hung here
+            // forever if the previous search was "go infinite" or a ponder the GUI
+            // never resolved.
+            settle();
             SearchLimits lims{};
             // GUIs are not always well behaved: they can report a negative
             // clock when an engine has overstepped, and a malformed token
@@ -188,9 +213,11 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             }
             std::cout << std::endl;
         } else if (cmd == "ucinewgame") {
+            settle();
             engine.clear();
             uci_pos.clear();
         } else if (cmd == "uci") {
+            settle();
             engine.clear();
             uci_pos.clear();
             std::cout << "id name " << ENGINE_NAME << " " << VERSION_STRING << std::endl;
@@ -204,6 +231,7 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             std::cout << "option name ParamFile type string default <empty>" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (cmd == "bench") {
+            settle();
             static const std::vector<std::string> bench_fens = {
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
                 "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
