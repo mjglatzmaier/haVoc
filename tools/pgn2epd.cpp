@@ -28,20 +28,6 @@ static double parse_result(const std::string& r) {
     return -1.0; // unknown
 }
 
-/// Try to match a UCI move string against legal moves in the position.
-static bool try_uci_move(position& pos, const std::string& token) {
-    Movegen mvs(pos);
-    mvs.generate<pseudo_legal, pieces>();
-    for (int i = 0; i < mvs.size(); ++i) {
-        if (!pos.is_legal(mvs[i])) continue;
-        if (uci::move_to_string(mvs[i]) == token) {
-            pos.do_move(mvs[i]);
-            return true;
-        }
-    }
-    return false;
-}
-
 /// Convert SAN move (e.g., "Nf3", "exd5", "O-O") to a legal move and play it.
 static bool play_san_move(position& pos, const std::string& san) {
     // Strip check/mate indicators
@@ -52,8 +38,6 @@ static bool play_san_move(position& pos, const std::string& san) {
 
     // Castling
     if (s == "O-O" || s == "0-0") {
-        Square from = pos.king_square();
-        Square to = (pos.to_move() == white) ? G1 : G8;
         Movegen mvs(pos);
         mvs.generate<pseudo_legal, pieces>();
         for (int i = 0; i < mvs.size(); ++i) {
@@ -83,7 +67,6 @@ static bool play_san_move(position& pos, const std::string& san) {
     int from_col = -1, from_row = -1;
     int to_col = -1, to_row = -1;
     Piece promo_piece = no_piece;
-    bool is_capture = false;
 
     size_t idx = 0;
 
@@ -118,7 +101,6 @@ static bool play_san_move(position& pos, const std::string& san) {
 
     // Remove 'x' for captures
     rest.erase(std::remove(rest.begin(), rest.end(), 'x'), rest.end());
-    is_capture = (s.find('x') != std::string::npos);
 
     // Parse destination (last two chars should be file+rank)
     if (rest.size() >= 2) {
