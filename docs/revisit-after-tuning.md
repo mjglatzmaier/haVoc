@@ -99,6 +99,40 @@ sees no gradient for them and they keep their defaults. Listed in
   themselves tuned, so fitting both sides of the product is rank deficient.
   `pinned_scaling` is a divisor the tuner could drive to zero. The reasoning is
   recorded in `src/parameters.cpp`; revisit only if a fit wants that freedom.
+- **The pawnless scaling rule has a cliff in it, and the obvious repairs are
+  both wrong.** `no_pawn_scale` is applied when `is_pawnless_endgame(p) &&
+  std::abs(score) < 400`, so the *finished* score decides whether the finished
+  score gets quartered. A position scoring 399 is damped to 99 and one scoring
+  401 is left alone: two centipawns of raw evaluation are worth three hundred,
+  and a search that can nudge the raw score over the line collects the jump for
+  free. To see it, score a few hundred random pawnless positions at depth 1 and
+  histogram them -- across 583 such positions not one could land between 100 and
+  400. The band is not sparse, it is unreachable, because everything below the
+  threshold is multiplied by 32/128 and everything above it is not. Disabling
+  `minor_advantage_no_pawn_scale` does not close the gap, which rules out the
+  other scaling rule as the cause.
+
+  Two repairs were written and both were discarded after measurement, which is
+  why this is a note and not a patch:
+
+  - *Ramp the damping out linearly as the score approaches 400.* Removes the
+    discontinuity and is monotone, but it only moved 8 of the 583 positions,
+    because `minor_advantage_no_pawn_scale` is the binding constraint through
+    `std::min` almost everywhere the ramp would matter.
+  - *Key the rule on material instead of on the score,* which is the
+    principled version -- whether an ending is drawish is a property of the
+    material, and material only changes on a capture, so there is no boundary
+    left to cross by shuffling. It scored rook-versus-knight and
+    two-bishops-versus-knight at +370 and +394 instead of +92 and +98. Those
+    endings are drawish and the old rule was right about them by accident, so
+    the principled version is worse where it differs.
+
+  What that leaves is that `ei.me->score` does not mean what the neighbouring
+  rule assumes it means: rook versus knight is a 180cp material edge, yet it
+  does not satisfy `std::abs(ei.me->score) <= 315`, so the "single minor piece
+  advantage" rule never fires on it. Establish what that field actually holds
+  before touching either rule; the threshold and the damping factor both need
+  refitting afterwards, so this belongs with tuning rather than ahead of it.
 
 ## The history table lives on the wrong scale for its own thresholds
 

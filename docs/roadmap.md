@@ -166,6 +166,23 @@ tripled the dynamic range as a side effect (+21/−45 against the old +6/−22),
 the merged variant measured −11.9 ± 31.8. Hand-tuning fails. This is a small,
 well-defined search space and a good first SPSA target.
 
+**Tried, and it found nothing.** 120 SPSA iterations at 40 games each
+(10+0.1, `scripts/testing/spsa.py`), roughly three hours and 4800 games, over
+all four `king_shelter` entries. The objective never moved: mean score 0.497
+across the first forty iterations and 0.497 across the last forty. The
+parameters oscillated in a narrow band around where they started
+(`-15, 7, 1, -4` → `-17, 8, -1, -5`) without ever leaving it, which is what a
+random walk on a flat objective looks like rather than a descent.
+
+Two readings fit. Either these four numbers are already near a local optimum
+and the remaining gain is smaller than 40 games can see, or -- more likely
+given §6 -- king shelter does not decide enough positions for its magnitude to
+show up in a game result at all, so no amount of tuning it will measure. The
+run was stopped rather than carried to 300 iterations; `--resume` works if
+someone wants to argue with that. Before spending another three hours here,
+raise games-per-iteration substantially or pick a target that demonstrably
+changes moves.
+
 ### 4.3 Move ordering
 
 Untouched by the recent work and historically the highest-leverage area in an
