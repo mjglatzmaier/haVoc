@@ -15,6 +15,10 @@ Movehistory::Movehistory() : continuation_(std::make_unique<ContinuationHistory>
 
 Movehistory& Movehistory::operator=(const Movehistory& mh) {
     std::copy(std::begin(mh.history_), std::end(mh.history_), std::begin(history_));
+    // corrections_ was missing here. Every other table was carried and this one
+    // was silently reset, so any copy quietly threw away the accumulated
+    // eval-versus-search bias while appearing to preserve the history.
+    corrections_ = mh.corrections_;
     countermoves = mh.countermoves;
     *continuation_ = *mh.continuation_;
     cont_pct1_ = mh.cont_pct1_;

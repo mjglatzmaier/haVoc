@@ -152,10 +152,12 @@ class SearchEngine {
     /// to perturb them in-process.
     parameters& params() { return params_; }
 
-    /// Read-only view of the history heuristic. Exposed so that tests can
-    /// assert which moves the search rewarded, which is otherwise only
-    /// observable as a change in move ordering several plies away.
-    const Movehistory& history() const { return history_; }
+    /// Read-only view of the first search thread's history heuristic. Exposed
+    /// so that tests can assert which moves the search rewarded, which is
+    /// otherwise only observable as a change in move ordering several plies
+    /// away. Each thread now keeps its own tables, so this is the whole story
+    /// only for a single-threaded search -- which is what the tests run.
+    const Movehistory& history() const { return search_threads_[0]->history; }
 
   private:
     hash_table tt_;
@@ -173,7 +175,12 @@ class SearchEngine {
     /// Used to pick which thread's result to play; a thread's raw score is not
     /// comparable across different depths.
     std::vector<int> completed_depth_;
-    Movehistory history_;
+
+    /// Move-ordering statistics for one search thread. One accessor rather than
+    /// 26 direct reaches into the thread pool, so that where this state lives is
+    /// decided in exactly one place -- moving it into a per-thread search
+    /// context later is then a change to this function and nothing else.
+    Movehistory& thread_history(int thread_id) { return search_threads_[thread_id]->history; }
 
     // Search methods
     void iterative_deepening(position& p, U16 depth, bool silent, int thread_id);

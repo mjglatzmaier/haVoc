@@ -84,7 +84,22 @@ void SearchEngine::set_threads(int n) {
     // enforced: "setoption name Threads value 99999" tried to start 99999
     // threads and wedged the engine.
     n = std::clamp(n, kMinThreads, kMaxThreads);
+
+    // Threadpool::init() destroys and recreates every Searchthread, and the
+    // move-ordering history lives on those objects. start() documents that
+    // history persists through a game and is reset only by ucinewgame, and a
+    // GUI may change Threads at any point, so carry the tables across instead
+    // of quietly returning every thread to ordering-blind mid-game.
+    const bool had_threads = search_threads_.size() > 0;
+    Movehistory carried;
+    if (had_threads)
+        carried = search_threads_[0]->history;
+
     search_threads_.init(n);
+
+    if (had_threads)
+        for (unsigned i = 0; i < search_threads_.size(); ++i)
+            search_threads_[i]->history = carried;
 }
 
 bool SearchEngine::set_hash_size(int mb) {
@@ -99,7 +114,8 @@ bool SearchEngine::set_hash_size(int mb) {
 
 void SearchEngine::clear() {
     tt_.clear();
-    history_.clear();
+    for (unsigned i = 0; i < search_threads_.size(); ++i)
+        search_threads_[i]->history.clear();
 }
 
 void SearchEngine::load_params(const std::string& filename) {
@@ -164,7 +180,9 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     // through a game and is reset between games.
 
     signals_.stop = false;
-    history_.set_continuation_weights(params_.cont_hist1_pct, params_.cont_hist2_pct);
+    for (unsigned i = 0; i < search_threads_.size(); ++i)
+        search_threads_[i]->history.set_continuation_weights(params_.cont_hist1_pct,
+                                                             params_.cont_hist2_pct);
     tt_.new_search();
 
     p.set_nodes_searched(0);
@@ -728,10 +746,10 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                     // and in TT-heavy regions this is the only thing that
                     // populates killers and countermoves at all -- nodes that
                     // return here never reach a move loop. Leave it.
-                    history_.update(pos.to_move(), ttm, (stack - 1)->curr_move,
+                    thread_history(thread_id).update(pos.to_move(), ttm, (stack - 1)->curr_move,
                                     history_bonus(depth), static_cast<int16_t>(ttvalue), quiets,
                                     stack->killers);
-                    history_.update_continuation(pos, stack, ttm, history_bonus(depth), quiets);
+                    thread_history(thread_id).update_continuation(pos, stack, ttm, history_bonus(depth), quiets);
                     return ttvalue;
                 }
             }
@@ -756,7 +774,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // when there is no such value, and to give the update below a corrected
         // baseline so the table converges instead of chasing its own output.
         static_eval_val = static_cast<int16_t>(std::clamp(
-            static_eval_val + history_.correction(pos.to_move(), pos.pawnkey()),
+            static_eval_val + thread_history(thread_id).correction(pos.to_move(), pos.pawnkey()),
             static_cast<int>(-score::kMate + 100), static_cast<int>(score::kMate - 100)));
     }
     const int16_t corrected_static_eval = static_eval_val;
@@ -872,7 +890,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         const int see_threshold = probcut_beta - static_eval_val;
         const int probcut_depth = static_cast<int>(depth) - params_.probcut_depth_reduction;
 
-        Moveorder pc_mvs(pos, ttm, stack, &history_);
+        Moveorder pc_mvs(pos, ttm, stack, &thread_history(thread_id));
         Move pc_move;
         Move pc_prev = (stack - 1)->curr_move;
         Move pc_prevprev = (stack - 2)->curr_move;
@@ -924,7 +942,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     // Main search
     U16 moves_searched = 0;
-    Moveorder mvs(pos, ttm, stack, &history_);
+    Moveorder mvs(pos, ttm, stack, &thread_history(thread_id));
     Move move;
     Move pre_move = (stack - 1)->curr_move;
     Move pre_pre_move = (stack - 2)->curr_move;
@@ -1016,7 +1034,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         // History pruning: skip quiet moves with terrible history at shallow depths
         if (!pvNode && !in_check && depth <= params_.history_prune_depth && !hashOrKiller &&
             isQuiet && bestScore > score::kMatedMaxPly) {
-            int hist_score = history_.score(move, pos.to_move());
+            int hist_score = thread_history(thread_id).score(move, pos.to_move());
             if (hist_score < -params_.history_prune_margin * depth) {
                 continue;
             }
@@ -1163,7 +1181,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 unsigned R = reduction(pvNode, improving, depth, moves_searched);
 
                 // Reduce more for moves with bad history
-                int hist = history_.score(move, to_mv);
+                int hist = thread_history(thread_id).score(move, to_mv);
                 R += (hist < -params_.lmr_hist_bad) ? 1 : 0;
 
                 // NOTE: non-PV nodes are *not* reduced further here. The
@@ -1233,10 +1251,10 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             stack->best_move = move;
 
             if (score_val >= beta) {
-                history_.update(pos.to_move(), best_move, (stack - 1)->curr_move,
+                thread_history(thread_id).update(pos.to_move(), best_move, (stack - 1)->curr_move,
                                 history_bonus(depth), static_cast<int16_t>(bestScore), quiets,
                                 stack->killers);
-                history_.update_continuation(pos, stack, best_move, history_bonus(depth), quiets);
+                thread_history(thread_id).update_continuation(pos, stack, best_move, history_bonus(depth), quiets);
                 break;
             }
 
@@ -1262,8 +1280,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // continuation tables at every cutoff node in the search.
     if (bestScore <= alpha_orig && !quiets.empty()) {
         const int malus = history_bonus(depth) * params_.history_malus_pct / 100;
-        history_.malus(to_mv, malus, quiets);
-        history_.malus_continuation(pos, stack, malus, quiets);
+        thread_history(thread_id).malus(to_mv, malus, quiets);
+        thread_history(thread_id).malus_continuation(pos, stack, malus, quiets);
     }
 
     // Best move bonus
@@ -1308,7 +1326,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         !best_is_capture && std::abs(bestScore) < score::kMate - 100 &&
         (bound == bound_exact || (bound == bound_low && bestScore > corrected_static_eval) ||
          (bound == bound_high && bestScore < corrected_static_eval))) {
-        history_.update_correction(to_mv, pos.pawnkey(), depth,
+        thread_history(thread_id).update_correction(to_mv, pos.pawnkey(), depth,
                                    bestScore - corrected_static_eval);
     }
 
@@ -1432,7 +1450,7 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, Searc
     // counter: it has no late-move reduction or move-count pruning to feed one,
     // and the one it used to declare was incremented and never read.
     U16 legal_moves = 0;
-    QMoveorder mvs(p, ttm, stack, &history_);
+    QMoveorder mvs(p, ttm, stack, &thread_history(thread_id));
     Move move;
     Move pre_move = (stack - 1)->curr_move;
     Move pre_pre_move = (stack - 2)->curr_move;

@@ -1485,5 +1485,68 @@ TEST_F(SearchTest, SelectiveDepthIsPerThreadNotShared) {
     EXPECT_GT(checked, 0) << "no info line carried a pv and a seldepth";
 }
 
+
+// ─── History survives a Threads change ─────────────────────────────────────
+//
+// Move-ordering history lives on the search threads, and setting Threads
+// destroys and recreates every one of them. start() documents that history
+// persists through a game and is reset only by ucinewgame, so a GUI changing
+// Threads mid-game must not quietly return the search to ordering-blind.
+//
+// This also pins Movehistory's copy assignment. It carried every table except
+// corrections_, so a copy looked like it preserved the history while silently
+// discarding the accumulated eval-versus-search bias -- invisible except as a
+// change in node counts several moves later.
+TEST_F(SearchTest, HistorySurvivesThreadCountChange) {
+    auto pos = make_pos("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4");
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.depth = 8;
+    engine.start(pos, lims, /*silent=*/true);
+    engine.wait();
+
+    // Snapshot enough of the tables that a reset cannot pass unnoticed. The
+    // butterfly table is what move ordering reads; corrections_ is the member
+    // the copy used to drop.
+    std::vector<int> before;
+    int nonzero_hist = 0, nonzero_corr = 0;
+    for (int f = 0; f < 64; ++f)
+        for (int t = 0; t < 64; ++t) {
+            Move m;
+            m.set(static_cast<Square>(f), static_cast<Square>(t), quiet);
+            const int s = engine.history().score(m, white);
+            before.push_back(s);
+            nonzero_hist += (s != 0);
+        }
+    std::vector<int> corr_before;
+    for (U64 k = 0; k < 64; ++k) {
+        const int c = engine.history().correction(white, k);
+        corr_before.push_back(c);
+        nonzero_corr += (c != 0);
+    }
+
+    // A search this deep must have written *something*, or the test below
+    // would pass by comparing zeroes to zeroes.
+    ASSERT_GT(nonzero_hist, 0) << "search wrote no butterfly history; test is vacuous";
+
+    engine.set_threads(4);
+
+    size_t i = 0;
+    for (int f = 0; f < 64; ++f)
+        for (int t = 0; t < 64; ++t, ++i) {
+            Move m;
+            m.set(static_cast<Square>(f), static_cast<Square>(t), quiet);
+            EXPECT_EQ(engine.history().score(m, white), before[i])
+                << "butterfly history was reset by set_threads() at " << f << "->" << t;
+        }
+    for (U64 k = 0; k < 64; ++k)
+        EXPECT_EQ(engine.history().correction(white, k), corr_before[k])
+            << "correction history was reset by set_threads() at key " << k;
+
+    // Every new thread must start from the carried tables, not just thread 0.
+    EXPECT_EQ(engine.threads(), 4u);
+}
+
+
 } // namespace
 } // namespace havoc
