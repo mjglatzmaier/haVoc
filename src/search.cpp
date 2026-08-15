@@ -1538,6 +1538,13 @@ void SearchEngine::readout_pv(SearchNode* /*stack*/, const Rootmoves& mRoots, in
         nodes += t->qnodes();
     }
 
+    // Without `time` a GUI cannot show think time and cannot derive nps, so it
+    // has nothing to display while the engine is working. `hashfull` was
+    // implemented and unit-tested but never actually reported to anyone.
+    const double elapsed = search_clock_.elapsed_ms();
+    const U64 elapsed_ms = static_cast<U64>(elapsed);
+    const U64 nps = static_cast<U64>(static_cast<double>(nodes) * 1000.0 / std::max(1.0, elapsed));
+
     int numLines = std::min(multi_pv_, static_cast<int>(mRoots.size()));
     for (int i = 0; i < numLines; ++i) {
         if (i >= static_cast<int>(mRoots.size()))
@@ -1550,6 +1557,8 @@ void SearchEngine::readout_pv(SearchNode* /*stack*/, const Rootmoves& mRoots, in
             res += std::string(uci::move_to_string(m)) + " ";
         }
 
+        // `pv` has to stay last: it is the one field of variable length, and a
+        // GUI reading it consumes tokens until end of line.
         std::cout << "info"
                   << " depth " << depth
                   << " seldepth " << mRoots[i].selDepth
@@ -1558,7 +1567,11 @@ void SearchEngine::readout_pv(SearchNode* /*stack*/, const Rootmoves& mRoots, in
                   << (eval >= beta    ? " lowerbound"
                       : eval <= alpha ? " upperbound"
                                       : "")
-                  << " nodes " << nodes << " pv " << res << std::endl;
+                  << " nodes " << nodes
+                  << " nps " << nps
+                  << " hashfull " << tt_.hashfull()
+                  << " time " << elapsed_ms
+                  << " pv " << res << std::endl;
     }
 }
 
