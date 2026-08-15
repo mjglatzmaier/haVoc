@@ -8,6 +8,7 @@
 #include "havoc/zobrist.hpp"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -1566,7 +1567,10 @@ TEST_F(SearchTest, HistorySurvivesThreadCountChange) {
 // Measured through node counts, which are deterministic at one thread: a
 // reverted evaluation searches a different tree.
 TEST_F(SearchTest, TunedParametersSurviveThreadCountChange) {
-    const std::string pf = "/tmp/havoc_test_params.txt";
+    // Not "/tmp": that path does not exist on Windows, where this silently
+    // failed to open and the test asserted on a file it had never written.
+    const std::string pf =
+        (std::filesystem::temp_directory_path() / "havoc_test_params.txt").string();
     {
         std::ofstream out(pf);
         ASSERT_TRUE(out.good()) << "could not write " << pf;
