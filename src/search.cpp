@@ -489,7 +489,7 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
 
         // Aspiration window search
         while (true) {
-            sel_depth_ = 0;
+            p.sel_depth = 0;
             eval = search<root>(p, alpha, beta, static_cast<U16>(id), stack + 2, thread_id);
 
             // The sort deliberately runs before the stop check, so an
@@ -649,7 +649,6 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // given PV reductions by reduction(pvNode, ...). Neither is defensible for
     // a search that can only ever return a bound.
     const bool pvNode = (root_node || (type == Nodetype::pv && beta - alpha > 1));
-    bool is_main = (thread_id == 0);
 
     const Move excluded_move = stack->excluded_move;
     const bool singular_search = !excluded_move.is_null();
@@ -664,8 +663,11 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     if (!singular_search)
         stack->threat_move = Move{};
 
-    if (pvNode && sel_depth_.load() < stack->ply + 1 && is_main)
-        sel_depth_++;
+    // Every thread tracks its own selective depth on its own position, so
+    // this is no longer gated on being the main thread: each one is now
+    // reporting about itself rather than racing on one shared counter.
+    if (pvNode && pos.sel_depth < stack->ply + 1)
+        pos.sel_depth++;
 
     // The search stack is a fixed MAX_PLY + 4 array and every recursion steps
     // one node forward, so the tree has to be cut off before it can run off the
@@ -1212,7 +1214,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 auto& rm = *it;
                 if (moves_searched == 1 || score_val > alpha) {
                     rm.score = static_cast<int16_t>(score_val);
-                    rm.selDepth = sel_depth_.load();
+                    rm.selDepth = pos.sel_depth;
                     rm.pv.resize(1);
                     for (Move* m = (stack + 1)->pv; m; ++m) {
                         if (m->f == m->t || m->type == static_cast<U8>(no_type))
@@ -1346,8 +1348,8 @@ int SearchEngine::qsearch(position& p, int alpha, int beta, U16 /*depth*/, Searc
     bool pv_type = (type == Nodetype::pv && beta - alpha > 1);
 
     stack->ply = (stack - 1)->ply + 1;
-    if (pv_type && sel_depth_.load() < stack->ply + 1)
-        sel_depth_++;
+    if (pv_type && p.sel_depth < stack->ply + 1)
+        p.sel_depth++;
     U16 root_dist = stack->ply;
 
     bool in_check = p.in_check();

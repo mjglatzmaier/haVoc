@@ -112,6 +112,21 @@ class position {
 
     Rootmoves root_moves;
 
+    /// Deepest ply reached on the current iteration, quiescence included.
+    ///
+    /// This lives here because the engine gives each search thread its own
+    /// `position`, so a field on it is per-thread by construction and costs
+    /// nothing to reach: the search already holds this object in a register.
+    /// It was previously a single `std::atomic<int>` on the engine shared by
+    /// every thread, which made the reported `seldepth` describe no thread in
+    /// particular once `Threads > 1` -- each thread reset it at the top of
+    /// every aspiration window and each thread incremented it.
+    ///
+    /// Like `root_moves` above, this is per-search state rather than board
+    /// state. Both belong in a per-thread search-state type; that refactor is
+    /// worth doing when per-thread history tables arrive, not before.
+    int sel_depth = 0;
+
     // setup / clear
     /// Returns false if the FEN does not describe a legal position, in which
     /// case the board is left cleared rather than half-parsed.

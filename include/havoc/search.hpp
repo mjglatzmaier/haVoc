@@ -164,7 +164,6 @@ class SearchEngine {
     SearchSignals signals_;
     parameters params_;
     std::atomic<bool> searching_{false};
-    std::atomic<int> sel_depth_{0};
     std::mutex output_mutex_;
     int multi_pv_ = 1;
 
