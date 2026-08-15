@@ -8,6 +8,7 @@
 #include "havoc/utils.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <vector>
 
@@ -75,9 +76,48 @@ template <Color c> inline bool is_wrong_rook_pawn_draw(const position& p) {
     if ((bishops & promo_complex) != 0ULL)
         return false;
 
-    // The defending king must already be on or beside the promotion square.
     const int dk = static_cast<int>(p.king_square(them));
-    return std::max(util::row_dist(dk, promo), util::col_dist(dk, promo)) <= 1;
+    const int dk_to_promo = std::max(util::row_dist(dk, promo), util::col_dist(dk, promo));
+
+    // Already on or beside the promotion square: it can never be evicted, since
+    // the bishop cannot contest that corner and stalemate answers the pawn.
+    if (dk_to_promo <= 1)
+        return true;
+
+    // Otherwise the defender still draws if it can walk back to the corner in
+    // time. Requiring it to be there *already* put a cliff in the evaluation:
+    // with the pawn on h2, a black king on h7 scored 0 and the same king on h6
+    // scored +417, though both are equally dead draws. The search found the
+    // cliff and steered for it, reporting +132 on a position it cannot win.
+    //
+    // Two things have to hold for the walk to succeed. The king must reach the
+    // corner before the pawn does, and it must not be headed off by the
+    // attacking king, which is the one piece that can shoulder it away. Both
+    // are compared in king moves, and both are deliberately strict: a defender
+    // that only draws by a tempo is left to the search rather than asserted
+    // here, because this returns a hard zero and a wrong hard zero is far more
+    // expensive than a missed one.
+    const int lead_pawn =
+        (c == white) ? (63 - std::countl_zero(pawns)) : static_cast<int>(bits::lsb(pawns));
+
+    // Moves the pawn needs, not ranks it has left: one less from the starting
+    // rank, because it may step two. Charging it the rank count called a black
+    // king six moves from a8 a draw against a pawn on a2 that promotes in five.
+    const bool on_start_rank =
+        (c == white) ? util::row(lead_pawn) == Row::r2 : util::row(lead_pawn) == Row::r7;
+    const int pawn_to_promo = util::row_dist(lead_pawn, promo) - (on_start_rank ? 1 : 0);
+
+    const int sk = static_cast<int>(p.king_square(c));
+    const int sk_to_promo = std::max(util::row_dist(sk, promo), util::col_dist(sk, promo));
+
+    // Arriving at the same time as the pawn is not good enough when the
+    // attacker moves first: the pawn promotes on the square the king was
+    // walking to. Whoever is to move gets the tempo.
+    const bool defender_to_move = p.to_move() == them;
+    const bool arrives_in_time =
+        defender_to_move ? dk_to_promo <= pawn_to_promo : dk_to_promo < pawn_to_promo;
+
+    return arrives_in_time && dk_to_promo <= sk_to_promo;
 }
 
 /// The two long diagonals, a1-h8 and a8-h1. Squares are indexed row*8 + col,
