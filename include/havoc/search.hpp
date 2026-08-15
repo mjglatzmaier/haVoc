@@ -126,8 +126,10 @@ class SearchEngine {
     void stop();
     void wait();
 
-    /// True while a search is running. Exposed so a test can tell a ponder
-    /// that is correctly waiting from one that has already given up.
+    /// True while a search is running. stop() only raises a flag, so this is
+    /// how a caller tells that the search threads have actually finished with
+    /// the position and the table; it also lets a test tell a ponder that is
+    /// correctly waiting from one that has already given up.
     [[nodiscard]] bool searching() const { return searching_.load(); }
 
     SearchSignals& signals() { return signals_; }
