@@ -427,6 +427,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         result.emplace_back("quiet_ext_max_depth", &quiet_ext_max_depth);
         result.emplace_back("lmr_hist_bad", &lmr_hist_bad);
         result.emplace_back("lmr_hist_good", &lmr_hist_good);
+        result.emplace_back("lmr_cutnode", &lmr_cutnode);
+        result.emplace_back("lmr_allnode", &lmr_allnode);
+        result.emplace_back("iir_use_cutnode", &iir_use_cutnode);
         result.emplace_back("best_move_bonus", &best_move_bonus);
         result.emplace_back("history_bonus_scale", &history_bonus_scale);
         result.emplace_back("history_malus_pct", &history_malus_pct);

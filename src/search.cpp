@@ -490,7 +490,7 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
         // Aspiration window search
         while (true) {
             p.sel_depth = 0;
-            eval = search<root>(p, alpha, beta, static_cast<U16>(id), stack + 2, thread_id);
+            eval = search<root>(p, alpha, beta, static_cast<U16>(id), stack + 2, thread_id, false);
 
             // The sort deliberately runs before the stop check, so an
             // aborted iteration still reorders the root list and can change
@@ -594,7 +594,7 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
 
 template <Nodetype type>
 int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNode* stack,
-                         int thread_id) {
+                         int thread_id, bool cut_node) {
     if (signals_.stop.load())
         return score::kDraw;
 
@@ -784,7 +784,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // IIR: If we have no hash move at a PV or cut node, reduce depth.
     if (!singular_search && depth >= params_.iir_min_depth &&
         ttm.type == static_cast<U8>(no_type) &&
-        (pvNode || (!pvNode && static_eval_val + params_.iir_cut_margin >= beta))) {
+        (pvNode || (params_.iir_use_cutnode
+                        ? cut_node
+                        : static_eval_val + params_.iir_cut_margin >= beta))) {
         depth -= 1;
     }
 
@@ -833,7 +835,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         int null_eval =
             (ndepth <= 0 ? -qsearch<non_pv>(pos, -beta, -beta + 1, 0, stack + 1, thread_id)
                          : -search<non_pv>(pos, -beta, -beta + 1, static_cast<U16>(ndepth),
-                                           stack + 1, thread_id));
+                                           stack + 1, thread_id, !cut_node));
         pos.undo_null_move();
         (stack + 1)->null_search = false;
 
@@ -903,7 +905,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 -qsearch<non_pv>(pos, -probcut_beta, -probcut_beta + 1, 0, stack + 1, thread_id);
             if (pc_score >= probcut_beta && probcut_depth > 0) {
                 pc_score = -search<non_pv>(pos, -probcut_beta, -probcut_beta + 1,
-                                           static_cast<U16>(probcut_depth), stack + 1, thread_id);
+                                           static_cast<U16>(probcut_depth), stack + 1, thread_id,
+                                           !cut_node);
             }
             pos.undo_move(pc_move);
 
@@ -1058,8 +1061,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
             const int16_t saved_static_eval = stack->static_eval;
             stack->excluded_move = ttm;
-            int singular_score = search<non_pv>(pos, singular_beta - 1, singular_beta,
-                                                static_cast<U16>(singular_depth), stack, thread_id);
+            int singular_score =
+                search<non_pv>(pos, singular_beta - 1, singular_beta,
+                               static_cast<U16>(singular_depth), stack, thread_id, cut_node);
             stack->excluded_move = Move{};
             stack->static_eval = saved_static_eval;
 
@@ -1151,7 +1155,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                              ? -qsearch<Nodetype::pv>(pos, -beta, -alpha, 0, stack + 1, thread_id)
                              : -search<Nodetype::pv>(pos, -beta, -alpha,
                                                      static_cast<U16>(newdepth), stack + 1,
-                                                     thread_id));
+                                                     thread_id, pvNode ? false : !cut_node));
         } else {
             int LMR = newdepth;
             auto captureFollowup =
@@ -1166,12 +1170,20 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 int hist = history_.score(move, to_mv);
                 R += (hist < -params_.lmr_hist_bad) ? 1 : 0;
 
-                // NOTE: non-PV nodes are *not* reduced further here. The
-                // reduction table already encodes the cut-node penalty:
-                // bitboards::reductions[0][..] is built as
-                // bitboards::reductions[1][..] + 1. Adding another +1 at this
-                // site applied the same idea twice, reducing non-PV moves by 2
-                // plies more than PV moves instead of 1.
+                // NOTE: the reduction table already charges every non-PV node one
+                // ply more than a PV node: bitboards::reductions[0][..] is built
+                // as bitboards::reductions[1][..] + 1. A second unconditional +1
+                // at this site applied the same idea twice, and was removed.
+                //
+                // What follows is not that. "Non-PV" and "expected to fail high"
+                // are different claims: every cut node is non-PV, but an all node
+                // is non-PV and is expected to fail *low*, so it has to search
+                // every move to prove its bound and is the last place to cut
+                // corners. The table cannot tell the two apart; cut_node can.
+                // Both deltas default to 0, so this is inert until measured.
+                const int node_delta =
+                    pvNode ? 0 : (cut_node ? params_.lmr_cutnode : params_.lmr_allnode);
+                R = static_cast<unsigned>(std::max(0, static_cast<int>(R) + node_delta));
 
                 // Reduce less for moves with good history
                 if (hist > params_.lmr_hist_good)
@@ -1184,7 +1196,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
             score_val =
                 (LMR <= 0 ? -qsearch<non_pv>(pos, -alpha - 1, -alpha, 0, stack + 1, thread_id)
                           : -search<non_pv>(pos, -alpha - 1, -alpha, static_cast<U16>(LMR),
-                                            stack + 1, thread_id));
+                                            stack + 1, thread_id, true));
 
             if (score_val > alpha && (pvNode || LMR < newdepth)) {
                 (stack + 1)->pv = pv_line;
@@ -1194,7 +1206,16 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                                                                     stack + 1, thread_id)
                                            : -search<Nodetype::pv>(pos, -beta, -alpha,
                                                                    static_cast<U16>(newdepth),
-                                                                   stack + 1, thread_id));
+                                                                   stack + 1, thread_id,
+                                                                   // At a PV node this is the real
+                                                                   // full-window re-search, so the
+                                                                   // child is a PV node. At a
+                                                                   // non-PV node the window is
+                                                                   // still null and this is only
+                                                                   // the un-reduced retry, so the
+                                                                   // child keeps the node type it
+                                                                   // would have had without LMR.
+                                                                   pvNode ? false : !cut_node));
             }
         }
         ++moves_searched;
@@ -1588,9 +1609,9 @@ U64 SearchEngine::total_nodes() const {
 
 // ─── Explicit template instantiations ───────────────────────────────────────
 
-template int SearchEngine::search<root>(position&, int, int, U16, SearchNode*, int);
-template int SearchEngine::search<pv>(position&, int, int, U16, SearchNode*, int);
-template int SearchEngine::search<non_pv>(position&, int, int, U16, SearchNode*, int);
+template int SearchEngine::search<root>(position&, int, int, U16, SearchNode*, int, bool);
+template int SearchEngine::search<pv>(position&, int, int, U16, SearchNode*, int, bool);
+template int SearchEngine::search<non_pv>(position&, int, int, U16, SearchNode*, int, bool);
 
 template int SearchEngine::qsearch<pv>(position&, int, int, U16, SearchNode*, int);
 template int SearchEngine::qsearch<non_pv>(position&, int, int, U16, SearchNode*, int);

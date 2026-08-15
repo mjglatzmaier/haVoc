@@ -459,6 +459,17 @@ struct parameters {
     int lmr_min_depth = 3;          // late move reductions minimum depth
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
     int lmr_hist_good = 4000;       // reduce one less ply above this
+    /// Extra reduction at expected cut nodes. "Non-PV" and "expected to fail
+    /// high" are different claims -- an all node is also non-PV but must search
+    /// everything -- so this is separate from the +1 the reduction table already
+    /// charges every non-PV node. 0 disables it.
+    int lmr_cutnode = 0;            // extra plies reduced at expected cut nodes
+    /// Reduction delta at expected all nodes. An all node must search every move
+    /// to prove a bound, so the flat +1 the table charges all non-PV nodes may
+    /// be too harsh here; -1 cancels it and reduces all nodes like PV nodes.
+    int lmr_allnode = 0;            // extra plies reduced at expected all nodes
+    /// Use the real cut-node flag for IIR instead of the static-eval proxy.
+    int iir_use_cutnode = 0;        // 1 = trigger IIR on cut_node, not on eval
     int best_move_bonus = 2;        // best-move history bonus, times depth
     int history_bonus_scale = 1;    // history bonus is scale * depth^2
     int history_malus_pct = 0;      // fail-low penalty, percent of the bonus (0 = off)

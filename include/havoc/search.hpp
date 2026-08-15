@@ -178,8 +178,15 @@ class SearchEngine {
     // Search methods
     void iterative_deepening(position& p, U16 depth, bool silent, int thread_id);
 
+    /// \param cut_node True when this node is *expected* to fail high. It is a
+    /// heuristic about the shape of the tree, not a fact: the caller derives it
+    /// from its own node type and from which move it is searching. Cut nodes
+    /// are searched with a null window and usually refuted by the first good
+    /// move, so a mistake there costs less than one at a node whose exact score
+    /// is needed -- which is why they are reduced harder.
     template <Nodetype type>
-    int search(position& pos, int alpha, int beta, U16 depth, SearchNode* stack, int thread_id);
+    int search(position& pos, int alpha, int beta, U16 depth, SearchNode* stack, int thread_id,
+               bool cut_node);
 
     template <Nodetype type>
     int qsearch(position& pos, int alpha, int beta, U16 depth, SearchNode* stack, int thread_id);
