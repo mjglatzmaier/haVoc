@@ -188,7 +188,14 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
 
     U16 depth = (lims.depth > 0 ? static_cast<U16>(lims.depth) : static_cast<U16>(MAX_PLY));
     search_clock_.reset();
-    soft_limit_ = estimate_time_budget(limits_, p.to_move() == white).soft;
+    stm_is_white_ = (p.to_move() == white);
+    const TimeBudget budget = estimate_time_budget(limits_, stm_is_white_);
+    // Origin before limits, as in ponder_hit(): readers pair a limit they have
+    // acquired with the origin, so the origin must never be the newer of the two.
+    time_origin_.store(0.0, std::memory_order_relaxed);
+    soft_limit_.store(budget.soft, std::memory_order_release);
+    hard_limit_.store(budget.hard, std::memory_order_release);
+    signals_.ponder.store(limits_.ponder);
     searching_ = true;
 
     // Launch the entire search on the worker thread so UCI loop stays responsive.
@@ -275,37 +282,54 @@ void SearchEngine::wait() {
 
 // ─── Timer ──────────────────────────────────────────────────────────────────
 
-void SearchEngine::search_timer(position& p) {
+void SearchEngine::search_timer(position&) {
     // Deliberately the clock start() reset, not a fresh one: a local clock here
     // starts only once this thread is scheduled, so the setup it misses is time
     // the engine has already spent and would then overspend by.
     const util::Clock& c = search_clock_;
-    bool fixed_time = limits_.movetime > 0;
-    int delay = 1;
-    double time_limit = estimate_max_time(p);
-    auto sleep = [delay]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-    };
 
-    double elapsed = 0;
-    if (fixed_time) {
-        do {
-            elapsed = c.elapsed_ms();
-            sleep();
-        } while (!signals_.stop.load() && searching_.load() &&
-                 elapsed <= static_cast<double>(limits_.movetime));
-    } else if (time_limit > -1) {
-        do {
-            elapsed = c.elapsed_ms();
-            sleep();
-        } while (!signals_.stop.load() && searching_.load() && elapsed <= time_limit);
-    } else {
-        do {
-            elapsed = c.elapsed_ms();
-            sleep();
-        } while (!signals_.stop.load() && searching_.load());
+    // The deadline is re-read every poll rather than captured once, because
+    // ponderhit moves it: a search that began as a ponder has no deadline at
+    // all until the GUI says the guess was right. The three near-identical
+    // loops this replaces each captured their limit up front, so nothing the
+    // GUI said afterwards could be heard.
+    while (!signals_.stop.load() && searching_.load()) {
+        const double limit = hard_limit_.load(std::memory_order_acquire);
+        const double origin = time_origin_.load(std::memory_order_relaxed);
+        if (limit > kNoTimeLimit && c.elapsed_ms() - origin > limit)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     signals_.stop = true;
+}
+
+void SearchEngine::ponder_hit() {
+    // The GUI played the move we guessed, so the search continues -- but it is
+    // now on the clock, and was not a moment ago. Without this the engine
+    // pondered on until stdin closed: measured at 20+ seconds of thinking on a
+    // 2 second clock, which is a loss on time in every game a GUI ponders.
+    if (!signals_.ponder.exchange(false))
+        return;
+
+    limits_.ponder = false;
+    const TimeBudget b = estimate_time_budget(limits_, stm_is_white_);
+
+    // Time spent pondering was free -- the GUI's clock only started now -- so
+    // the budget runs from this instant. Moving the origin rather than
+    // resetting the clock keeps the clock immutable while search threads read
+    // it, and keeps the budgets as durations, which is what the stability
+    // factor in iterative_deepening multiplies.
+    //
+    // The three are a tuple, and readers must not see it half-updated. A fresh
+    // limit paired with the old origin (0) would charge the whole ponder to
+    // this move and stop the search on the spot, so the origin is published
+    // first and the limits with release; readers acquire the limit and then
+    // read the origin. The reverse pairing -- old limit, new origin -- is what
+    // remains, and is harmless: the old limit is kNoTimeLimit, so the timer
+    // simply has no deadline for the 1 ms until its next poll.
+    time_origin_.store(search_clock_.elapsed_ms(), std::memory_order_relaxed);
+    soft_limit_.store(b.soft, std::memory_order_release);
+    hard_limit_.store(b.hard, std::memory_order_release);
 }
 
 TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move) {
@@ -517,13 +541,18 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
             // go back on the clock for a move that needs them; a root that is
             // still changing its mind buys extra time, bounded by the hard
             // limit the timer thread enforces.
-            if (soft_limit_ > 0.0 && !p.root_moves.empty()) {
+            // `soft_limit_` is loaded with acquire and `time_origin_` after it,
+            // so a fresh limit is never paired with a stale origin -- see
+            // ponder_hit(), which publishes the two together.
+            const double soft = soft_limit_.load(std::memory_order_acquire);
+            if (soft > 0.0 && !p.root_moves.empty()) {
                 const Move best = p.root_moves[0].pv[0];
                 stable_iterations = (best == prev_best) ? stable_iterations + 1 : 0;
                 prev_best = best;
 
-                const double target = soft_time_target(soft_limit_, stable_iterations);
-                if (search_clock_.elapsed_ms() >= target) {
+                const double target = soft_time_target(soft, stable_iterations);
+                const double origin = time_origin_.load(std::memory_order_relaxed);
+                if (search_clock_.elapsed_ms() - origin >= target) {
                     signals_.stop = true;
                     break;
                 }

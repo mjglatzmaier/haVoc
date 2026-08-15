@@ -173,6 +173,11 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             engine.start(uci_pos, lims, silent);
         } else if (cmd == "stop") {
             engine.stop();
+        } else if (cmd == "ponderhit") {
+            // The GUI played the move the ponder search assumed. Keep
+            // searching, but start charging it to the clock. Without this the
+            // engine pondered on until stdin closed and lost on time.
+            engine.ponder_hit();
         } else if (cmd == "moves") {
             Movegen mvs(uci_pos);
             mvs.generate<pseudo_legal, pieces>();

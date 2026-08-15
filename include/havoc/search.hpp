@@ -98,7 +98,11 @@ double soft_time_target(double soft, int stable_iterations);
 
 struct SearchSignals {
     std::atomic<bool> stop{false};
-    std::atomic<bool> ponder_hit{false};
+    /// True while the current search is a ponder, i.e. the GUI has not yet
+    /// confirmed the move we are assuming. Cleared by ponder_hit(), which is
+    /// what puts the search on a clock. Was previously an atomic named
+    /// ponder_hit that nothing ever read or wrote.
+    std::atomic<bool> ponder{false};
 };
 
 // ─── Forward declarations for move_to_string (used by readout) ──────────────
@@ -115,8 +119,16 @@ class SearchEngine {
     ~SearchEngine();
 
     void start(position& p, const SearchLimits& lims, bool silent);
+    /// The GUI confirms the move the current ponder search assumed. The search
+    /// continues, but from now on it is on the clock.
+    void ponder_hit();
+
     void stop();
     void wait();
+
+    /// True while a search is running. Exposed so a test can tell a ponder
+    /// that is correctly waiting from one that has already given up.
+    [[nodiscard]] bool searching() const { return searching_.load(); }
 
     SearchSignals& signals() { return signals_; }
     hash_table& tt() { return tt_; }
@@ -187,9 +199,22 @@ class SearchEngine {
     /// search would then overspend by exactly that much.
     util::Clock search_clock_{};
 
-    /// The budget the main thread aims at, in milliseconds, or kNoTimeLimit
-    /// when the search is not on a clock. The timer thread owns the hard one.
-    double soft_limit_ = kNoTimeLimit;
+    /// The two budgets, as *durations* in milliseconds, or kNoTimeLimit when
+    /// the search is not on a clock. Atomic because ponderhit rewrites them
+    /// from the UCI thread while the search is running.
+    std::atomic<double> soft_limit_{kNoTimeLimit};
+    std::atomic<double> hard_limit_{kNoTimeLimit};
+
+    /// Milliseconds on search_clock_ at which the budgets start counting.
+    /// Zero for an ordinary search; on ponderhit it moves to "now", because the
+    /// time spent pondering was free -- the GUI's clock only started then.
+    /// Moving an origin rather than resetting the clock leaves the clock
+    /// immutable while the search threads are reading it.
+    std::atomic<double> time_origin_{0.0};
+
+    /// Side to move for the search in progress, captured at start(), so that
+    /// ponderhit can re-budget without the position.
+    bool stm_is_white_ = true;
 
     void search_timer(position& p);
     double estimate_max_time(position& p) const;
