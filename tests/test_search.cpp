@@ -1384,5 +1384,41 @@ TEST_F(SearchTest, TheAdvertisedHashDefaultIsTheOneActuallyUsed) {
         << "advertised Hash default does not match the size actually allocated";
 }
 
+TEST_F(SearchTest, InfoLinesCarryTimeNpsAndHashfull) {
+    // Without `time` a GUI has nothing to show while the engine thinks and no
+    // way to derive nps for itself. `hashfull` was implemented and unit-tested
+    // but never reported to anyone, so table saturation was invisible from the
+    // outside for the whole life of the engine.
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.depth = 10;
+
+    std::ostringstream captured;
+    std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
+    engine.start(pos, lims, /*silent=*/false);
+    engine.wait();
+    std::cout.rdbuf(saved);
+
+    std::istringstream lines(captured.str());
+    std::string line;
+    int info_lines = 0;
+    while (std::getline(lines, line)) {
+        if (line.rfind("info", 0) != 0)
+            continue;
+        ++info_lines;
+        for (const char* field : {" nodes ", " nps ", " hashfull ", " time ", " pv "})
+            EXPECT_NE(line.find(field), std::string::npos)
+                << "missing" << field << "in: " << line;
+
+        // `pv` is the only variable-length field, so a GUI reads it to end of
+        // line. Anything emitted after it would be swallowed as part of the PV.
+        const size_t pv_at = line.find(" pv ");
+        for (const char* field : {" nodes ", " nps ", " hashfull ", " time ", " score "})
+            EXPECT_LT(line.find(field), pv_at) << field << "must precede pv in: " << line;
+    }
+    EXPECT_GT(info_lines, 0) << "the search reported nothing at all";
+}
+
 } // namespace
 } // namespace havoc
