@@ -1426,19 +1426,35 @@ TEST_F(SearchTest, SelectiveDepthIsPerThreadNotShared) {
     // incremented it, so with Threads > 1 the number reported described no
     // thread in particular -- it was whatever the race left behind.
     //
-    // The invariant that catches it: the principal variation at depth d
-    // reaches ply d, so seldepth can never be less than depth. Before the fix
-    // this engine reported "depth 6 seldepth 0" and "depth 7 seldepth 2".
+    // The invariant that catches it: every move on the reported PV was played
+    // from a PV node, and entering a PV node at ply k raises that thread's
+    // selective depth to at least k + 1. So a PV of length L forces
+    // seldepth >= L. Before the fix this engine reported "depth 6 seldepth 0"
+    // and "depth 7 seldepth 2" against PVs many moves long.
+    //
+    // The tempting assertion is seldepth >= depth, and it holds in practice
+    // (measured over 72 searches across 1/4/8/32 threads and six positions the
+    // slack never fell below +1). It is not guaranteed though: internal
+    // iterative reduction shortens PV nodes that have no hash move, so a
+    // completed iteration may never descend a full `depth` plies. That would
+    // be a rare CI flake rather than a real defect, so assert the structural
+    // relation instead of the likely one.
+    //
+    // Whether the old race actually surfaced depended on thread scheduling, so
+    // one search caught it only about half the time. Repeating it brings the
+    // detection rate up without making the test able to fail on fixed code.
     auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    SearchEngine engine;
-    engine.set_threads(8);
     SearchLimits lims{};
     lims.depth = 12;
 
     std::ostringstream captured;
     std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
-    engine.start(pos, lims, /*silent=*/false);
-    engine.wait();
+    for (int rep = 0; rep < 4; ++rep) {
+        SearchEngine engine;
+        engine.set_threads(8);
+        engine.start(pos, lims, /*silent=*/false);
+        engine.wait();
+    }
     std::cout.rdbuf(saved);
 
     std::istringstream lines(captured.str());
@@ -1449,19 +1465,24 @@ TEST_F(SearchTest, SelectiveDepthIsPerThreadNotShared) {
             continue;
         std::istringstream fields(line);
         std::string tok;
-        int depth = -1, seldepth = -1;
+        int depth = -1, seldepth = -1, pv_len = -1;
         while (fields >> tok) {
             if (tok == "depth")
                 fields >> depth;
             else if (tok == "seldepth")
                 fields >> seldepth;
+            else if (tok == "pv") {
+                pv_len = 0;
+                while (fields >> tok)
+                    ++pv_len;
+            }
         }
-        if (depth < 0 || seldepth < 0)
+        if (depth < 0 || seldepth < 0 || pv_len <= 0)
             continue;
         ++checked;
-        EXPECT_GE(seldepth, depth) << "seldepth below depth in: " << line;
+        EXPECT_GE(seldepth, pv_len) << "seldepth below pv length in: " << line;
     }
-    EXPECT_GT(checked, 0) << "no info line carried both depth and seldepth";
+    EXPECT_GT(checked, 0) << "no info line carried a pv and a seldepth";
 }
 
 } // namespace
