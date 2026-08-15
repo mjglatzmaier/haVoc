@@ -6,13 +6,26 @@ value is. The detailed evidence behind every claim is in
 [`revisit-after-tuning.md`](revisit-after-tuning.md); the practical setup steps
 are in [`handoff.md`](handoff.md).
 
+**Read [`neural-direction.md`](neural-direction.md) first.** As of 15 August
+2026 the engine is committed to a CPU path — alpha-beta with an
+incrementally-updatable NNUE — and handcrafted evaluation work is paused. That
+document re-ranks most of section 4 below and explains why; where the two
+disagree, it wins.
+
 ---
 
 ## 1. Where the engine stands
 
 haVoc is a hand-crafted-evaluation (HCE) alpha-beta engine, currently around
-**2500 Elo** on the CCRL scale. `bench` is **697583 nodes** and there are **133
+**2500 Elo** on the CCRL scale. `bench` is **697583 nodes** and there are **160
 passing tests**. Both are exact checksums — see `handoff.md`.
+
+The 15 August 2026 session merged a 15-PR backlog: the first working Windows
+build, soft/hard time limits, three infinite hangs, two segfaults, several
+parser and `setoption` crashes, and a silent move desync. Measured against the
+pre-session build over 3000 games at 10+0.1: **+38.1 ± 9.3 Elo, LOS 100%**.
+Note that most of that batch was correctness work, which self-play cannot
+score at all — both sides carried the same bugs.
 
 The single most important finding of recent work:
 
@@ -203,6 +216,16 @@ which is the question the check exists to answer.
 
 Ordered by expected return per unit of compute.
 
+> **Superseded in part.** This ordering predates the decision recorded in
+> [`neural-direction.md`](neural-direction.md). Under a CPU/NNUE target the
+> current priorities are datagen throughput, thread scaling, transposition
+> table, move ordering, and the incremental-evaluation seam — all of which
+> carry over to any evaluator. Sections 4.1, 4.2, 4.4 and 4.5 below are
+> **deprioritised**: 4.1 tunes margins that are calibrated to the current
+> evaluation and would not survive replacing it, and 4.2/4.4/4.5 are
+> handcrafted-evaluation work. They are kept because the evidence in them is
+> still valid and the analysis is still correct.
+
 ### 4.1 SPSA the search margins, with games as the objective
 
 The clearest remaining headroom. Search is demonstrably **not saturated**: 29% of
@@ -267,11 +290,17 @@ found.
 
 ### 4.6 NNUE / attention
 
-`feature/trainer` (27 commits, last touched March) is this line of work, developed
-on separate hardware. Given that the HCE reset measured neutral, this is the most
-plausible route to a substantial jump, and the target machine has the GPU and RAM
-for it. Treat the HCE as the thing that must be *correct and fast* to serve as a
-fallback and a datagen engine, not as the thing to squeeze for the next 100 Elo.
+**Now the primary direction — see [`neural-direction.md`](neural-direction.md)
+for the decision and the arithmetic behind it.** In short: the engine targets
+an incrementally-updatable NNUE on CPU, and the transformer in `~/code/chess`
+is repositioned from a per-node evaluator (ruled out on throughput: it needs
+14-585 TMAC/s against ~0.5 fp32 / ~2 int8 available) to a sparse policy oracle
+for move ordering, which costs about 3% of a move.
+
+`feature/trainer` (27 commits, last touched March) is this line of work,
+developed on separate hardware. Treat the HCE as the thing that must be
+*correct and fast* to serve as a fallback and a datagen engine, not as the
+thing to squeeze for the next 100 Elo.
 
 Prerequisite: the `datagen` fixes in the backlog.
 
