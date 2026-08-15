@@ -27,12 +27,13 @@ using namespace havoc;
 struct DatagenPosition {
     std::string fen;
     double result;
-    /// Search score at this position, in centipawns from White's point of
-    /// view, so that it agrees in sign with `result`. Recorded alongside the
-    /// game result because a network trained on the result alone has to learn
-    /// every position of a won game as equally won; the search score is what
+    /// Search score at this position, in centipawns from the point of view of
+    /// the side to move -- which is what the EPD `ce` opcode is defined to
+    /// mean, and is deliberately NOT the convention `result` uses. Recorded
+    /// alongside the result because a network trained on the result alone has
+    /// to learn every position of a won game as equally won; the score is what
     /// tells it which of them were actually close.
-    int score_white;
+    int score_stm;
 };
 
 static std::vector<Move> legal_moves(position& pos) {
@@ -46,21 +47,43 @@ static std::vector<Move> legal_moves(position& pos) {
     return legals;
 }
 
-static double play_game(SearchEngine& engine, int depth, int random_plies,
-                        std::vector<DatagenPosition>& positions, std::mt19937& rng) {
+/// A game either finished with a result, or it did not finish at all. Those
+/// are different things and only one of them may be written to the file: a
+/// game abandoned because the search returned nothing is not a draw, and
+/// labelling it 0.5 teaches the network that every position in it was
+/// balanced.
+struct GameOutcome {
+    bool complete = false;
+    double result = 0.5;
+};
+
+/// Consecutive plies a side must be shown winning by `kAdjudicateCp` before
+/// the game is called. A single ply is one search's opinion; the point of
+/// requiring a run is that a horizon effect which resolves next ply cannot
+/// mislabel every position in the game.
+constexpr int kAdjudicateRun = 4;
+constexpr int kAdjudicateCp = 5000;
+
+static GameOutcome play_game(SearchEngine& engine, int depth, int random_plies,
+                             std::vector<DatagenPosition>& positions, std::mt19937& rng) {
     std::string start_fen(uci::START_FEN);
     std::istringstream fen_stream(start_fen);
     position pos(fen_stream);
 
     int ply = 0;
+    int adjudicate_run = 0;
+    int adjudicate_sign = 0;
 
     while (ply < 500) {
         if (pos.is_draw())
-            return 0.5;
+            return {true, 0.5};
 
         auto legals = legal_moves(pos);
-        if (legals.empty())
-            return pos.in_check() ? (pos.to_move() == white ? 0.0 : 1.0) : 0.5;
+        if (legals.empty()) {
+            if (!pos.in_check())
+                return {true, 0.5}; // stalemate
+            return {true, pos.to_move() == white ? 0.0 : 1.0};
+        }
 
         Move best{};
         int score = 0;
@@ -74,31 +97,39 @@ static double play_game(SearchEngine& engine, int depth, int random_plies,
             engine.start(pos, lims, true);
             engine.wait();
 
-            if (pos.root_moves.empty())
-                return 0.5;
-
-            // A root move with an empty PV carries no move to play. The search
-            // itself guards this before printing "bestmove" -- checkmate and
-            // stalemate leave the list either empty or unplayable -- and
-            // indexing pv[0] here would read past the end of an empty vector.
-            if (pos.root_moves[0].pv.empty())
-                return 0.5;
+            // Terminal positions are already handled above, so an empty root
+            // list or an unplayable first move means the search failed rather
+            // than that the game ended. Abandon the game instead of calling it
+            // a draw -- the caller throws the positions away.
+            if (pos.root_moves.empty() || pos.root_moves[0].pv.empty())
+                return {false, 0.5};
 
             best = pos.root_moves[0].pv[0];
             score = pos.root_moves[0].score;
 
-            if (std::abs(score) > 5000) {
-                return score > 0 ? (pos.to_move() == white ? 1.0 : 0.0)
-                                 : (pos.to_move() == white ? 0.0 : 1.0);
+            // Adjudication is decided in White's frame so that a run survives
+            // the alternation of the side to move.
+            const int score_white = (pos.to_move() == white) ? score : -score;
+            const int sign = (score_white > 0) - (score_white < 0);
+
+            if (std::abs(score) >= score::kMateMaxPly) {
+                // A mate score is a proof, not an estimate. No run required.
+                return {true, score_white > 0 ? 1.0 : 0.0};
+            }
+
+            if (std::abs(score_white) > kAdjudicateCp) {
+                adjudicate_run = (sign == adjudicate_sign) ? adjudicate_run + 1 : 1;
+                adjudicate_sign = sign;
+                if (adjudicate_run >= kAdjudicateRun)
+                    return {true, sign > 0 ? 1.0 : 0.0};
+            } else {
+                adjudicate_run = 0;
+                adjudicate_sign = 0;
             }
 
             bool is_quiet_move = (best.type == static_cast<U8>(quiet));
             if (ply >= 16 && !pos.in_check() && is_quiet_move && std::abs(score) < 3000) {
-                // The search reports from the side to move's point of view;
-                // the game result is recorded from White's. Store both the
-                // same way round or the two labels disagree on half the data.
-                const int score_white = (pos.to_move() == white) ? score : -score;
-                positions.push_back({pos.to_fen(), 0.0, score_white});
+                positions.push_back({pos.to_fen(), 0.0, score});
             }
         }
 
@@ -106,14 +137,16 @@ static double play_game(SearchEngine& engine, int depth, int random_plies,
         ++ply;
     }
 
-    return 0.5;
+    // Ran out of plies without a result. That is not a draw either.
+    return {false, 0.5};
 }
 
 /// Worker function: each thread plays its share of games, flushing to disk periodically.
 static void worker(int thread_id, int games_per_thread, int depth, int random_plies,
                    unsigned seed, int hash_mb, const std::string& output_file,
                    std::mutex& file_mutex, std::atomic<int>& games_done,
-                   std::atomic<uint64_t>& total_positions, int total_games) {
+                   std::atomic<uint64_t>& total_positions, int total_games,
+                   std::atomic<int>& games_abandoned, std::atomic<bool>& write_failed) {
     // `seed + thread_id` makes two runs whose seeds differ by less than the
     // thread count generate overlapping streams -- with 8 threads, --seed 2
     // and --seed 5 share five of their eight -- which is exactly what sharding
@@ -145,11 +178,15 @@ static void worker(int thread_id, int games_per_thread, int depth, int random_pl
         engine.clear();
 
         std::vector<DatagenPosition> game_positions;
-        double result = play_game(engine, depth, random_plies, game_positions, rng);
+        GameOutcome outcome = play_game(engine, depth, random_plies, game_positions, rng);
 
-        for (auto& p : game_positions) {
-            p.result = result;
-            buffer.push_back(p);
+        if (outcome.complete) {
+            for (auto& p : game_positions) {
+                p.result = outcome.result;
+                buffer.push_back(p);
+            }
+        } else {
+            ++games_abandoned;
         }
 
         int done = ++games_done;
@@ -162,9 +199,24 @@ static void worker(int thread_id, int games_per_thread, int depth, int random_pl
                 // `c9` stays first and keeps its exact spelling: readers split
                 // the FEN off at " c9 ", so anything inserted ahead of it
                 // lands inside the FEN. `ce` is the EPD opcode for a centipawn
-                // evaluation, and readers that do not want it ignore it.
-                out << p.fen << " c9 \"" << p.result << "\"; ce " << p.score_white << ";\n";
+                // evaluation and is defined from the point of view of the side
+                // to move, which is the opposite convention to `c9` for half
+                // the positions. That is the standard and readers expect it.
+                out << p.fen << " c9 \"" << p.result << "\"; ce " << p.score_stm << ";\n";
             }
+            out.flush();
+
+            // A run that generates a hundred million positions will meet a
+            // full disk. Counting the buffer as written and dropping it means
+            // the tool reports a total it never stored, and the loss is
+            // silent -- the one failure mode that cannot be noticed later.
+            if (!out) {
+                write_failed = true;
+                std::cerr << "datagen: write to " << output_file << " failed, thread "
+                          << thread_id << " stopping" << std::endl;
+                return;
+            }
+
             total_positions += buffer.size();
             buffer.clear();
 
@@ -185,7 +237,10 @@ static void print_usage(const char* prog) {
               << "  --random-plies N Random opening plies (default: 6)\n"
               << "  --hash N         Transposition table MB per thread (default: 16)\n"
               << "  --output FILE    Output EPD file (default: training_data.epd)\n"
-              << "  --append         Append to existing file (resume interrupted run)\n"
+              << "  --append         Append to an existing file. This adds games, it does\n"
+              << "                   not resume a run: no RNG or game position is restored,\n"
+              << "                   so reusing the same --seed regenerates the same games.\n"
+              << "                   Give each shard its own seed.\n"
               << "  --seed N         Random seed (default: time-based)\n";
 }
 
@@ -236,9 +291,26 @@ int main(int argc, char* argv[]) {
         if (check.is_open()) {
             std::string line;
             while (std::getline(check, line))
-                if (!line.empty()) ++existing_positions;
+                if (!line.empty())
+                    ++existing_positions;
             std::cout << "Appending to " << output << " (" << existing_positions
                       << " existing positions)" << std::endl;
+
+            // A run killed mid-write leaves a partial final line. Appending
+            // straight onto it splices two records into one unparseable row.
+            check.clear();
+            check.seekg(0, std::ios::end);
+            if (check.tellg() > 0) {
+                check.seekg(-1, std::ios::end);
+                char last = 0;
+                check.get(last);
+                if (last != '\n') {
+                    std::cerr << "datagen: " << output
+                              << " does not end in a newline, so its last line is "
+                                 "truncated. Refusing to append onto it." << std::endl;
+                    return 1;
+                }
+            }
         }
     } else {
         // Truncate file
@@ -259,6 +331,8 @@ int main(int argc, char* argv[]) {
     std::mutex file_mutex;
     std::atomic<int> games_done{0};
     std::atomic<uint64_t> total_positions{existing_positions};
+    std::atomic<int> games_abandoned{0};
+    std::atomic<bool> write_failed{false};
 
     // Distribute games across threads
     std::vector<std::thread> threads;
@@ -269,7 +343,8 @@ int main(int argc, char* argv[]) {
         int count = base + (t < remainder ? 1 : 0);
         threads.emplace_back(worker, t, count, depth, random_plies, seed, hash_mb,
                              std::cref(output), std::ref(file_mutex),
-                             std::ref(games_done), std::ref(total_positions), num_games);
+                             std::ref(games_done), std::ref(total_positions), num_games,
+                             std::ref(games_abandoned), std::ref(write_failed));
     }
 
     for (auto& t : threads)
@@ -279,9 +354,25 @@ int main(int argc, char* argv[]) {
     double secs = std::chrono::duration<double>(elapsed).count();
     double gps = num_games / secs;
 
+    if (write_failed.load()) {
+        std::cerr << "\ndatagen: FAILED. " << output
+                  << " is incomplete -- some positions were generated but not stored."
+                  << std::endl;
+        return 1;
+    }
+
     std::cout << "\nDone: " << total_positions.load() << " total positions in " << output
               << " (" << static_cast<int>(secs) << "s, " << static_cast<int>(gps)
               << " games/sec)" << std::endl;
+
+    const int abandoned = games_abandoned.load();
+    if (abandoned > 0) {
+        // Not fatal, but it means the search returned nothing playable or a
+        // game hit the ply cap. Those games are discarded rather than written
+        // as draws, so say how many so that a systematic failure is visible.
+        std::cout << "Abandoned " << abandoned << " of " << num_games
+                  << " games with no result (positions discarded)" << std::endl;
+    }
 
     return 0;
 }
