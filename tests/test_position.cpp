@@ -332,7 +332,12 @@ TEST_F(PositionTest, SeeWorksWhileInCheck) {
 
 TEST_F(PositionTest, SeeRefusesKingCaptureOfADefendedPiece) {
     // Kxe2 is not actually available: the rook on e8 recaptures.
-    EXPECT_LT(see_of("4r3/8/8/8/8/8/4r3/4K3 w - - 0 1", E1, E2), 0);
+    // The black king is on a8 only to make the position legal. Without it
+    // king_square(black) returns no_square, which is 65, and pinned() indexes
+    // bitboards::battks[65] -- a global buffer overflow that UBSan and ASan both
+    // flag. It is off the board for every real game, but it kept the sanitizer
+    // build from getting past this test.
+    EXPECT_LT(see_of("k3r3/8/8/8/8/8/4r3/4K3 w - - 0 1", E1, E2), 0);
 }
 
 // Capture-promotions are the one path in see() that changes both the value of
