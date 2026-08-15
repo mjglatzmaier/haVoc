@@ -7,6 +7,7 @@
 #include "havoc/version.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <iostream>
 #include <sstream>
@@ -14,6 +15,19 @@
 
 namespace havoc {
 namespace uci {
+
+namespace {
+
+/// Parses a spin option value. std::stoi terminated the process on anything
+/// non-numeric, and a GUI is free to send whatever it likes.
+bool parse_int(const std::string& tok, int& out) {
+    const char* first = tok.data();
+    const char* last = first + tok.size();
+    const auto [ptr, ec] = std::from_chars(first, last, out);
+    return ec == std::errc() && ptr == last;
+}
+
+}  // namespace
 
 void loop(SearchEngine& engine) {
     std::string fen_str{START_FEN};
@@ -64,8 +78,13 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
         } else if (cmd == "setoption" && instream >> cmd && instream >> cmd) {
             std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
             if (cmd == "hash" && instream >> cmd && instream >> cmd) {
-                auto sz = std::stoi(cmd);
-                engine.set_hash_size(sz);
+                int sz = 0;
+                if (!parse_int(cmd, sz))
+                    std::cout << "info string ignoring non-numeric Hash value: " << cmd
+                              << std::endl;
+                else if (!engine.set_hash_size(sz))
+                    std::cout << "info string could not allocate " << sz
+                              << " MB for Hash, keeping the current table" << std::endl;
                 break;
             }
             if (cmd == "clear" && instream >> cmd) {
@@ -73,7 +92,12 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                     engine.tt().clear();
             }
             if (cmd == "threads" && instream >> cmd && instream >> cmd) {
-                engine.set_threads(std::stoi(cmd));
+                int n = 0;
+                if (!parse_int(cmd, n))
+                    std::cout << "info string ignoring non-numeric Threads value: " << cmd
+                              << std::endl;
+                else
+                    engine.set_threads(n);
                 break;
             }
             if (cmd == "syzygypath" && instream >> cmd && instream >> cmd) {
@@ -155,8 +179,10 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             uci_pos.clear();
             std::cout << "id name " << ENGINE_NAME << " " << VERSION_STRING << std::endl;
             std::cout << "id author " << ENGINE_AUTHOR << std::endl;
-            std::cout << "option name Threads type spin default 1 min 1 max 1024" << std::endl;
-            std::cout << "option name Hash type spin default 1024 min 1 max 33554432" << std::endl;
+            std::cout << "option name Threads type spin default 1 min " << kMinThreads
+                      << " max " << kMaxThreads << std::endl;
+            std::cout << "option name Hash type spin default " << kDefaultHashMb << " min "
+                      << kMinHashMb << " max " << kMaxHashMb << std::endl;
             std::cout << "option name SyzygyPath type string default <empty>" << std::endl;
             std::cout << "option name BookFile type string default <empty>" << std::endl;
             std::cout << "option name ParamFile type string default <empty>" << std::endl;

@@ -129,7 +129,9 @@ class hash_table {
     void save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score, bool pv_node);
     bool fetch(U64 key, hash_data& e);
     void clear();
-    void resize(size_t size_mb);
+    /// Returns false and keeps the current table if the requested size cannot
+    /// be allocated.
+    [[nodiscard]] bool resize(size_t size_mb);
 
     /// Bumps the generation counter; call once at the start of every search so
     /// that entries from previous searches become preferred replacement victims.

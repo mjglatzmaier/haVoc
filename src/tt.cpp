@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
+#include <new>
 
 namespace havoc {
 
@@ -14,18 +16,33 @@ inline size_t next_pow2(size_t x) {
 } // namespace
 
 hash_table::hash_table() {
-    resize(128);
+    // 128 MB at construction. If even this fails the process has no usable
+    // table, but there is nothing useful to do about it here and throwing from
+    // a constructor that runs before main() is worse than starting up.
+    (void)resize(128);
 }
-void hash_table::resize(size_t size_mb) {
-    sz_mb_ = size_mb;
-    cluster_count_ = 1024ULL * 1024 * sz_mb_ / sizeof(hash_cluster);
-    cluster_count_ = next_pow2(cluster_count_);
-    if (cluster_count_ < 1024)
-        cluster_count_ = 1024;
+bool hash_table::resize(size_t size_mb) {
+    size_t clusters = 1024ULL * 1024 * size_mb / sizeof(hash_cluster);
+    clusters = next_pow2(clusters);
+    if (clusters < 1024)
+        clusters = 1024;
 
-    entries_.reset();
-    entries_ = std::make_unique<hash_cluster[]>(cluster_count_);
+    // Allocate before committing. A GUI is free to ask for more memory than the
+    // machine has, and throwing out of here killed the process; dropping the
+    // existing table first would leave a null entries_ behind even if the caller
+    // did catch. Refusing the change keeps the engine playable.
+    std::unique_ptr<hash_cluster[]> fresh;
+    try {
+        fresh = std::make_unique<hash_cluster[]>(clusters);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+
+    entries_ = std::move(fresh);
+    cluster_count_ = clusters;
+    sz_mb_ = size_mb;
     clear();
+    return true;
 }
 
 void hash_table::clear() {

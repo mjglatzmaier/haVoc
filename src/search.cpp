@@ -80,12 +80,16 @@ SearchEngine::~SearchEngine() {
 }
 
 void SearchEngine::set_threads(int n) {
-    n = std::max(n, 1);
+    // The bounds the "uci" handshake advertises. They were advertised but never
+    // enforced: "setoption name Threads value 99999" tried to start 99999
+    // threads and wedged the engine.
+    n = std::clamp(n, kMinThreads, kMaxThreads);
     search_threads_.init(n);
 }
 
-void SearchEngine::set_hash_size(int mb) {
-    tt_.resize(static_cast<size_t>(mb));
+bool SearchEngine::set_hash_size(int mb) {
+    mb = std::clamp(mb, kMinHashMb, kMaxHashMb);
+    return tt_.resize(static_cast<size_t>(mb));
 }
 
 void SearchEngine::clear() {
