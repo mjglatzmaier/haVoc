@@ -191,6 +191,13 @@ class position {
 
     [[nodiscard]] inline Square eps() const { return ifo.eps; }
     [[nodiscard]] inline Color to_move() const { return ifo.stm; }
+
+    /// Half-moves played, counting from whatever the FEN supplied. do_move()
+    /// increments it once per move regardless of side, so it advances by one
+    /// per ply rather than per full move. Search uses it only to decorrelate
+    /// the per-thread depth skipping between one root position and the next,
+    /// which needs nothing more than a number that changes every move.
+    [[nodiscard]] inline U16 game_ply() const { return ifo.hmvs; }
     [[nodiscard]] inline U64 key() const { return ifo.key; }
     [[nodiscard]] inline U64 repkey() const { return ifo.repkey; }
     [[nodiscard]] inline U64 pawnkey() const { return ifo.pawnkey; }

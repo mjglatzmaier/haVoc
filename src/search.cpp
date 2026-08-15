@@ -452,9 +452,63 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
     Move prev_best{};
     int stable_iterations = 0;
 
-    for (unsigned id = 1 + static_cast<unsigned>(thread_id); id <= depth; ++id) {
+    // Every thread runs its own iterative deepening from depth 1, but helper
+    // threads skip a different subset of depths so that no two threads walk
+    // the same ladder.
+    //
+    // This used to start thread n at depth n + 1. The stagger was deliberate
+    // and it earns its keep -- Lazy SMP is only worth anything when the
+    // threads disagree about what to look at, and a shared table plus
+    // identical iteration order does not produce enough disagreement.
+    // Removing the stagger entirely and starting every thread at depth 1 cost
+    // up to 36% time to depth (16 threads, depth 20, four positions: 4.58 s
+    // against 7.19 s). It stays.
+    //
+    // What does not work is expressing the stagger as a starting depth, for
+    // two reasons.
+    //
+    // The loop bound is `id <= depth`, so on "go depth 13" every thread from
+    // 13 up entered with id = 14 and returned without searching a node. Time
+    // to depth 13 from the start position was the same at 1 thread and at 32
+    // (0.53 s vs 0.60 s): past the requested depth the extra threads were not
+    // slow, they were absent. That covers bench, "go depth N" and datagen.
+    //
+    // And a thread that begins at depth 21 has skipped every iteration that
+    // makes depth 21 affordable. Iterative deepening is not a way of arriving
+    // at a depth, it is what makes that depth cheap -- each pass leaves behind
+    // the table entries and the move ordering the next one needs. A cold start
+    // deep in the tree pays full price for ground the other threads have
+    // already mapped.
+    //
+    // The skip table gives the same diversity without either. Thread i skips
+    // depths on a period of skip_size[i] offset by skip_phase[i], so the
+    // threads stay out of each other's way while all of them still climb from
+    // depth 1 and none of them sit idle. The tables are the ones Stockfish
+    // used for this; adding the game ply keeps a thread from drawing the same
+    // pattern on consecutive moves.
+    static constexpr int skip_size[20]  = {1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
+                                           3, 3, 4, 4, 4, 4, 4, 4, 4, 4};
+    static constexpr int skip_phase[20] = {0, 1, 0, 1, 2, 3, 0, 1, 2, 3,
+                                           4, 5, 0, 1, 2, 3, 4, 5, 6, 7};
+    const int skip_slot = is_main ? -1 : (thread_id - 1) % 20;
+    const int game_ply  = static_cast<int>(p.game_ply());
+
+    // The depth limit binds the main thread only, which is what ends the
+    // search: it sets signals_.stop once it completes the requested depth and
+    // the helpers stop with it. Bounding the helpers too would idle them again
+    // for the remainder of the last iteration, which is the case this is
+    // fixing. Stockfish draws the line in the same place.
+    const unsigned last_id = is_main ? depth : static_cast<unsigned>(MAX_PLY);
+
+    for (unsigned id = 1; id <= last_id; ++id) {
         if (signals_.stop.load())
             break;
+
+        if (skip_slot >= 0) {
+            const int i = skip_slot;
+            if (((static_cast<int>(id) + game_ply + skip_phase[i]) / skip_size[i]) % 2 != 0)
+                continue;
+        }
 
         (stack + 0)->ply = (stack + 1)->ply = (stack + 2)->ply = 0;
 
@@ -474,11 +528,13 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
         delta = baseDelta;
 
         // Only aspirate once a completed iteration has produced a score to
-        // aspirate around. The old guard was `id >= 2`, which is true on the
-        // *first* iteration of every helper thread, since thread n starts at
-        // depth n + 1. Those threads then built their window out of the initial
-        // eval of -inf and searched [-inf, -inf + 33], which fails high on
-        // essentially any position.
+        // aspirate around. The old guard was `id >= 2`, which was true on the
+        // *first* iteration of every helper thread back when thread n started
+        // at depth n + 1. Those threads then built their window out of the
+        // initial eval of -inf and searched [-inf, -inf + 33], which fails
+        // high on essentially any position. Every thread now starts at depth
+        // 1, so `id >= 2` would be correct again -- but this guard states the
+        // actual precondition rather than a proxy for it, so leave it.
         if (last_completed != score::kNegInf) {
             alpha = std::max(last_completed - smallDelta, static_cast<int>(score::kNegInf));
             beta = std::min(last_completed + smallDelta, static_cast<int>(score::kInf));
