@@ -20,6 +20,7 @@ Movehistory& Movehistory::operator=(const Movehistory& mh) {
     // eval-versus-search bias while appearing to preserve the history.
     corrections_ = mh.corrections_;
     countermoves = mh.countermoves;
+    capture_history_ = mh.capture_history_;
     *continuation_ = *mh.continuation_;
     cont_pct1_ = mh.cont_pct1_;
     cont_pct2_ = mh.cont_pct2_;
@@ -95,6 +96,45 @@ void Movehistory::malus_continuation(const position& p, const SearchNode* stack,
                 apply_history_bonus(*h, -bonus);
 }
 
+// ─── Capture history ────────────────────────────────────────────────────────
+
+const int* Movehistory::capture_slot(const position& p, const Move& m) const {
+    const auto mt = static_cast<Movetype>(m.type);
+    if (!is_capture(mt))
+        return nullptr;
+
+    // En passant is the one capture whose victim is not standing on the
+    // destination square, and it is always a pawn.
+    const Piece taken = mt == ep ? pawn : p.piece_on(static_cast<Square>(m.t));
+    const Piece moved = p.piece_on(static_cast<Square>(m.f));
+    if (taken == no_piece || moved == no_piece)
+        return nullptr;
+
+    return &capture_history_[p.to_move()][moved][m.t][taken];
+}
+
+int* Movehistory::capture_slot(const position& p, const Move& m) {
+    return const_cast<int*>(static_cast<const Movehistory*>(this)->capture_slot(p, m));
+}
+
+int Movehistory::capture_score(const position& p, const Move& m) const {
+    const int* h = capture_slot(p, m);
+    return h ? *h : 0;
+}
+
+void Movehistory::update_capture(const position& p, const Move& best, int bonus,
+                                 const std::vector<Move>& captures) {
+    if (int* h = capture_slot(p, best))
+        apply_history_bonus(*h, bonus);
+
+    for (const auto& c : captures) {
+        if (c == best)
+            continue;
+        if (int* h = capture_slot(p, c))
+            apply_history_bonus(*h, -bonus);
+    }
+}
+
 void Movehistory::update(const Color& c, const Move& m, const Move& previous, int bonus,
                          int16_t eval, const std::vector<Move>& quiets, Move* killers) {
     if (m.type == static_cast<U8>(Movetype::quiet)) {
@@ -146,6 +186,11 @@ void Movehistory::clear() {
 
     for (auto& c : corrections_)
         std::fill(c.begin(), c.end(), 0);
+
+    for (auto& color : capture_history_)
+        for (auto& moved : color)
+            for (auto& to : moved)
+                std::fill(to.begin(), to.end(), 0);
 }
 
 void Movehistory::update_correction(Color c, U64 pawnkey, int depth, int diff) {
@@ -190,14 +235,22 @@ int Movehistory::score(const Move& m, const Color& c, const Move& previous, cons
 
 int score_captures(const position& p, const Move& m, const Move& /*prev*/,
                    const Move& /*followup*/, const Move& /*threat*/, SearchNode* stack,
-                   const Movehistory* /*hist*/) {
-    return p.see(m) * kCaptureSeeScale + stack->best_move_history()[p.to_move()][m.f][m.t];
+                   const Movehistory* hist) {
+    const int see = p.see(m);
+    int tie = stack->best_move_history()[p.to_move()][m.f][m.t];
+    if (hist)
+        tie += hist->capture_score(p, m);
+    return (see >= 0 ? kGoodCaptureBase : 0) + see * kCaptureSeeScale +
+           std::clamp(tie, -kCaptureTieRoom, kCaptureTieRoom);
 }
 
 int score_qcaptures(const position& p, const Move& m, const Move& /*prev*/,
                     const Move& /*followup*/, const Move& /*threat*/, SearchNode* /*stack*/,
-                    const Movehistory* /*hist*/) {
-    return p.see(m);
+                    const Movehistory* hist) {
+    const int see = p.see(m);
+    const int tie = hist ? hist->capture_score(p, m) : 0;
+    return (see >= 0 ? kGoodCaptureBase : 0) + see * kCaptureSeeScale +
+           std::clamp(tie, -kCaptureTieRoom, kCaptureTieRoom);
 }
 
 int score_quiets(const position& p, const Move& m, const Move& prev, const Move& followup,
@@ -447,11 +500,7 @@ void QMoveorder::next_phase() {
 }
 
 bool QMoveorder::valid_qmove(const Move& m) const {
-    return m_incheck || m.type == static_cast<U8>(capture) || m.type == static_cast<U8>(ep) ||
-           m.type == static_cast<U8>(capture_promotion_q) ||
-           m.type == static_cast<U8>(capture_promotion_r) ||
-           m.type == static_cast<U8>(capture_promotion_b) ||
-           m.type == static_cast<U8>(capture_promotion_n);
+    return m_incheck || is_capture(static_cast<Movetype>(m.type));
 }
 
 } // namespace havoc

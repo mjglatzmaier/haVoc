@@ -71,16 +71,56 @@ struct SearchNode {
 /// move ordering pipeline or grow without bound over a long search.
 constexpr int kMaxHistory = 16384;
 
-/// Capture scores combine the exchange value with a history term. The two live
-/// on very different scales -- SEE spans roughly +/-910 while history saturates
-/// at +/-kMaxHistory -- so the exchange value is scaled up before they are
-/// added. This keeps the sign of the capture score equal to the sign of the SEE
-/// value, which is what separates the good-capture phase from the bad-capture
-/// phase, and leaves history to break ties between captures of equal value.
-/// 4096 is the smallest power of two for which the narrowest gap between two
-/// distinct exchange values (15, a bishop for a knight) outweighs the full
-/// history range.
-constexpr int kCaptureSeeScale = 4096;
+/// Capture scores combine the exchange value with history terms. The exchange
+/// value is scaled up by this first, so that it is the primary sort key and
+/// history only breaks ties between captures it scores identically.
+///
+/// How large this has to be is not a matter of taste, and the reasoning that
+/// used to sit here was wrong. It claimed the narrowest gap between two
+/// distinct exchange values was 15, a bishop taken for a knight, and sized the
+/// scale against that. But 15 is the narrowest gap between two *piece values*,
+/// not between two exchange results: see() returns sums and differences of the
+/// material values, so the achievable results are spaced by their greatest
+/// common divisor. With the current numbers (100, 300, 315, 480, 910) that is
+/// 5, and SEE really does return both 115 and 120 in ordinary positions. The
+/// values are tunable, so a tuner is free to make the spacing 1.
+///
+/// Sizing the scale against any particular set of material values is therefore
+/// the wrong move. Instead the history terms are clamped into strictly less
+/// than half a step (kCaptureTieRoom below), which makes the ordering
+/// lexicographic: exchange value first, history second, for any material
+/// values and however the history tables are later rescaled.
+constexpr int kCaptureSeeScale = 1 << 16;
+
+/// Room reserved inside one exchange-value step for history to order captures
+/// that SEE cannot tell apart. Strictly less than half a step, so that two
+/// tie-breaks pulling in opposite directions still cannot span a whole step
+/// and swap two captures of different exchange value.
+constexpr int kCaptureTieRoom = kCaptureSeeScale / 2 - 1;
+
+static_assert(2 * kCaptureTieRoom < kCaptureSeeScale,
+              "history can reorder captures across distinct exchange values");
+
+/// Offset added to every capture whose exchange value is non-negative.
+///
+/// The capture list is split into a good-capture phase and a bad-capture phase
+/// by chunking it at score 0, so the *sign* of a capture's score decides which
+/// side of the killers it is tried on. That split is meant to be a statement
+/// about the exchange -- "this wins material" -- and nothing else. Once history
+/// terms are added to the capture score, an even exchange with a poor record
+/// would silently fall through to the bad-capture phase, which is a change to
+/// the search's shape smuggled in under a change to its ordering.
+///
+/// This offset keeps the two questions separate: SEE alone decides the phase,
+/// history only orders moves within it. It is larger than the whole tie-break
+/// range, so no history value can carry a capture across the boundary in
+/// either direction.
+constexpr int kGoodCaptureBase = 1 << 20;
+
+static_assert(kGoodCaptureBase > kCaptureTieRoom,
+              "history can carry a non-losing capture into the bad-capture phase");
+static_assert(kCaptureSeeScale > kCaptureTieRoom,
+              "history can carry a losing capture into the good-capture phase");
 
 /// Sentinel meaning "no cutoff" when splitting a scored move list into chunks.
 /// It has to sit below every score a scoring function can produce, so it cannot
@@ -141,6 +181,41 @@ struct Movehistory {
     /// the weights set through `set_continuation_weights`.
     int continuation_score(const position& p, const Move& m, const SearchNode* stack) const;
 
+    /// ─── Capture history ────────────────────────────────────────────────
+    ///
+    /// Captures are ordered by their exchange value, which answers "what does
+    /// this win or lose in the ensuing sequence" and nothing else. It cannot
+    /// separate two captures worth the same material, and there are usually
+    /// several: every recapture on the same square, every piece that can take
+    /// the same hanging knight. Nor does it know that in this structure the
+    /// exchange sacrifice on f6 is the move and the equal-looking trade on d5
+    /// never is -- SEE is a property of a square, not of a position.
+    ///
+    /// Capture history supplies what SEE cannot: a record of which captures
+    /// actually produced cutoffs, keyed on the piece that moved, where it
+    /// landed, and what it took. That triple is the smallest key that
+    /// distinguishes the cases SEE conflates, and it is what makes "a rook
+    /// taking a pawn on h7" a different proposition from "a bishop taking a
+    /// pawn on h7".
+    ///
+    /// The score is bounded by kMaxHistory, so it can reorder captures within
+    /// an exchange value but never across kGoodCaptureBase.
+
+    /// Ordering bonus for capture `m`, which must be a capture in `p`.
+    /// `p` is the position before `m` is played, so the captured piece is
+    /// still standing on the destination square.
+    [[nodiscard]] int capture_score(const position& p, const Move& m) const;
+
+    /// Rewards `best` if it is a capture and penalises every other capture in
+    /// `captures` that was tried and did not cut. Called at a fail-high: when
+    /// the cutoff came from a quiet, `best` is simply not a capture and every
+    /// capture tried is penalised, which is the correct lesson.
+    ///
+    /// `p` must be the position at that node with every searched move undone,
+    /// so that piece_on identifies both the moving and the captured piece.
+    void update_capture(const position& p, const Move& best, int bonus,
+                        const std::vector<Move>& captures);
+
     /// ─── Correction history ─────────────────────────────────────────────
     ///
     /// The static evaluation is not a neutral estimator: it is wrong in ways
@@ -192,7 +267,17 @@ struct Movehistory {
     const int* continuation_slot(int plane, const SearchNode* stack, Color c, Piece moved,
                                  const Move& m) const;
 
+    /// Resolves the (color, moved, to, captured) slot for `m`, or nullptr if
+    /// `m` is not a capture or either piece cannot be identified in `p`.
+    const int* capture_slot(const position& p, const Move& m) const;
+    int* capture_slot(const position& p, const Move& m);
+
     std::array<std::array<std::array<int, squares>, squares>, colors> history_;
+    /// Indexed by [color][moved piece][destination][captured piece]. 18 KB,
+    /// small enough to stay resident, so it is held inline rather than behind
+    /// the indirection the continuation tables need.
+    std::array<std::array<std::array<std::array<int, pieces>, squares>, pieces>, colors>
+        capture_history_{};
     /// Indexed by [side to move][pawn key]. Two colours because the same pawn
     /// structure is a different proposition depending on whose move it is.
     std::array<std::array<int, kCorrSize>, colors> corrections_{};

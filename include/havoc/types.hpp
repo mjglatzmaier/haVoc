@@ -41,6 +41,17 @@ enum Movetype {
     no_type
 };
 
+/// True if a move of type `mt` removes an enemy piece from the board.
+///
+/// Capture-promotions count: they take a piece as well as making one, so any
+/// table keyed on what was taken has to see them. The `capture_promotion` and
+/// `pseudo_legal` entries above are classification tags the generator uses
+/// internally, not types a made move carries, so they are deliberately absent.
+constexpr bool is_capture(Movetype mt) {
+    return mt == capture || mt == ep || mt == capture_promotion_q ||
+           mt == capture_promotion_r || mt == capture_promotion_b || mt == capture_promotion_n;
+}
+
 /// Piece types (pawn=0 .. king=5).
 enum Piece { pawn, knight, bishop, rook, queen, king, pieces, no_piece };
 
