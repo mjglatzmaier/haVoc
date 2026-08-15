@@ -16,6 +16,11 @@ with real numbers instead of being forgotten.
 Each entry should say what to check and what would count as evidence to change
 course.
 
+> **New here?** Start with [`roadmap.md`](roadmap.md) for the state of play, what
+> has been tried, and where the remaining value is; and
+> [`handoff.md`](handoff.md) for setting up on a new machine. This file is the
+> underlying evidence log they both cite.
+
 ## Evaluation terms whose defaults are guesses
 
 | Term | Landed | What to check after tuning |

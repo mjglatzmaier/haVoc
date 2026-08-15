@@ -234,9 +234,13 @@ Windows: [ci.yml](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml
 
 Being honest about where things stand:
 
-- The evaluation terms are largely hand-set. Texel tuning infrastructure exists
-  but has not produced a well-tuned parameter set yet. This is the weakest part
-  of the engine by a wide margin.
+- The evaluation terms are largely hand-set. Texel tuning infrastructure exists,
+  and has been shown *not* to be the answer: a parameter's gradient is
+  independent of its current value, so the fit is unmoved by better starting
+  points, and the error is dominated by material while the quiet filter discards
+  the positions where tactical terms fire. The fit it converges to measured
+  +1.4 ± 19.9 Elo over 781 games. Use it for material and piece-square tables
+  only — see [`docs/roadmap.md`](docs/roadmap.md).
 - The search is capped at 64 plies (`MAX_PLY`). Search and quiescence now stop
   cleanly at that bound rather than running past the end of the search stack,
   but the cap itself is low: a ten-second search already reaches ply 29, and a
@@ -251,13 +255,14 @@ Being honest about where things stand:
   different plies. This looks wrong and was measured: removing it costs about
   20% more nodes, so it stays until something better replaces it.
 - Syzygy tablebase probing and Polyglot opening books are stubs.
-- No rating against a rated opponent has been established. Strength has only
-  ever been measured as a self-play difference against previous versions of
-  haVoc, which says nothing about where the engine sits on any public list.
+- Search is not saturated: 29% of positions change their preferred move at depth
+  8 and 12% are still changing at depth 12, so nodes remain genuinely valuable
+  and the search margins are the most promising thing left to tune.
 
-Possible future work, in rough order of interest: retuning the depth-indexed
-search constants, finishing evaluation tuning, replacing the hand-written
-evaluation with a learned one, Syzygy probing, and Chess960 support.
+Possible future work, in rough order of interest: SPSA over the search margins,
+move ordering, replacing the hand-written evaluation with a learned one, Syzygy
+probing, and Chess960 support. [`docs/roadmap.md`](docs/roadmap.md) has the
+reasoning, the negative results, and the things not to retry.
 
 ## License
 
