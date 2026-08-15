@@ -1,10 +1,30 @@
 #include "havoc/position.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <cmath>
 #include <vector>
 
 namespace havoc {
+
+namespace {
+
+/// Parses one of the two trailing FEN counters. Returns false rather than
+/// throwing on input that is not a number: std::stoi terminates the process on
+/// "abc" and on values too large for the type, and a FEN is untrusted input.
+bool parse_fen_counter(const std::string& tok, unsigned& out) {
+    if (tok == "-") {
+        out = 0;
+        return true;
+    }
+    const char* first = tok.data();
+    const char* last = first + tok.size();
+    const auto [ptr, ec] = std::from_chars(first, last, out);
+    return ec == std::errc() && ptr == last;
+}
+
+}  // namespace
 
 // ─── Constructors / assignment ──────────────────────────────────────────────
 
@@ -32,21 +52,33 @@ position& position::operator=(const position& p) {
 
 // ─── Setup / clear ──────────────────────────────────────────────────────────
 
-void position::setup(std::istringstream& fen) {
+bool position::setup(std::istringstream& fen) {
     clear();
 
     std::string token;
     fen >> token;
-    Square s = A8;
 
-    for (auto& c : token) {
-        if (isdigit(c))
-            s += int(c - '0');
-        else if (c == '/')
-            s -= 16;
-        else {
-            set_piece(c, s);
-            ++s;
+    // The placement field walks a8 -> h1. A malformed field can push the cursor
+    // off either end -- "9999999" advances past h1, a stray '/' rewinds past
+    // a1 -- and set_piece() only validates the piece character, not the square,
+    // so an unchecked cursor writes outside the piece bitboards.
+    int sq = int(A8);
+    for (const char c : token) {
+        if (c == '/') {
+            sq -= 16;
+        } else if (std::isdigit(static_cast<unsigned char>(c))) {
+            if (c == '0' || c == '9') {
+                clear();
+                return false;
+            }
+            sq += c - '0';
+        } else {
+            if (sq < int(A1) || sq > int(H8)) {
+                clear();
+                return false;
+            }
+            set_piece(c, Square(sq));
+            ++sq;
         }
     }
 
@@ -87,13 +119,43 @@ void position::setup(std::istringstream& fen) {
         ifo.repkey ^= zobrist::ep(util::col(ifo.eps));
     }
 
-    // half-moves since last pawn move/capture
-    fen >> token;
-    ifo.move50 = (token != "-" ? U8(std::stoi(token)) : 0);
+    // half-moves since last pawn move/capture, then the move counter.
+    //
+    // Both are optional and both are routinely replaced by EPD operations:
+    // "8/8/... w - - bm Qg6; id "WAC.001";" is a normal line in a published
+    // test suite. Anything that is not a number is treated as the start of the
+    // operations and the counters keep their defaults, rather than failing the
+    // position -- they only feed the fifty-move rule, so a position is fully
+    // determined without them. std::stoi used to terminate the process here.
+    unsigned counter = 0;
+    if ((fen >> token) && parse_fen_counter(token, counter)) {
+        ifo.move50 = U8(counter);
+        if ((fen >> token) && parse_fen_counter(token, counter))
+            ifo.hmvs = U16(counter);
+    }
 
-    // move counter
-    fen >> token;
-    ifo.hmvs = (token != "-" ? U16(std::stoi(token)) : 0);
+    // A chess position has two kings. Without both, ifo.ks keeps its no_square
+    // initialiser, and no_square is 65 -- one past the end of the 64-entry
+    // attack tables that is_attacked() and pinned() index by king square. UBSan
+    // confirms the read is out of bounds. Reject the FEN instead, leaving the
+    // board cleared, rather than computing check info from a square that does
+    // not exist.
+    if (ifo.ks[white] == no_square || ifo.ks[black] == no_square) {
+        clear();
+        return false;
+    }
+
+    // Pawns cannot stand on the first or last rank: they would have promoted.
+    // The KPK bitbase relies on this. kpk::pawn_index() computes
+    // col * 6 + (row - 1) for a pawn it assumes is on ranks 2-7, so a pawn on
+    // rank 1 indexes g_won at a negative offset, which segfaults rather than
+    // returning a wrong score. Reject the position instead of teaching the
+    // bitbase to tolerate impossible input on the evaluation path.
+    const U64 backranks = bitboards::row[0] | bitboards::row[7];
+    if ((get_pieces<white, pawn>() | get_pieces<black, pawn>()) & backranks) {
+        clear();
+        return false;
+    }
 
     // check info
     Color stm = to_move();
@@ -102,6 +164,7 @@ void position::setup(std::istringstream& fen) {
     ifo.checkers = (in_check() ? attackers_of2(ifo.ks[stm], Color(stm ^ 1)) : 0ULL);
     ifo.pinned[stm] = pinned(stm);
     ifo.pinned[stm ^ 1] = pinned(Color(stm ^ 1));
+    return true;
 }
 
 std::string position::to_fen() const {

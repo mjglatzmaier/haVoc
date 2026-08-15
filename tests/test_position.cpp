@@ -673,4 +673,77 @@ TEST_F(PositionTest, ZobristRandomsAreStatisticallyIndependent) {
     EXPECT_EQ(four_term, 0) << four_term << " quadruples of zobrist randoms satisfy a^b == c^d";
 }
 
+// ── FEN validation ──────────────────────────────────────────────────────────
+//
+// Every string below crashed the engine before setup() validated its input:
+// missing kings indexed the 64-entry attack tables with no_square (65), a pawn
+// on the first or last rank drove kpk::pawn_index() negative, std::stoi
+// terminated the process on a non-numeric counter, and a placement field that
+// ran off the board wrote outside the piece bitboards.
+
+namespace {
+
+bool parses(const std::string& fen) {
+    std::istringstream ss(fen);
+    position p;
+    return p.setup(ss);
+}
+
+} // namespace
+
+TEST_F(PositionTest, RejectsFenWithoutBothKings) {
+    EXPECT_FALSE(parses("8/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1")) << "no black king";
+    EXPECT_FALSE(parses("6k1/5ppp/8/8/8/8/5PPP/R7 w - - 0 1")) << "no white king";
+    EXPECT_FALSE(parses("8/8/8/8/8/8/8/8 w - - 0 1")) << "empty board";
+    EXPECT_FALSE(parses("4K3/8/8/8/8/8/8/4K3 w - - 0 1")) << "two white kings, no black";
+}
+
+TEST_F(PositionTest, RejectsPawnOnFirstOrLastRank) {
+    // Drove kpk::pawn_index() to col * 6 - 1, indexing the bitbase negatively.
+    EXPECT_FALSE(parses("4k3/8/8/8/8/8/8/4K2P w - - 0 1")) << "white pawn on rank 1";
+    EXPECT_FALSE(parses("p7/8/8/8/8/8/8/4K2k w - - 0 1")) << "black pawn on rank 8";
+    EXPECT_FALSE(parses("P7/8/8/8/8/8/8/4K2k w - - 0 1")) << "white pawn on rank 8";
+    EXPECT_FALSE(parses("4k3/8/8/8/8/8/8/4K2p w - - 0 1")) << "black pawn on rank 1";
+}
+
+TEST_F(PositionTest, TreatsNonNumericCountersAsEpdOperations) {
+    // Published EPD suites put operations exactly where the counters go, and
+    // std::stoi used to terminate the process on them. The position is fully
+    // determined without the counters, so it parses and they keep their
+    // defaults.
+    EXPECT_TRUE(parses("2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - bm Qg6;"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - abc 1"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 xyz"));
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 99999999999999 1"));
+
+    // A counter that is present and valid is still read.
+    std::istringstream ss("4k3/8/8/8/8/8/8/4K3 w - - 17 42");
+    position p;
+    ASSERT_TRUE(p.setup(ss));
+    EXPECT_NE(p.to_fen().find(" 17 42"), std::string::npos) << p.to_fen();
+}
+
+TEST_F(PositionTest, RejectsPlacementThatRunsOffTheBoard) {
+    EXPECT_FALSE(parses("9999999/8/8/8/8/8/8/4K3 w - - 0 1")) << "digit past h1";
+    EXPECT_FALSE(parses("/////// w - - 0 1")) << "rewinds past a1";
+}
+
+TEST_F(PositionTest, AcceptsLegalFens) {
+    EXPECT_TRUE(parses("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"));
+    EXPECT_TRUE(parses("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"));
+    EXPECT_TRUE(parses("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"));
+    EXPECT_TRUE(parses("rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2"));
+    EXPECT_TRUE(parses("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1"));
+    // Counters are optional in EPD-style strings.
+    EXPECT_TRUE(parses("4k3/8/8/8/8/8/8/4K3 w - -"));
+}
+
+TEST_F(PositionTest, RejectedFenLeavesAnEmptyBoardNotAHalfParsedOne) {
+    std::istringstream ss("8/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1");
+    position p;
+    ASSERT_FALSE(p.setup(ss));
+    EXPECT_EQ(p.get_pieces<white>(), 0ULL);
+    EXPECT_EQ(p.get_pieces<black>(), 0ULL);
+}
+
 } // namespace havoc

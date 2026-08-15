@@ -113,7 +113,9 @@ class position {
     Rootmoves root_moves;
 
     // setup / clear
-    void setup(std::istringstream& fen);
+    /// Returns false if the FEN does not describe a legal position, in which
+    /// case the board is left cleared rather than half-parsed.
+    bool setup(std::istringstream& fen);
     [[nodiscard]] std::string to_fen() const;
     void clear();
     void set_piece(char p, const Square& s);
