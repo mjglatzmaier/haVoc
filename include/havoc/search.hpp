@@ -18,8 +18,10 @@ namespace havoc {
 
 /// Bounds for the spin options advertised by the "uci" handshake. Declared here
 /// so the advertised range and the enforced range cannot drift apart: uci.cpp
-/// prints these, and set_threads() clamps to them. The Hash bounds live in
-/// tt.hpp, next to the table they constrain.
+/// prints these and set_threads() clamps to them. The Hash bounds live in
+/// tt.hpp, next to the table they constrain; unlike Threads, an out-of-range
+/// Hash is refused rather than clamped, because the maximum is far larger than
+/// any real machine can allocate.
 constexpr int kMinThreads = 1;
 constexpr int kMaxThreads = 1024;
 

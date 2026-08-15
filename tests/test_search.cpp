@@ -945,10 +945,14 @@ TEST_F(SearchTest, HashResizeRefusesImpossibleSizeAndKeepsTheOldTable) {
     EXPECT_TRUE(tt.resize(1));
 }
 
-TEST_F(SearchTest, SetHashSizeClampsInsteadOfAborting) {
+TEST_F(SearchTest, SetHashSizeRefusesSizesOutsideTheAdvertisedRange) {
     SearchEngine engine;
-    EXPECT_TRUE(engine.set_hash_size(-1));
-    EXPECT_TRUE(engine.set_hash_size(0));
+    // "setoption name Hash value -1" used to reach the allocator as a huge
+    // unsigned size and abort the process.
+    EXPECT_FALSE(engine.set_hash_size(-1));
+    EXPECT_FALSE(engine.set_hash_size(0));
+    EXPECT_FALSE(engine.set_hash_size(kMaxHashMb + 1));
+    EXPECT_TRUE(engine.set_hash_size(kMinHashMb));
     EXPECT_TRUE(engine.set_hash_size(1));
 
     // And the engine still plays afterwards.

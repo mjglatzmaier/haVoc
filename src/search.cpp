@@ -88,7 +88,12 @@ void SearchEngine::set_threads(int n) {
 }
 
 bool SearchEngine::set_hash_size(int mb) {
-    mb = std::clamp(mb, kMinHashMb, kMaxHashMb);
+    // Refused, not clamped. Clamping an out-of-range request up to the
+    // advertised maximum turns a typo into a 32 TB allocation attempt, which an
+    // overcommitting kernel grants and then OOM-kills on first touch. A size the
+    // engine cannot honour leaves the existing table alone instead.
+    if (mb < kMinHashMb || mb > kMaxHashMb)
+        return false;
     return tt_.resize(static_cast<size_t>(mb));
 }
 

@@ -83,8 +83,10 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                     std::cout << "info string ignoring non-numeric Hash value: " << cmd
                               << std::endl;
                 else if (!engine.set_hash_size(sz))
-                    std::cout << "info string could not allocate " << sz
-                              << " MB for Hash, keeping the current table" << std::endl;
+                    std::cout << "info string ignoring Hash value " << sz << ": must be "
+                              << kMinHashMb << ".." << kMaxHashMb
+                              << " MB and fit in memory, keeping the current table"
+                              << std::endl;
                 break;
             }
             if (cmd == "clear" && instream >> cmd) {
