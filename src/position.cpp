@@ -329,6 +329,7 @@ void position::do_move(const Move& m) {
     ifo.cmask = static_cast<U16>(ifo.cmask & castle_rights_after(from) & castle_rights_after(to));
 
     ifo.captured = no_piece;
+    pcs.delta.clear();
 
     if (t == quiet) {
         pcs.do_quiet(us, p, from, to, ifo);
@@ -421,6 +422,7 @@ void position::undo_move(const Move& m) {
     const Piece p = piece_on(from);
     const Color us = Color(to_move() ^ 1);
     Piece cp = ifo.captured;
+    pcs.delta.clear();
 
     if (t == quiet) {
         pcs.do_quiet(us, p, from, to, ifo);
@@ -459,6 +461,7 @@ void position::do_null_move() {
     const Color them = Color(us ^ 1);
 
     history_.push_back(ifo);
+    pcs.delta.clear();
 
     if (ifo.eps != no_square) {
         ifo.key ^= zobrist::ep(util::col(ifo.eps));

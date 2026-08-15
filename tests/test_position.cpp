@@ -753,4 +753,159 @@ TEST_F(PositionTest, RejectedFenLeavesAnEmptyBoardNotAHalfParsedOne) {
     EXPECT_EQ(p.get_pieces<black>(), 0ULL);
 }
 
+// ─── Incremental feature deltas ─────────────────────────────────────────────
+//
+// An NNUE accumulator is only as correct as the board's answer to "which
+// features changed?". A missed event does not crash and does not corrupt the
+// position -- it silently desynchronises the accumulator from the board, and
+// the first symptom is an evaluation that is wrong by an unpredictable amount
+// in positions nobody can characterise. That is close to undebuggable later,
+// and trivial to catch here, which is why this test exists before any
+// evaluator consumes the delta.
+//
+// The oracle is the board itself: replay the recorded events onto the
+// pre-move squares and the result must equal the post-move squares exactly.
+
+namespace {
+
+struct BoardSnapshot {
+    std::array<Color, squares> color{};
+    std::array<Piece, squares> piece{};
+};
+
+BoardSnapshot snapshot_of(const position& p) {
+    BoardSnapshot b;
+    for (int s = 0; s < squares; ++s) {
+        b.color[static_cast<std::size_t>(s)] = p.color_on(Square(s));
+        b.piece[static_cast<std::size_t>(s)] = p.piece_on(Square(s));
+    }
+    return b;
+}
+
+::testing::AssertionResult delta_reproduces_board(const BoardSnapshot& before,
+                                                  const FeatureDelta& d,
+                                                  const BoardSnapshot& after,
+                                                  const std::string& what) {
+    BoardSnapshot b = before;
+    for (const auto& e : d) {
+        const auto sq = static_cast<std::size_t>(e.sq);
+        if (e.added) {
+            if (b.piece[sq] != no_piece)
+                return ::testing::AssertionFailure()
+                       << what << ": delta adds a feature on square " << int(e.sq)
+                       << ", which is already occupied";
+            b.color[sq] = e.c;
+            b.piece[sq] = e.p;
+        } else {
+            if (b.piece[sq] != e.p || b.color[sq] != e.c)
+                return ::testing::AssertionFailure()
+                       << what << ": delta removes colour " << int(e.c) << " piece " << int(e.p)
+                       << " from square " << int(e.sq) << ", which holds colour "
+                       << int(b.color[sq]) << " piece " << int(b.piece[sq]);
+            b.color[sq] = no_color;
+            b.piece[sq] = no_piece;
+        }
+    }
+    for (int s = 0; s < squares; ++s) {
+        const auto sq = static_cast<std::size_t>(s);
+        if (b.piece[sq] != after.piece[sq] || b.color[sq] != after.color[sq])
+            return ::testing::AssertionFailure()
+                   << what << ": after replaying " << d.n << " events, square " << s
+                   << " holds colour " << int(b.color[sq]) << " piece " << int(b.piece[sq])
+                   << " but the board holds colour " << int(after.color[sq]) << " piece "
+                   << int(after.piece[sq]);
+    }
+    return ::testing::AssertionSuccess();
+}
+
+void walk_and_check_deltas(position& p, int depth, long& checked, std::array<long, 16>& by_type,
+                           std::string& failure) {
+    if (depth == 0 || !failure.empty())
+        return;
+
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    for (int i = 0; i < mv.size(); ++i) {
+        const Move m = mv[i];
+        if (!p.is_legal(m))
+            continue;
+
+        const BoardSnapshot before = snapshot_of(p);
+        p.do_move(m);
+        const BoardSnapshot after = snapshot_of(p);
+
+        ++checked;
+        ++by_type[static_cast<std::size_t>(m.type) & 15u];
+
+        const auto r = delta_reproduces_board(
+            before, p.delta(), after,
+            "move type " + std::to_string(int(m.type)) + " " + std::to_string(int(m.f)) + "->" +
+                std::to_string(int(m.t)));
+        if (!r) {
+            failure = r.message();
+            p.undo_move(m);
+            return;
+        }
+
+        walk_and_check_deltas(p, depth - 1, checked, by_type, failure);
+        p.undo_move(m);
+        if (!failure.empty())
+            return;
+    }
+}
+
+} // namespace
+
+TEST_F(PositionTest, FeatureDeltaReproducesEveryMoveOnTheBoard) {
+    // Chosen so that between them every move type occurs: kiwipete supplies
+    // castling both ways and captures, the third supplies en passant, and the
+    // fourth supplies promotions and promotion-captures.
+    const std::vector<std::pair<std::string, int>> suite{
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3},
+        {"rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3", 3},
+        {"n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1", 4},
+    };
+
+    long checked = 0;
+    std::array<long, 16> by_type{};
+
+    for (const auto& [fen, depth] : suite) {
+        std::istringstream ss(fen);
+        position p(ss);
+        std::string failure;
+        walk_and_check_deltas(p, depth, checked, by_type, failure);
+        ASSERT_TRUE(failure.empty()) << "in " << fen << "\n" << failure;
+    }
+
+    EXPECT_GT(checked, 500000) << "the walk did not actually cover much";
+
+    // Without this the test could pass by never generating the move types that
+    // are hardest to decompose, which are exactly the ones worth testing.
+    EXPECT_GT(by_type[quiet], 0) << "no quiet moves were exercised";
+    EXPECT_GT(by_type[capture], 0) << "no captures were exercised";
+    EXPECT_GT(by_type[ep], 0) << "no en passant captures were exercised";
+    EXPECT_GT(by_type[castle_ks], 0) << "no kingside castling was exercised";
+    EXPECT_GT(by_type[castle_qs], 0) << "no queenside castling was exercised";
+    EXPECT_GT(by_type[promotion_q], 0) << "no promotions were exercised";
+    EXPECT_GT(by_type[capture_promotion_q], 0) << "no promotion-captures were exercised";
+}
+
+// A null move changes no features, so the delta must report none rather than
+// leaving the previous move's events visible to an evaluator that would then
+// apply them a second time.
+TEST_F(PositionTest, NullMoveReportsAnEmptyDelta) {
+    std::istringstream ss("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    position p(ss);
+
+    Movegen mv(p);
+    mv.generate<pseudo_legal, pieces>();
+    ASSERT_GT(mv.size(), 0);
+    p.do_move(mv[0]);
+    ASSERT_GT(p.delta().n, 0) << "a real move should have recorded something";
+
+    p.do_null_move();
+    EXPECT_EQ(p.delta().n, 0);
+}
+
 } // namespace havoc

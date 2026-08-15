@@ -1,6 +1,7 @@
 #pragma once
 
 #include "havoc/bitboard.hpp"
+#include "havoc/feature_delta.hpp"
 #include "havoc/magics.hpp"
 #include "havoc/types.hpp"
 #include "havoc/utils.hpp"
@@ -62,6 +63,11 @@ struct piece_data {
     std::array<std::array<U64, no_piece + 1>, colors> bitmap{};
     std::array<std::array<std::array<std::uint8_t, squares>, pieces>, 2> piece_idx{};
     std::array<std::array<std::array<Square, 11>, pieces>, 2> square_of;
+
+    /// Change log for the most recent mutation. Not board state: see
+    /// `feature_delta.hpp`. Written by the three primitives below, cleared by
+    /// `position::do_move`/`undo_move`, read by an incremental evaluator.
+    FeatureDelta delta;
 
     piece_data() {
         color_on.fill(no_color);
@@ -220,6 +226,10 @@ class position {
     [[nodiscard]] inline Square king_square() const { return ifo.ks[ifo.stm]; }
     [[nodiscard]] inline Color color_on(const Square& s) const { return pcs.color_on[s]; }
 
+    /// The features that changed on the last `do_move`. Valid only until the
+    /// next board mutation; see `feature_delta.hpp`.
+    [[nodiscard]] inline const FeatureDelta& delta() const { return pcs.delta; }
+
     [[nodiscard]] bool is_cap_promotion(const Movetype& mt);
     [[nodiscard]] bool is_promotion(const U8& mt);
 
@@ -286,6 +296,9 @@ inline void piece_data::do_quiet(const Color& c, const Piece& p, const Square& f
         ifo.pawnkey ^= zobrist::piece(f, c, p);
         ifo.pawnkey ^= zobrist::piece(t, c, p);
     }
+
+    delta.remove(c, p, f);
+    delta.add(c, p, t);
 }
 
 inline void piece_data::do_cap(const Color& c, const Piece& p, const Square& f, const Square& t,
@@ -365,6 +378,8 @@ inline void piece_data::remove_piece(const Color& c, const Piece& p, const Squar
     ifo.repkey ^= zobrist::piece(s, c, p);
     if (p == pawn)
         ifo.pawnkey ^= zobrist::piece(s, c, p);
+
+    delta.remove(c, p, s);
 }
 
 inline void piece_data::add_piece(const Color& c, const Piece& p, const Square& s, info& ifo) {
@@ -382,6 +397,8 @@ inline void piece_data::add_piece(const Color& c, const Piece& p, const Square& 
     ifo.repkey ^= zobrist::piece(s, c, p);
     if (p == pawn)
         ifo.pawnkey ^= zobrist::piece(s, c, p);
+
+    delta.add(c, p, s);
 }
 
 inline void piece_data::set(const Color& c, const Piece& p, const Square& s, info& ifo) {
