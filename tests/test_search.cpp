@@ -613,6 +613,113 @@ TEST_F(SearchTest, PonderhitOnAnIdleEngineIsHarmless) {
     SUCCEED();
 }
 
+TEST_F(SearchTest, NodeLimitStopsTheSearch) {
+    // "go nodes N" was parsed into SearchLimits and then read by nothing at
+    // all, exactly as ponderhit was: the limit carries no clock, so the search
+    // ran until stdin closed.
+    auto pos = make_pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.nodes = 20000;
+
+    // Poll rather than wait(): an unenforced node limit never returns, and a
+    // test that hangs the suite is worse than one that fails it. The deadline
+    // is generous because the sanitiser build runs an order of magnitude slower
+    // than Release -- at 200000 nodes and 10 seconds this failed there while
+    // passing everywhere else, which is a flaky test, not a finding.
+    engine.start(pos, lims, /*silent=*/true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (engine.searching() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    const bool stopped_itself = !engine.searching();
+    if (!stopped_itself) {
+        engine.stop();
+        engine.wait();
+    }
+    ASSERT_TRUE(stopped_itself) << "the node limit was never enforced";
+
+    // The stride the check runs on is 1024 nodes per thread, and an iteration
+    // is abandoned rather than rewound, so the count lands just past the limit
+    // rather than exactly on it. What must not happen is running far past it.
+    const U64 n = engine.total_nodes();
+    EXPECT_GE(n, 1000u) << "stopped so early the limit cannot have been the reason";
+    EXPECT_LT(n, lims.nodes * 2u) << "overran the node limit: " << n;
+    EXPECT_FALSE(pos.root_moves.empty());
+}
+
+TEST_F(SearchTest, ALargerNodeLimitBuysMoreSearch) {
+    // The limit has to actually scale the work, not merely terminate it.
+    auto small = make_pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    auto large = make_pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    auto run = [](position& p, int limit) {
+        SearchEngine engine;
+        SearchLimits lims{};
+        lims.nodes = limit;
+        engine.start(p, lims, /*silent=*/true);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (engine.searching() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (engine.searching()) {
+            engine.stop();
+            engine.wait();
+        }
+        return engine.total_nodes();
+    };
+
+    EXPECT_LT(run(small, 10000), run(large, 100000));
+}
+
+TEST_F(SearchTest, MateSearchTerminates) {
+    // "go mate N" was the third limit that parsed and did nothing. Bounding the
+    // depth at 2N-1 plies is what makes it return; finding the mate sooner is
+    // what makes it return quickly. This is a mate in two.
+    auto pos = make_pos("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1");
+
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.mate = 2;
+
+    engine.start(pos, lims, /*silent=*/true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (engine.searching() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    const bool stopped_itself = !engine.searching();
+    if (!stopped_itself) {
+        engine.stop();
+        engine.wait();
+    }
+    EXPECT_TRUE(stopped_itself) << "go mate never returned";
+    EXPECT_FALSE(pos.root_moves.empty());
+}
+
+TEST_F(SearchTest, MateSearchTerminatesWhenThereIsNoMate) {
+    // The case that rests entirely on the 2N-1 depth bound. Stopping early on a
+    // proven mate covers the position above, but a "go mate" that finds nothing
+    // has no such exit and is the one that hung -- a mate search carries no
+    // clock, so without the bound there is nothing left to end it.
+    auto pos = make_pos("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+
+    SearchEngine engine;
+    SearchLimits lims{};
+    lims.mate = 3;
+
+    engine.start(pos, lims, /*silent=*/true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (engine.searching() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    const bool stopped_itself = !engine.searching();
+    if (!stopped_itself) {
+        engine.stop();
+        engine.wait();
+    }
+    EXPECT_TRUE(stopped_itself) << "go mate ran past its depth bound";
+}
+
 TEST(TimeManagement, UntimedSearchesHaveNeitherLimit) {    for (auto set : {+[](SearchLimits& l) { l.infinite = true; },
                      +[](SearchLimits& l) { l.ponder = true; },
                      +[](SearchLimits& l) { l.depth = 12; }}) {

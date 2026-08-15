@@ -212,6 +212,12 @@ class SearchEngine {
     /// immutable while the search threads are reading it.
     std::atomic<double> time_origin_{0.0};
 
+    /// Node ceiling from "go nodes N", or zero when unlimited. Checked inside
+    /// search() rather than on the timer thread: a node limit is asked for
+    /// precisely when a reproducible amount of work is wanted, so it must not
+    /// depend on how fast the machine is.
+    std::atomic<U64> node_limit_{0};
+
     /// Side to move for the search in progress, captured at start(), so that
     /// ponderhit can re-budget without the position.
     bool stm_is_white_ = true;

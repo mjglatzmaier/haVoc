@@ -186,7 +186,16 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     }
     completed_depth_.assign(search_threads_.size(), 0);
 
-    U16 depth = (lims.depth > 0 ? static_cast<U16>(lims.depth) : static_cast<U16>(MAX_PLY));
+    // "go mate N" asks for a mate in N moves, so there is no point looking
+    // beyond the 2N-1 plies one can occupy -- and without a bound the search
+    // never returned at all, since a mate search carries no clock. An explicit
+    // "depth" still wins, because it is the more specific request.
+    U16 depth = static_cast<U16>(MAX_PLY);
+    if (lims.depth > 0)
+        depth = static_cast<U16>(lims.depth);
+    else if (lims.mate > 0)
+        depth = static_cast<U16>(std::min(2 * lims.mate - 1, static_cast<int>(MAX_PLY)));
+
     search_clock_.reset();
     stm_is_white_ = (p.to_move() == white);
     const TimeBudget budget = estimate_time_budget(limits_, stm_is_white_);
@@ -195,6 +204,8 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     time_origin_.store(0.0, std::memory_order_relaxed);
     soft_limit_.store(budget.soft, std::memory_order_release);
     hard_limit_.store(budget.hard, std::memory_order_release);
+    node_limit_.store(lims.nodes > 0 ? static_cast<U64>(lims.nodes) : 0,
+                      std::memory_order_relaxed);
     signals_.ponder.store(limits_.ponder);
     searching_ = true;
 
@@ -529,6 +540,14 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
                 break;
             }
 
+            // "go mate N" is answered as soon as a mate at most N moves away
+            // is proven; deepening past it only re-proves the same thing.
+            if (limits_.mate > 0 && eval >= score::kMateMaxPly &&
+                (score::kMate - eval + 1) / 2 <= limits_.mate) {
+                signals_.stop = true;
+                break;
+            }
+
             // Decide whether another iteration is affordable. The old loop
             // simply started one and let the timer cut it off partway, which
             // spends the whole budget on every move however obvious the move
@@ -568,6 +587,18 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                          int thread_id) {
     if (signals_.stop.load())
         return score::kDraw;
+
+    // "go nodes N" was parsed and then never enforced, so it searched forever.
+    // The count is checked here rather than on the timer thread because a
+    // node limit is meant to be reproducible: a deadline that depends on how
+    // fast the machine happens to be would defeat the point of asking for one.
+    // The 1023-node stride keeps the cross-thread sum off the hot path while
+    // staying exact enough to be worth asking for.
+    const U64 node_limit = node_limit_.load(std::memory_order_relaxed);
+    if (node_limit > 0 && (pos.nodes() & 1023) == 0 && total_nodes() >= node_limit) {
+        signals_.stop = true;
+        return score::kDraw;
+    }
 
     assert(alpha < beta);
 
