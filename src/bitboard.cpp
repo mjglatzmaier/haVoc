@@ -46,7 +46,9 @@ U64 corners;
 
 void bits::print(U64 b) {
     std::cout << "+---+---+---+---+---+---+---+---+\n";
-    for (Row r = r8; r >= r1; --r) {
+    // int rather than Row: see position::print(). Decrementing past r1 leaves
+    // the enum holding a value it has no enumerator for.
+    for (int r = int(r8); r >= int(r1); --r) {
         for (Col c = A; c <= H; ++c) {
             U64 s = bitboards::squares[8 * r + c];
             std::cout << (b & s ? "| X " : "|   ");

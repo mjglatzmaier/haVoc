@@ -975,7 +975,10 @@ void position::clear() {
 
 void position::print() const {
     std::cout << "   +---+---+---+---+---+---+---+---+" << std::endl;
-    for (Row r = r8; r >= r1; --r) {
+    // Counted as int, not as Row. Decrementing a Row past r1 stores -1 in it,
+    // and the next loop condition then loads a value the enum has no
+    // enumerator for, which UBSan reports as a runtime error.
+    for (int r = int(r8); r >= int(r1); --r) {
         std::cout << " " << r + 1 << " ";
         for (Col c = A; c <= H; ++c) {
             Square s = Square(8 * r + c);
