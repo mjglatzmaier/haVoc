@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <vector>
@@ -283,24 +284,52 @@ TEST_F(SearchTest, HistoryScoresStayBounded) {
 }
 
 // The good/bad capture split is create_chunk(score::kDraw), i.e. the sign of the
-// capture score. Capture scores are see * kCaptureSeeScale + history, so the
-// scale factor has to be large enough that a saturated history score can never
-// flip that sign, or a losing capture with a good history is searched in the
-// good-capture phase and a winning capture with a poor history is deferred.
+// capture score, and within each chunk the order is the score. So the scoring
+// function has to guarantee two separate things: that history never flips the
+// sign, and that history never reorders two captures of different exchange
+// value.
+//
+// This test used to assert both against a claim that the narrowest gap between
+// distinct exchange values is 15, a bishop taken for a knight. That claim is
+// false. 15 is the narrowest gap between two piece *values*; see() returns sums
+// and differences of those values, so its results are spaced by their greatest
+// common divisor, which is 5 today (115 and 120 are both reachable) and can be
+// 1 once a tuner has moved them. The old assertions passed while the invariant
+// they were written to protect was broken.
+//
+// The fix was structural rather than numeric, so the test is too: history is
+// clamped into strictly less than half an exchange step, which makes the
+// ordering lexicographic for any spacing at all.
 TEST_F(SearchTest, CaptureOrderingIsDominatedBySee) {
-    // The narrowest gap between two distinct exchange values: a bishop (315)
-    // taken for a knight (300).
-    constexpr int smallest_see = 15;
+    // Two tie-breaks pulling in opposite directions must not span a full step,
+    // whatever the material values are. This is the property that replaces the
+    // old "narrowest gap is 15" argument.
+    EXPECT_LT(2 * kCaptureTieRoom, kCaptureSeeScale)
+        << "history can reorder two captures whose exchange values differ by one step";
 
-    EXPECT_GT(smallest_see * kCaptureSeeScale, kMaxHistory)
-        << "a saturated history score can flip the sign of a winning capture";
+    // The material values are tunable, so assert the property directly against
+    // their greatest common divisor rather than against a hardcoded gap.
+    const auto vals = position::see_values();
+    int spacing = 0;
+    for (int i = 0; i < 5; ++i)
+        spacing = std::gcd(spacing, vals[static_cast<std::size_t>(i)]);
+    ASSERT_GT(spacing, 0);
+    EXPECT_GE(spacing * kCaptureSeeScale, 2 * kCaptureTieRoom + 1)
+        << "with these material values history can cross an exchange step";
 
-    EXPECT_GT(smallest_see * kCaptureSeeScale, 2 * kMaxHistory)
-        << "history can reorder two captures of different exchange value";
+    // Neither side of the phase boundary can be crossed. A non-losing capture
+    // keeps a positive score even with the worst tie-break, and a losing one
+    // keeps a negative score even with the best.
+    EXPECT_GT(kGoodCaptureBase - kCaptureTieRoom, 0)
+        << "a non-losing capture can be pushed into the bad-capture phase";
+    EXPECT_LT(-kCaptureSeeScale + kCaptureTieRoom, 0)
+        << "a losing capture can be pushed into the good-capture phase";
 
-    // No overflow for the largest value see() can return.
-    constexpr int max_see = 2000;
-    EXPECT_LT(static_cast<long long>(max_see) * kCaptureSeeScale + kMaxHistory,
+    // No overflow for the largest value see() can return, with generous room
+    // for tuned material values.
+    constexpr int max_see = 20000;
+    EXPECT_LT(static_cast<long long>(max_see) * kCaptureSeeScale + kGoodCaptureBase +
+                  kCaptureTieRoom,
               static_cast<long long>(std::numeric_limits<int>::max()));
 }
 
@@ -364,6 +393,151 @@ TEST_F(SearchTest, MoveOrderYieldsEveryLegalMove) {
 // stack - 1 and stack - 2. Only the search guarantees those frames exist; the
 // first version of this code walked back and crashed here, on a four-element
 // stack, which is exactly the kind of caller that must keep working.
+// Captures are ordered by their exchange value, which is a property of a
+// square and a pair of piece values -- it cannot tell two captures worth the
+// same material apart. Capture history exists to break exactly those ties, so
+// the whole point of it is the key: the mover, where it landed, and what it
+// took. If any one of the three is missing, evidence about one capture leaks
+// onto a different one that SEE already scores identically, which is worse
+// than having no table at all.
+TEST_F(SearchTest, CaptureHistoryIsKeyedOnMoverDestinationAndVictim) {
+    // A rook and a bishop that can both take the same pawn on d5, so the only
+    // thing separating the two captures is the piece making them. SEE scores
+    // them identically; this table must not.
+    auto pawn_pos = make_pos("4k3/8/8/3p4/8/8/B7/3RK3 w - - 0 1");
+    ASSERT_EQ(pawn_pos.piece_on(D5), pawn);
+
+    Move rook_takes;
+    rook_takes.set(D1, D5, capture);
+    Move bishop_takes;
+    bishop_takes.set(A2, D5, capture);
+    ASSERT_TRUE(pawn_pos.is_legal(rook_takes));
+    ASSERT_TRUE(pawn_pos.is_legal(bishop_takes));
+
+    Movehistory hist;
+    ASSERT_EQ(hist.capture_score(pawn_pos, rook_takes), 0) << "table did not start empty";
+
+    std::vector<Move> none;
+    hist.update_capture(pawn_pos, rook_takes, kMaxHistory / 4, none);
+
+    EXPECT_GT(hist.capture_score(pawn_pos, rook_takes), 0)
+        << "the capture that cut gained nothing";
+    EXPECT_EQ(hist.capture_score(pawn_pos, bishop_takes), 0)
+        << "evidence about the rook's capture leaked onto the bishop's; the "
+           "mover is not part of the key";
+
+    // Same mover, same destination, different victim: a knight on d5 instead
+    // of a pawn. Nothing learned above applies to it.
+    auto knight_pos = make_pos("4k3/8/8/3n4/8/8/B7/3RK3 w - - 0 1");
+    ASSERT_EQ(knight_pos.piece_on(D5), knight);
+    Move rook_takes_knight;
+    rook_takes_knight.set(D1, D5, capture);
+    EXPECT_EQ(hist.capture_score(knight_pos, rook_takes_knight), 0)
+        << "evidence about taking a pawn leaked onto taking a knight; the "
+           "victim is not part of the key";
+
+    // Same mover, same victim, different destination.
+    auto elsewhere = make_pos("4k3/8/8/8/4R1p1/8/B7/4K3 w - - 0 1");
+    ASSERT_EQ(elsewhere.piece_on(G4), pawn);
+    Move rook_takes_g4;
+    rook_takes_g4.set(E4, G4, capture);
+    ASSERT_TRUE(elsewhere.is_legal(rook_takes_g4));
+    EXPECT_EQ(hist.capture_score(elsewhere, rook_takes_g4), 0)
+        << "evidence about a capture on d5 leaked onto one on g4; the "
+           "destination is not part of the key";
+}
+
+// En passant is the one capture whose victim is not standing on the square the
+// capturing piece lands on. Reading piece_on(to) would find an empty square and
+// key the move as a non-capture, silently dropping every en passant from the
+// table -- a bug that no test comparing scores of ordinary captures can see.
+TEST_F(SearchTest, CaptureHistoryScoresEnPassantAsTakingAPawn) {
+    auto pos = make_pos("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1");
+    ASSERT_EQ(pos.piece_on(D6), no_piece) << "the ep destination must be empty";
+    ASSERT_EQ(pos.piece_on(D5), pawn) << "the ep victim stands beside, not on, the target";
+
+    Move ep_capture;
+    ep_capture.set(E5, D6, ep);
+    ASSERT_TRUE(pos.is_legal(ep_capture));
+
+    Movehistory hist;
+    std::vector<Move> none;
+    hist.update_capture(pos, ep_capture, kMaxHistory / 4, none);
+    EXPECT_GT(hist.capture_score(pos, ep_capture), 0)
+        << "en passant was not recorded; its victim is not on the destination";
+
+    // It must be filed as taking a pawn, which is what an ordinary pawn
+    // capture landing on d6 would also be.
+    auto ordinary = make_pos("4k3/8/3p4/4P3/8/8/8/4K3 w - - 0 1");
+    ASSERT_EQ(ordinary.piece_on(D6), pawn);
+    Move pawn_takes;
+    pawn_takes.set(E5, D6, capture);
+    ASSERT_TRUE(ordinary.is_legal(pawn_takes));
+    EXPECT_EQ(hist.capture_score(ordinary, pawn_takes), hist.capture_score(pos, ep_capture))
+        << "en passant is a pawn taking a pawn and must share that slot";
+}
+
+// A quiet move has no victim, so there is no slot for it. update_capture is
+// called at every fail-high, and most cutoffs come from quiets, so this is the
+// common case rather than an edge one: it must do nothing at all rather than
+// index the table with no_piece.
+TEST_F(SearchTest, CaptureHistoryIgnoresQuietMovesAndPenalisesTheOnesThatFailed) {
+    auto pos = make_pos("4k3/8/8/3p4/8/8/B7/3RK3 w - - 0 1");
+
+    Move quiet_move;
+    quiet_move.set(D1, D2, quiet);
+    ASSERT_TRUE(pos.is_legal(quiet_move));
+
+    Move rook_takes;
+    rook_takes.set(D1, D5, capture);
+    Move bishop_takes;
+    bishop_takes.set(A2, D5, capture);
+
+    Movehistory hist;
+    EXPECT_EQ(hist.capture_score(pos, quiet_move), 0) << "a quiet move has no capture slot";
+
+    // The cutoff came from a quiet, and both captures were tried and failed.
+    // Both must be penalised, and the quiet must still leave the table alone.
+    std::vector<Move> tried{rook_takes, bishop_takes};
+    hist.update_capture(pos, quiet_move, kMaxHistory / 4, tried);
+
+    EXPECT_EQ(hist.capture_score(pos, quiet_move), 0)
+        << "a quiet cutoff wrote into the capture table";
+    EXPECT_LT(hist.capture_score(pos, rook_takes), 0) << "a capture that failed was not penalised";
+    EXPECT_LT(hist.capture_score(pos, bishop_takes), 0)
+        << "a capture that failed was not penalised";
+
+    // The move that cut is never its own counter-example.
+    Movehistory hist2;
+    std::vector<Move> tried2{rook_takes, bishop_takes};
+    hist2.update_capture(pos, rook_takes, kMaxHistory / 4, tried2);
+    EXPECT_GT(hist2.capture_score(pos, rook_takes), 0)
+        << "the cutoff move penalised itself out of the bonus it had just earned";
+    EXPECT_LT(hist2.capture_score(pos, bishop_takes), 0);
+}
+
+// Movehistory's copy assignment is what carries the tables across a Threads
+// change, and it has already silently dropped one member: corrections_ was
+// left out, so a copy preserved the history while discarding the accumulated
+// eval bias. Nothing failed, node counts just drifted. Every table added since
+// needs its own guard, because the failure mode is invisible.
+TEST_F(SearchTest, CopyingHistoryCarriesTheCaptureTable) {
+    auto pos = make_pos("4k3/8/8/3p4/8/8/B7/3RK3 w - - 0 1");
+    Move rook_takes;
+    rook_takes.set(D1, D5, capture);
+
+    Movehistory a;
+    std::vector<Move> none;
+    a.update_capture(pos, rook_takes, kMaxHistory / 4, none);
+    const int expected = a.capture_score(pos, rook_takes);
+    ASSERT_GT(expected, 0) << "nothing was written; the test would compare zeroes";
+
+    Movehistory b;
+    b = a;
+    EXPECT_EQ(b.capture_score(pos, rook_takes), expected)
+        << "copy assignment dropped the capture table";
+}
+
 TEST_F(SearchTest, ContinuationHistoryIsKeyedOnThePredecessor) {
     std::istringstream fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
     position pos(fen);

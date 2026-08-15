@@ -687,6 +687,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     bool in_check = pos.in_check();
     std::vector<Move> quiets;
+    std::vector<Move> captures;
     stack->in_check = in_check;
     stack->ply = (stack - 1)->ply + 1;
 
@@ -794,6 +795,40 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                                     history_bonus(depth), static_cast<int16_t>(ttvalue), quiets,
                                     stack->killers);
                     thread_history(thread_id).update_continuation(pos, stack, ttm, history_bonus(depth), quiets);
+                    // The capture table, unlike the quiet ones above, is only
+                    // allowed to learn here from a genuine fail-high. The
+                    // asymmetry is not an oversight and it is not small: with
+                    // this update unrestricted, bench goes 684468 -> 947351,
+                    // a 38% larger tree.
+                    //
+                    // The reason the quiet update survives an upper-bound
+                    // entry is that it is competing against other quiets that
+                    // are also unproven, and being the best move known for the
+                    // position is real evidence even when it failed low. A
+                    // capture is not in that situation. Its ordering is
+                    // anchored to the exchange value, so the history term only
+                    // ever has to answer the much narrower question of which
+                    // of several equally-valued captures actually works -- and
+                    // a move that failed low is evidence against, not for.
+                    //
+                    // The one-sidedness makes it worse. `captures` is
+                    // necessarily empty at a node that never ran a move loop,
+                    // so there is no malus to balance the bonus: every capture
+                    // that reaches the TT is rewarded and nothing is ever
+                    // penalised, and the entry saturates at kMaxHistory.
+                    //
+                    // bound_low is deliberately the only bound accepted, and
+                    // widening it to bound_exact was tried and rejected: bench
+                    // 684468 -> 718833. An exact entry means the score fell
+                    // strictly inside the window at the node that stored it,
+                    // so its move was the best of an all or PV node -- it is
+                    // the best move known, which is not the same claim as
+                    // having refuted anything. bound_low is the only bound
+                    // that means a move actually caused a cutoff, and that is
+                    // the only evidence this table wants.
+                    if (e.bound == bound_low && ttvalue >= beta)
+                        thread_history(thread_id).update_capture(pos, ttm, history_bonus(depth),
+                                                                 captures);
                     return ttvalue;
                 }
             }
@@ -947,10 +982,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                 continue;
             // skipQuiets still lets the hash move and the killers through, and
             // those are usually quiet, so the capture test cannot be skipped.
-            const bool pc_is_capture = (pc_move.type == static_cast<U8>(capture)) ||
-                                       (pc_move.type == static_cast<U8>(ep)) ||
-                                       pos.is_cap_promotion(static_cast<Movetype>(pc_move.type));
-            if (!pc_is_capture || !pos.is_legal(pc_move))
+            if (!is_capture(static_cast<Movetype>(pc_move.type)) || !pos.is_legal(pc_move))
                 continue;
             if (pos.see(pc_move) < see_threshold)
                 continue;
@@ -1263,6 +1295,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
         if (move.type == static_cast<U8>(Movetype::quiet))
             quiets.emplace_back(move);
+        else if (is_capture(static_cast<Movetype>(move.type)))
+            captures.emplace_back(move);
 
         undo_move(pos, move, thread_id);
 
@@ -1299,6 +1333,8 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                                 history_bonus(depth), static_cast<int16_t>(bestScore), quiets,
                                 stack->killers);
                 thread_history(thread_id).update_continuation(pos, stack, best_move, history_bonus(depth), quiets);
+                thread_history(thread_id).update_capture(pos, best_move, history_bonus(depth),
+                                                         captures);
                 break;
             }
 
@@ -1361,10 +1397,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // that the evaluation was too high, and a fail-high only the reverse. A
     // capture or a check makes the difference tactical rather than a property
     // of the structure, which is what this table is keyed on.
-    const bool best_is_capture =
-        (best_move.type == static_cast<U8>(capture)) ||
-        (best_move.type == static_cast<U8>(ep)) ||
-        pos.is_cap_promotion(static_cast<Movetype>(best_move.type));
+    const bool best_is_capture = is_capture(static_cast<Movetype>(best_move.type));
 
     if (!in_check && !singular_search && corrected_static_eval != score::kNegInf &&
         !best_is_capture && std::abs(bestScore) < score::kMate - 100 &&
