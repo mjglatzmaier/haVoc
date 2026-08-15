@@ -115,6 +115,17 @@ which is the question the check exists to answer.
 ### Did not work
 
 - **Texel tuning.** Covered in section 5 — do not retry it.
+- **Spending extra time when the score drops.** The standard trick: when the score
+  at the top of an iteration is worse than the previous completed iteration,
+  extend the soft limit in proportion to the drop (`kSoftTimeDropPerCp = 0.006`,
+  capped at `kSoftTimeMaxDrop = 0.45`). Built on top of the soft-limit mechanism
+  that is worth +35–42 Elo, so the surrounding machinery is known good. Measured
+  against that same build at 10+0.1: **−9.7 ± 19.6 Elo over 673 games, LOS 16.6%,
+  LLR −0.61**. Stopped there rather than spending another ~2300 games to formally
+  accept H0 — the sign was settled and the machine was the bottleneck. Worth
+  noting *why* it plausibly loses: the soft limit already scales with root move
+  stability, and a score drop is strongly correlated with an unstable root, so the
+  bonus is largely double-counting a signal the engine already acts on.
 - **Piecemeal margin raises.** Individually plausible, measured −85, −37, −22 and
   −12.6 Elo. The margins are coupled; they must be moved together by a search.
 - **TT prefetch.** Node-identical and measurably faster, yet **−14 Elo**. Unexplained
