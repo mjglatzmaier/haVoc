@@ -5,6 +5,7 @@
 #include "havoc/position.hpp"
 #include "havoc/zobrist.hpp"
 
+#include <bit>
 #include <sstream>
 #include <string>
 #include <map>
@@ -632,7 +633,7 @@ TEST_F(PositionTest, ZobristRandomsAreStatisticallyIndependent) {
     long total_bits = 0;
     int min_pc = 64;
     for (auto v : rands) {
-        int pc = __builtin_popcountll(v);
+        int pc = std::popcount(v);
         total_bits += pc;
         min_pc = std::min(min_pc, pc);
     }
@@ -648,7 +649,7 @@ TEST_F(PositionTest, ZobristRandomsAreStatisticallyIndependent) {
         for (auto it = basis.rbegin(); it != basis.rend(); ++it)
             x = std::min(x, x ^ it->second);
         if (x != 0ULL)
-            basis[63 - __builtin_clzll(x)] = x;
+            basis[63 - std::countl_zero(x)] = x;
     }
     EXPECT_EQ(basis.size(), 64u) << "zobrist randoms span only " << basis.size() << " dimensions";
 

@@ -556,11 +556,11 @@ bool position::gives_check(const Move& m) {
 
     if (isCastles) {
         if (c == white) {
-            to = (m.type == castle_ks ? F1 : D1);
-            from = (m.type == castle_ks ? H1 : A1);
+            to = U8(m.type == castle_ks ? F1 : D1);
+            from = U8(m.type == castle_ks ? H1 : A1);
         } else if (c == black) {
-            to = (m.type == castle_ks ? F8 : D8);
-            from = (m.type == castle_ks ? H8 : A8);
+            to = U8(m.type == castle_ks ? F8 : D8);
+            from = U8(m.type == castle_ks ? H8 : A8);
         }
         pcs.bitmap[c][rook] ^= (bitboards::squares[from] | bitboards::squares[to]);
     } else {

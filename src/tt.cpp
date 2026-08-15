@@ -1,6 +1,7 @@
 #include "havoc/tt.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 
 namespace havoc {
@@ -9,7 +10,7 @@ namespace {
 inline size_t next_pow2(size_t x) {
     if (x <= 2)
         return 2;
-    return 1ULL << (64 - __builtin_clzll(x - 1));
+    return std::bit_ceil(x);
 }
 } // namespace
 

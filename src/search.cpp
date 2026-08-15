@@ -132,7 +132,7 @@ int SearchEngine::futility_move_count(bool improving, U16 depth) {
 /// needed but the position cannot be searched any further.
 int SearchEngine::static_eval(position& p, int thread_id) {
     auto* sthread = search_threads_[thread_id];
-    return static_cast<int>(std::lround(sthread->evaluator->evaluate(p, -1.0f)));
+    return sthread->evaluator->evaluate(p, -1);
 }
 
 // ─── Start search ───────────────────────────────────────────────────────────
