@@ -58,8 +58,17 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                 std::getline(instream, tmp);
                 tmp = "moves " + tmp;
                 std::istringstream fen(sfen);
-                uci_pos.setup(fen);
-                load_position(tmp, uci_pos);
+                if (!uci_pos.setup(fen)) {
+                    // Keep the engine on a legal board. A kingless FEN used to
+                    // be accepted and then indexed the attack tables with
+                    // no_square.
+                    std::cout << "info string ignoring illegal fen: " << sfen << std::endl;
+                    std::string start_str{START_FEN};
+                    std::istringstream start(start_str);
+                    uci_pos.setup(start);
+                } else {
+                    load_position(tmp, uci_pos);
+                }
             }
         } else if (cmd == "setoption" && instream >> cmd && instream >> cmd) {
             std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);

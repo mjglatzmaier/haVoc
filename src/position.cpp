@@ -32,7 +32,7 @@ position& position::operator=(const position& p) {
 
 // ─── Setup / clear ──────────────────────────────────────────────────────────
 
-void position::setup(std::istringstream& fen) {
+bool position::setup(std::istringstream& fen) {
     clear();
 
     std::string token;
@@ -95,6 +95,17 @@ void position::setup(std::istringstream& fen) {
     fen >> token;
     ifo.hmvs = (token != "-" ? U16(std::stoi(token)) : 0);
 
+    // A chess position has two kings. Without both, ifo.ks keeps its no_square
+    // initialiser, and no_square is 65 -- one past the end of the 64-entry
+    // attack tables that is_attacked() and pinned() index by king square. UBSan
+    // confirms the read is out of bounds. Reject the FEN instead, leaving the
+    // board cleared, rather than computing check info from a square that does
+    // not exist.
+    if (ifo.ks[white] == no_square || ifo.ks[black] == no_square) {
+        clear();
+        return false;
+    }
+
     // check info
     Color stm = to_move();
     ifo.ks[stm] = pcs.king_sq[stm];
@@ -102,6 +113,7 @@ void position::setup(std::istringstream& fen) {
     ifo.checkers = (in_check() ? attackers_of2(ifo.ks[stm], Color(stm ^ 1)) : 0ULL);
     ifo.pinned[stm] = pinned(stm);
     ifo.pinned[stm ^ 1] = pinned(Color(stm ^ 1));
+    return true;
 }
 
 std::string position::to_fen() const {
