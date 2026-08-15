@@ -198,7 +198,8 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             double ms = std::chrono::duration<double, std::milli>(end_time - start).count();
 
             std::cout << "Bench: " << total_nodes << " nodes, " << static_cast<int>(ms) << " ms, "
-                      << static_cast<U64>(total_nodes * 1000.0 / ms) << " nps" << std::endl;
+                      << static_cast<U64>(static_cast<double>(total_nodes) * 1000.0 / ms)
+                      << " nps" << std::endl;
         } else if (cmd == "exit" || cmd == "quit") {
             engine.stop();
             engine.wait();

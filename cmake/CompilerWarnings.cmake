@@ -1,4 +1,21 @@
 function(havoc_set_warnings target)
+    # -Wsign-conversion is deliberately absent.
+    #
+    # It fired at roughly a hundred sites, every one of them a container
+    # subscripted by a non-negative engine index -- a Square, a Piece, a rank, a
+    # file, a move count. All of them are correct by construction, so the
+    # signal-to-noise ratio was zero, and a hundred warnings in a build log is
+    # how a real one goes unread.
+    #
+    # It also does not catch the failure it looks like it catches. The only
+    # genuine out-of-bounds access in this codebase -- pinned() reading
+    # bitboards::battks[65] when a position has no king -- is a raw C array
+    # indexed by an enum, which produces no sign-conversion warning at all. ASan
+    # and UBSan found it in the first second of the first run. That build is now
+    # part of CI, which is the tripwire that actually works.
+    #
+    # -Wconversion stays: it caught three real narrowing conversions (U16 to U8,
+    # int to U16, U64 to double) that were silently truncating.
     set(GCC_CLANG_WARNINGS
         -Wall
         -Wextra
@@ -8,7 +25,6 @@ function(havoc_set_warnings target)
         -Wcast-align
         -Woverloaded-virtual
         -Wconversion
-        -Wsign-conversion
         -Wnull-dereference
         -Wformat=2
         -Wimplicit-fallthrough
@@ -29,7 +45,9 @@ function(havoc_set_warnings target)
         -Wcast-align
         -Woverloaded-virtual
         -Wconversion
-        -Wsign-conversion
+        # Clang folds -Wsign-conversion into -Wconversion; GCC does not. Opt out
+        # explicitly so both compilers apply the same policy (see above).
+        -Wno-sign-conversion
         -Wnull-dereference
         -Wformat=2
         -Wimplicit-fallthrough
@@ -65,4 +83,13 @@ function(havoc_set_warnings target)
         $<$<CXX_COMPILER_ID:AppleClang>:${CLANG_WARNINGS}>
         $<$<CXX_COMPILER_ID:MSVC>:${MSVC_WARNINGS}>
     )
+
+    # Off by default so a local build is never blocked by a warning, on in CI so
+    # the tree cannot drift back to a build log nobody reads.
+    if(HAVOC_WERROR)
+        target_compile_options(${target} PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Werror>
+            $<$<CXX_COMPILER_ID:MSVC>:/WX>
+        )
+    endif()
 endfunction()

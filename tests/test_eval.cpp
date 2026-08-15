@@ -1611,7 +1611,9 @@ TEST_F(EvalTest, EvaluationDoesNotDependOnWhatWasEvaluatedBefore) {
 
         pt.clear();
         mt.clear();
-        eval.evaluate(a, -1.0f); // fills the shared pawn entry from a
+        // Discarded on purpose: this call is here for its side effect of filling
+        // the shared pawn entry from a, which is what the probe below tests.
+        (void)eval.evaluate(a, -1.0f); // fills the shared pawn entry from a
         const float b_warm = eval.evaluate(b, -1.0f);
 
         EXPECT_FLOAT_EQ(b_cold, b_warm)

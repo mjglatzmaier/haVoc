@@ -94,12 +94,12 @@ void material_table::init() {
 }
 
 void material_table::clear() {
-    std::memset(entries_.get(), 0, count_ * sizeof(material_entry));
+    std::fill_n(entries_.get(), count_, material_entry{});
 }
 
 material_entry* material_table::fetch(const position& p) const {
     U64 k = p.material_key();
-    unsigned idx = k & (count_ - 1);
+    const size_t idx = k & (count_ - 1);
     if (entries_[idx].key == k) {
         return &entries_[idx];
     }

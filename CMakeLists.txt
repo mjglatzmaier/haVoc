@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(HAVOC_ENABLE_TESTS      "Build unit tests"                     ON)
 option(HAVOC_ENABLE_BENCH      "Build benchmarks"                     OFF)
 option(HAVOC_ENABLE_SANITIZERS "Enable ASan/UBSan in Debug builds"    OFF)
+option(HAVOC_WERROR            "Treat compiler warnings as errors"    OFF)
 option(HAVOC_NATIVE            "Enable -march=native for SIMD/popcnt" ON)
 
 # ── CMake Modules ────────────────────────────────────────────────────────────

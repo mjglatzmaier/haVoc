@@ -180,13 +180,19 @@ int Movehistory::score(const Move& m, const Color& c, const Move& previous, cons
 
 // ─── Scoring lambdas ────────────────────────────────────────────────────────
 
-int score_captures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                   const Move& threat, SearchNode* stack, const Movehistory* hist) {
+// These three share one signature so they can be passed interchangeably as the
+// scoring callback in generate_and_score(); each uses only the subset of the
+// arguments its phase needs, so the rest are deliberately unnamed here.
+
+int score_captures(const position& p, const Move& m, const Move& /*prev*/,
+                   const Move& /*followup*/, const Move& /*threat*/, SearchNode* stack,
+                   const Movehistory* /*hist*/) {
     return p.see(m) * kCaptureSeeScale + stack->best_move_history()[p.to_move()][m.f][m.t];
 }
 
-int score_qcaptures(const position& p, const Move& m, const Move& prev, const Move& followup,
-                    const Move& threat, SearchNode* stack, const Movehistory* hist) {
+int score_qcaptures(const position& p, const Move& m, const Move& /*prev*/,
+                    const Move& /*followup*/, const Move& /*threat*/, SearchNode* /*stack*/,
+                    const Movehistory* /*hist*/) {
     return p.see(m);
 }
 
@@ -358,7 +364,7 @@ QMoveorder::QMoveorder(position& p, Move& hashmove, SearchNode* stack, const Mov
     : Moveorder(p, hashmove, stack, hist) {}
 
 bool QMoveorder::next_move(position& pos, Move& m, const Move& previous, const Move& followup,
-                           const Move& threat, bool skipQuiets, bool rootMoves) {
+                           const Move& threat, bool skipQuiets, bool /*rootMoves*/) {
     m = {};
     switch (m_phase) {
     case HashMove:

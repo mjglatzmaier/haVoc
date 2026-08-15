@@ -120,6 +120,7 @@ The engine binary is written to `build/havoc`.
 | `HAVOC_ENABLE_TESTS` | `ON` | Build the unit tests (GoogleTest is fetched automatically) |
 | `HAVOC_ENABLE_BENCH` | `OFF` | Build the microbenchmark targets |
 | `HAVOC_ENABLE_SANITIZERS` | `OFF` | Enable ASan/UBSan in Debug builds |
+| `HAVOC_WERROR` | `OFF` | Treat compiler warnings as errors (CI enables this) |
 | `HAVOC_NATIVE` | `ON` | Compile with `-march=native` |
 | `HAVOC_BUILD_TOOLS` | `OFF` | Build the tuning tools (`havoc_datagen`, `havoc_texel`, `havoc_pgn2epd`) |
 
@@ -211,7 +212,7 @@ implementation covers:
 
 ## Development
 
-Run the test suite (49 tests, including perft against the five standard
+Run the test suite (133 tests, including perft against the five standard
 positions from the Chess Programming Wiki):
 
 ```sh

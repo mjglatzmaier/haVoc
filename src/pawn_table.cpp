@@ -6,6 +6,7 @@
 #include "havoc/squares.hpp"
 #include "havoc/utils.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -222,16 +223,16 @@ void pawn_table::init() {
 }
 
 void pawn_table::clear() {
-    std::memset(entries_.get(), 0, count_ * sizeof(pawn_entry));
+    std::fill_n(entries_.get(), count_, pawn_entry{});
 }
 
 pawn_entry* pawn_table::fetch(const position& p) const {
     U64 k = p.pawnkey();
-    unsigned idx = k & (count_ - 1);
+    const size_t idx = k & (count_ - 1);
     if (entries_[idx].key == k) {
         return &entries_[idx];
     }
-    std::memset(&entries_[idx], 0, sizeof(pawn_entry));
+    entries_[idx] = {};
     entries_[idx].key = k;
     const pawn_score w = evaluate_pawns<white>(p, entries_[idx], *params_);
     const pawn_score b = evaluate_pawns<black>(p, entries_[idx], *params_);
