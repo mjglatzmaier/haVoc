@@ -61,6 +61,45 @@ that no single SPRT was ever powered to see. Periodically SPRT current `main`
 against a snapshot from 5–10 PRs back: the accumulated delta is larger, so it
 resolves faster and in one direction.
 
+## Parameter optimisation
+
+```sh
+scripts/testing/spsa.py --engine ./build/havoc \
+    --param king_shelter_0=-15:-60:20 --param king_shelter_1=7:-30:40 \
+    --param king_shelter_2=1:-30:40   --param king_shelter_3=-4:-40:30 \
+    --iterations 60 --games-per-iter 32 --tc 10+0.1 --tag shelter
+```
+
+Games are the objective. Bench node count is not usable as a proxy — it moves
+non-monotonically in the search margins — and the Texel error is independent of
+the values it is supposed to be fitting, so neither can stand in. See
+`docs/roadmap.md` section 5.
+
+SPSA needs two objective measurements per iteration no matter how many
+parameters are being tuned, which is the only reason a games-based objective is
+affordable. Both measurements come from one match: every parameter is perturbed
+at once by `+c*delta` and by `-c*delta`, and those two parameter sets play each
+other. The match score *is* the difference between the two measurements. Both
+sides are the same binary with different `ParamFile`s, so no code delta can leak
+in.
+
+Two things to get right:
+
+- **`--a-frac` is calibrated against `c`, not against the range.** The update is
+  `a_k * diff / (2*c_k)`, so a step expressed directly as a fraction of the
+  range is divided by the perturbation and comes out far smaller than intended.
+  Set this way round, `--a-frac 0.08` means "a hypothetical 100%–0% match moves
+  the parameter by 8% of its range on iteration 1", and the `1/c_k` scaling that
+  makes the estimate a gradient is kept. The first version of this script used
+  the obvious reading and moved an 80-wide parameter by 0.09 per iteration,
+  which is indistinguishable from not running at all.
+- **The output is a starting point, not a result.** SPSA optimises a noisy
+  objective and will happily report movement that is noise. Always finish with
+  `sprt-paramfile.sh` against the compiled-in defaults.
+
+State is written after every iteration and `--resume` continues from it, which
+matters on a machine that can lock up under a long run.
+
 ## Absolute rating
 
 ```sh
