@@ -8,6 +8,10 @@
 #include <cstring>
 #include <memory>
 
+#if defined(_MSC_VER)
+#include <xmmintrin.h>
+#endif
+
 namespace havoc {
 
 // ─── Bounds ─────────────────────────────────────────────────────────────────
@@ -20,7 +24,6 @@ inline void prefetch(const void* addr) {
 #if defined(__GNUC__) || defined(__clang__)
     __builtin_prefetch(addr, 0, 3);
 #elif defined(_MSC_VER)
-#include <xmmintrin.h>
     _mm_prefetch(static_cast<const char*>(addr), _MM_HINT_T0);
 #endif
 }
