@@ -34,8 +34,46 @@ inline constexpr double kMinSearchTime = 50.0;
 /// Returned when the search should run until the GUI stops it.
 inline constexpr double kNoTimeLimit = -1.0;
 
+/// How much longer than the soft budget a single move may run before the timer
+/// thread cuts it off. The soft limit is checked only between iterations, so
+/// the hard limit is what bounds an iteration that turns out to be expensive --
+/// a fail low at the root being the case that matters. Too tight and the engine
+/// cannot spend extra time where it needs to; too loose and one bad move eats
+/// the clock. The 33%-of-remaining cap still applies on top.
+inline constexpr double kHardTimeFactor = 2.5;
+
+/// Scaling of the soft budget by how settled the root move is.
+///
+/// `stable` counts completed iterations in a row that agreed on the best move.
+/// The multiplier runs from kSoftTimeUnstable when the root has just changed
+/// its mind down to kSoftTimeUnstable - kSoftTimeStep * kSoftTimeMaxStable once
+/// it has held for several iterations, so the average move costs about what it
+/// did before and the *distribution* is what moves: cheap when the move is not
+/// in doubt, generous when it is.
+inline constexpr double kSoftTimeUnstable = 1.10;
+inline constexpr double kSoftTimeStep = 0.10;
+inline constexpr int kSoftTimeMaxStable = 5;
+
+/// The two limits a timed search runs under.
+///
+/// `soft` is the budget the search aims at: on finishing an iteration it asks
+/// whether another one is affordable, and stops if it is not. That is where the
+/// engine can be cheap on a position whose best move is not in doubt and
+/// generous on one where it keeps changing its mind -- see the stability factor
+/// in iterative_deepening.
+///
+/// `hard` is the deadline the timer thread enforces regardless. Nothing but a
+/// stop from the GUI gets past it.
+struct TimeBudget {
+    double soft = kNoTimeLimit;
+    double hard = kNoTimeLimit;
+};
+
 /// Milliseconds to spend on one move given the limits the GUI reported.
 /// Kept free of the position so the policy can be tested directly.
+TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move);
+
+/// The hard deadline alone, for callers that only need the ceiling.
 double estimate_move_time(const SearchLimits& lims, bool white_to_move);
 
 // ─── Search signals ─────────────────────────────────────────────────────────
@@ -118,6 +156,17 @@ class SearchEngine {
     /// left the timer thread reading a dead stack frame and budgeting the move
     /// from whatever the next command wrote there. Owned here instead.
     SearchLimits limits_{};
+
+    /// Started once in start(), before any thread is spawned, and read by both
+    /// the timer thread and the main search thread. Shared so that the two
+    /// agree on when the move began: a clock created inside the timer thread
+    /// starts late by however long the thread took to be scheduled, and the
+    /// search would then overspend by exactly that much.
+    util::Clock search_clock_{};
+
+    /// The budget the main thread aims at, in milliseconds, or kNoTimeLimit
+    /// when the search is not on a clock. The timer thread owns the hard one.
+    double soft_limit_ = kNoTimeLimit;
 
     void search_timer(position& p);
     double estimate_max_time(position& p) const;

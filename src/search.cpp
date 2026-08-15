@@ -178,6 +178,8 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
     completed_depth_.assign(search_threads_.size(), 0);
 
     U16 depth = (lims.depth > 0 ? static_cast<U16>(lims.depth) : static_cast<U16>(MAX_PLY));
+    search_clock_.reset();
+    soft_limit_ = estimate_time_budget(limits_, p.to_move() == white).soft;
     searching_ = true;
 
     // Launch the entire search on the worker thread so UCI loop stays responsive.
@@ -265,7 +267,10 @@ void SearchEngine::wait() {
 // ─── Timer ──────────────────────────────────────────────────────────────────
 
 void SearchEngine::search_timer(position& p) {
-    util::Clock c;
+    // Deliberately the clock start() reset, not a fresh one: a local clock here
+    // starts only once this thread is scheduled, so the setup it misses is time
+    // the engine has already spent and would then overspend by.
+    const util::Clock& c = search_clock_;
     bool fixed_time = limits_.movetime > 0;
     int delay = 1;
     double time_limit = estimate_max_time(p);
@@ -294,11 +299,15 @@ void SearchEngine::search_timer(position& p) {
     signals_.stop = true;
 }
 
-double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
+TimeBudget estimate_time_budget(const SearchLimits& lims, bool white_to_move) {
     if (lims.infinite || lims.ponder || lims.depth > 0)
-        return kNoTimeLimit;
-    if (lims.movetime != 0)
-        return static_cast<double>(lims.movetime);
+        return {kNoTimeLimit, kNoTimeLimit};
+    if (lims.movetime != 0) {
+        // The GUI asked for exactly this much. There is nothing to ration, so
+        // the soft limit is the hard one and the search runs the clock out.
+        const double t = static_cast<double>(lims.movetime);
+        return {t, t};
+    }
 
     double our_time = (white_to_move ? lims.wtime : lims.btime);
     double our_inc = (white_to_move ? lims.winc : lims.binc);
@@ -308,14 +317,14 @@ double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     const bool has_clock = lims.wtime > 0 || lims.btime > 0 || lims.winc > 0 || lims.binc > 0 ||
                            lims.movestogo > 0;
     if (!has_clock)
-        return kNoTimeLimit;
+        return {kNoTimeLimit, kNoTimeLimit};
 
     // Our clock is spent, or the GUI reported a negative value that the UCI
     // layer clamped to zero. Returning kNoTimeLimit here used to mean "no
     // limit", so the engine answered a flag-fall by thinking forever and
     // losing on time. Move as quickly as we can instead.
     if (our_time <= 0)
-        return kMinSearchTime;
+        return {kMinSearchTime, kMinSearchTime};
 
     // Sudden death: assume a fixed number of moves still to play.
     const double moves_left = (lims.movestogo > 0 ? static_cast<double>(lims.movestogo) : 25.0);
@@ -324,11 +333,18 @@ double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
     // Never commit more than a third of what is left to a single move.
     const double max_time = our_time * 0.33;
 
-    return std::max(kMinSearchTime, std::min(base_time, max_time));
+    const double hard =
+        std::max(kMinSearchTime, std::min(base_time * kHardTimeFactor, max_time));
+    const double soft = std::max(kMinSearchTime, std::min(base_time, hard));
+    return {soft, hard};
+}
+
+double estimate_move_time(const SearchLimits& lims, bool white_to_move) {
+    return estimate_time_budget(lims, white_to_move).hard;
 }
 
 double SearchEngine::estimate_max_time(position& p) const {
-    return estimate_move_time(limits_, p.to_move() == white);
+    return estimate_time_budget(limits_, p.to_move() == white).hard;
 }
 
 // ─── Iterative deepening ────────────────────────────────────────────────────
@@ -362,6 +378,12 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
     (stack + 2)->pv = pv_line;
 
     bool is_main = (thread_id == 0);
+
+    // Best move of the previous completed iteration, and how many completed
+    // iterations in a row have agreed on it. Only the main thread budgets time,
+    // so only the main thread tracks this.
+    Move prev_best{};
+    int stable_iterations = 0;
 
     for (unsigned id = 1 + static_cast<unsigned>(thread_id); id <= depth; ++id) {
         if (signals_.stop.load())
@@ -459,6 +481,32 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
             if (id == depth) {
                 signals_.stop = true;
                 break;
+            }
+
+            // Decide whether another iteration is affordable. The old loop
+            // simply started one and let the timer cut it off partway, which
+            // spends the whole budget on every move however obvious the move
+            // is: an aborted iteration contributes nothing, so that time is
+            // burnt rather than banked.
+            //
+            // The budget is scaled by how settled the root is. A best move that
+            // has survived several iterations is unlikely to be overturned by
+            // one more, so the search leaves early and the saved milliseconds
+            // go back on the clock for a move that needs them; a root that is
+            // still changing its mind buys extra time, bounded by the hard
+            // limit the timer thread enforces.
+            if (soft_limit_ > 0.0 && !p.root_moves.empty()) {
+                const Move best = p.root_moves[0].pv[0];
+                stable_iterations = (best == prev_best) ? stable_iterations + 1 : 0;
+                prev_best = best;
+
+                const double factor =
+                    kSoftTimeUnstable -
+                    kSoftTimeStep * std::min(stable_iterations, kSoftTimeMaxStable);
+                if (search_clock_.elapsed_ms() >= soft_limit_ * factor) {
+                    signals_.stop = true;
+                    break;
+                }
             }
         }
     }
