@@ -4,6 +4,7 @@
 #include "havoc/movegen.hpp"
 #include "havoc/position.hpp"
 #include "havoc/tablebase.hpp"
+#include "havoc/tt.hpp"
 #include "havoc/version.hpp"
 
 #include <algorithm>

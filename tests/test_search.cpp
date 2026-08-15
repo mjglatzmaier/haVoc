@@ -1356,5 +1356,32 @@ TEST_F(SearchTest, AnUnplayableMoveStopsRatherThanDesyncing) {
         << "the desync was not reported at all";
 }
 
+TEST_F(SearchTest, TheAdvertisedHashDefaultIsTheOneActuallyUsed) {
+    // `uci` used to advertise "default 1024" while the table was built at 128.
+    // A GUI that only sends setoption for values the operator changed then
+    // leaves the engine on an eighth of the table it is displaying, and nothing
+    // anywhere says so. Measured before the fix: 145.5 MB RSS on a fresh engine
+    // -- identical to an explicit Hash=128 -- against 1041.5 MB for Hash=1024.
+    hash_table fresh;
+    EXPECT_EQ(fresh.size_mb(), static_cast<size_t>(kDefaultHashMb))
+        << "the table is not built at the size the constant names";
+
+    // Parse the advertised default straight out of the `uci` output, so the
+    // two can never drift apart again without failing here.
+    SearchEngine engine;
+    auto pos = make_pos("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    std::ostringstream captured;
+    std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
+    uci::parse_command("uci", engine, pos);
+    std::cout.rdbuf(saved);
+
+    const std::string out = captured.str();
+    const std::string key = "option name Hash type spin default ";
+    const size_t at = out.find(key);
+    ASSERT_NE(at, std::string::npos) << "the Hash option is no longer advertised";
+    EXPECT_EQ(std::stoi(out.substr(at + key.size())), kDefaultHashMb)
+        << "advertised Hash default does not match the size actually allocated";
+}
+
 } // namespace
 } // namespace havoc

@@ -17,9 +17,14 @@ namespace havoc {
 /// Bounds for the Hash spin option advertised by the "uci" handshake. uci.cpp
 /// prints these and hash_table::resize() enforces them, so the advertised range
 /// and the enforced range cannot drift apart.
+///
+/// kDefaultHashMb must also be the size the constructor actually builds. It
+/// said 1024 while the constructor built 128, so a GUI that only sends
+/// setoption for values the operator changed left the engine on an eighth of
+/// the table it was displaying, and nothing reported the discrepancy.
 constexpr int kMinHashMb = 1;
 constexpr int kMaxHashMb = 33554432;
-constexpr int kDefaultHashMb = 1024;
+constexpr int kDefaultHashMb = 128;
 
 // ─── Bounds ─────────────────────────────────────────────────────────────────
 
@@ -148,6 +153,9 @@ class hash_table {
     void new_search() { ++generation_; }
 
     [[nodiscard]] U8 generation() const { return generation_; }
+
+    /// Size the table was last given, in MB.
+    [[nodiscard]] size_t size_mb() const { return sz_mb_; }
     [[nodiscard]] int hashfull() const;
 
     [[nodiscard]] inline entry* first_entry(U64 key) {

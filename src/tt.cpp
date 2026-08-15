@@ -17,10 +17,11 @@ inline size_t next_pow2(size_t x) {
 } // namespace
 
 hash_table::hash_table() {
-    // 128 MB at construction. If even this fails the process has no usable
-    // table, but there is nothing useful to do about it here and throwing from
-    // a constructor that runs before main() is worse than starting up.
-    (void)resize(128);
+    // The advertised default, at construction. If even this fails the process
+    // has no usable table, but there is nothing useful to do about it here and
+    // throwing from a constructor that runs before main() is worse than
+    // starting up.
+    (void)resize(kDefaultHashMb);
 }
 bool hash_table::resize(size_t size_mb) {
     // Refuse out-of-range requests outright rather than discovering they are
