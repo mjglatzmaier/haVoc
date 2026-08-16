@@ -295,8 +295,9 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
         search_threads_.wait_finished();
         signals_.stop = true;
 
-        // Collect results. Helper threads all search to different depths, so
-        // their root scores are not directly comparable: a shallow thread can
+        // Collect results. Helper threads start at staggered depths and stop
+        // wherever the clock caught them, so their root scores are not
+        // directly comparable: a shallow thread can
         // easily return a higher score than a deeper, more reliable one. Prefer
         // the thread that finished the deepest iteration, breaking ties on
         // score, and prefer a proven shorter mate over any of that.
@@ -514,7 +515,12 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
     Move prev_best{};
     int stable_iterations = 0;
 
-    for (unsigned id = 1 + static_cast<unsigned>(thread_id); id <= depth; ++id) {
+    // See parameters.hpp: the stagger wraps so that no helper begins at a depth
+    // it cannot reach. A span of 1 disables staggering entirely.
+    const unsigned span = static_cast<unsigned>(std::max(1, params_.smp_stagger_span));
+    const unsigned stagger = static_cast<unsigned>(thread_id) % span;
+
+    for (unsigned id = 1 + stagger; id <= depth; ++id) {
         if (signals_.stop.load())
             break;
 

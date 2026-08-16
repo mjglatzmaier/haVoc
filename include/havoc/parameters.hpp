@@ -470,6 +470,26 @@ struct parameters {
     int lmr_min_depth = 3;          // late move reductions minimum depth
     // lmr_hist_bad is dead for the same reason as history_prune_margin above,
     // and under the same measurements -- do not retune it in isolation.
+    // Helper threads start their iterative deepening a few iterations apart so
+    // they do not all walk the identical path. The offset must wrap: it used to
+    // be the raw thread id, so thread N began at depth N+1, and a time-based
+    // search passes MAX_PLY (64) as the target. On a 32-thread search that gave
+    // the upper half of the threads a first iteration of depth 17 to 32 with no
+    // iterative-deepening warmup behind it -- searches no move's time budget
+    // can finish, so those cores contributed nothing but TT traffic.
+    //
+    // Deliberately *not* registered with the tuner. It only changes behaviour
+    // with helper threads running, and the tuner drives a single-threaded
+    // search, so SPSA would perturb it against an identically zero gradient --
+    // which is exactly what EverySearchParameterReachesTheSearch asserts
+    // cannot happen. Registering it fails that test, correctly.
+    //
+    // The span itself is a heuristic, not a measured optimum: the differences
+    // between spans of 2, 4 and 8 in the table in docs/thread-scaling.md are
+    // smaller than the run-to-run spread of the measurement that produced
+    // them. What is measured is that *some* bound beats none at 32 threads.
+    int smp_stagger_span = 4;       // helper start depths wrap modulo this
+
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this
     int lmr_hist_good = 4000;       // reduce one less ply above this
     int best_move_bonus = 2;        // best-move history bonus, times depth
