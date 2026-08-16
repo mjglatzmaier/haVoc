@@ -44,6 +44,7 @@ set(HAVOC_CORE_SOURCES
     src/material_table.cpp
     src/kpk.cpp
     src/eval/hce.cpp
+    src/eval/nnue_evaluator.cpp
     src/move_order.cpp
     src/thread_pool.cpp
     src/search.cpp

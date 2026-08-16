@@ -17,7 +17,9 @@
 /// is not itself.
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -220,4 +222,169 @@ TEST(NnueNetwork, RefusesATruncatedOrOverlongFile) {
 
     nnue::Network headerless;
     EXPECT_FALSE(load_from(std::string(16, '\0'), headerless).empty());
+}
+
+// ── Cross-language exactness ────────────────────────────────────────────────
+//
+// Everything above pins the arithmetic against hand-computed values, which
+// proves the engine does what this file says. It does not prove the engine
+// does what `scripts/nnue/quantise.py` does, and that is the mismatch that
+// would matter: the quantiser decides the weights, and if the two integer
+// paths diverge anywhere -- a rounding direction, a division that floors
+// instead of truncating -- the engine plays a network subtly unlike the one
+// that was trained, and nothing reports it.
+//
+// `quantise.py --cases` writes the positions it verified together with the
+// integer evaluation it computed for each. This replays them.
+//
+// The files are training artefacts, not repository content, so the test is
+// opt-in via the environment and skips without them. Skipping is the honest
+// outcome: the alternative is either a 21 MB binary in git or a test that
+// silently passes when its input is missing.
+//
+//   HAVOC_NNUE_NET=/path/net.nnue HAVOC_NNUE_CASES=/path/cases.bin ./havoc_tests
+TEST(NnueNetwork, MatchesThePythonQuantiserExactlyOnRecordedCases) {
+    const char* net_path = std::getenv("HAVOC_NNUE_NET");
+    const char* cases_path = std::getenv("HAVOC_NNUE_CASES");
+    if (!net_path || !cases_path)
+        GTEST_SKIP() << "set HAVOC_NNUE_NET and HAVOC_NNUE_CASES to replay recorded cases";
+
+    std::ifstream nf(net_path, std::ios::binary);
+    ASSERT_TRUE(nf.good()) << "cannot open " << net_path;
+    nnue::Network net;
+    ASSERT_EQ(net.load(nf), "");
+
+    std::ifstream cf(cases_path, std::ios::binary);
+    ASSERT_TRUE(cf.good()) << "cannot open " << cases_path;
+    uint32_t count = 0;
+    cf.read(reinterpret_cast<char*>(&count), sizeof(count));
+    ASSERT_TRUE(cf.good());
+    ASSERT_GT(count, 0u);
+
+    const int l1 = net.l1();
+    std::vector<int32_t> acc_us(static_cast<size_t>(l1)), acc_them(static_cast<size_t>(l1));
+    auto build = [&](const uint16_t* feats, std::vector<int32_t>& acc) {
+        const int16_t* bias = net.ft_bias();
+        for (int i = 0; i < l1; ++i)
+            acc[static_cast<size_t>(i)] = bias[i];
+        for (int k = 0; k < nnue::kMaxActiveFeatures; ++k) {
+            if (feats[k] >= nnue::kInputDim)  // padding
+                continue;
+            const int16_t* row = net.ft_row(feats[k]);
+            for (int i = 0; i < l1; ++i)
+                acc[static_cast<size_t>(i)] += row[i];
+        }
+    };
+
+    uint32_t mismatches = 0;
+    std::string first;
+    for (uint32_t n = 0; n < count; ++n) {
+        uint16_t fu[nnue::kMaxActiveFeatures], ft[nnue::kMaxActiveFeatures];
+        int32_t expected = 0;
+        cf.read(reinterpret_cast<char*>(fu), sizeof(fu));
+        cf.read(reinterpret_cast<char*>(ft), sizeof(ft));
+        cf.read(reinterpret_cast<char*>(&expected), sizeof(expected));
+        ASSERT_TRUE(cf.good()) << "case file truncated at record " << n;
+
+        build(fu, acc_us);
+        build(ft, acc_them);
+        const int got = net.forward(acc_us.data(), acc_them.data());
+        if (got != expected) {
+            ++mismatches;
+            if (first.empty())
+                first = "record " + std::to_string(n) + ": C++ " + std::to_string(got) +
+                        " vs Python " + std::to_string(expected);
+        }
+    }
+
+    // Exactly, on every case. "Close" would mean the two integer pipelines
+    // differ somewhere and the difference merely happens to be small here.
+    EXPECT_EQ(mismatches, 0u) << mismatches << " of " << count << " disagree; first " << first;
+}
+
+// The vectorised kernel sums in a different order and narrows the
+// accumulators through a different path. Integer addition is associative, so
+// "different order" is not licence for a different answer -- and a kernel that
+// is only nearly right is the failure mode that shows up as an engine playing
+// slightly badly with nothing to point at.
+TEST(NnueNetwork, TheVectorKernelAgreesWithTheReferenceExactly) {
+    // Widths the vector path accepts; RawWeights' 2x2x2 is deliberately not
+    // one of them, so this needs its own network.
+    constexpr int kVL1 = 16, kVL2 = 16, kVL3 = 4;
+
+    nnue::NetworkHeader h{};
+    std::memcpy(h.magic, "HVNW", 4);
+    h.format_version = nnue::kNetworkFormatVersion;
+    h.feature_set_version = nnue::kFeatureSetVersion;
+    h.input_dim = nnue::kInputDim;
+    h.l1 = kVL1;
+    h.l2 = kVL2;
+    h.l3 = kVL3;
+    h.cp_scale = nnue::kDefaultCpScale;
+    h.qa = nnue::kQA;
+    h.s_fc1 = 3;  // small scales keep the layer outputs off the clip bounds,
+    h.s_fc2 = 3;  // so a difference has somewhere to show
+    h.s_out = 3;
+
+    uint32_t st = 0x9e3779b9u;
+    auto next = [&st]() {
+        st ^= st << 13;
+        st ^= st >> 17;
+        st ^= st << 5;
+        return st;
+    };
+
+    std::string s(reinterpret_cast<const char*>(&h), sizeof(h));
+    auto append = [&s](const auto& v) {
+        s.append(reinterpret_cast<const char*>(v.data()),
+                 v.size() * sizeof(typename std::decay_t<decltype(v)>::value_type));
+    };
+    std::vector<int16_t> ft_w(static_cast<size_t>(nnue::kInputDim) * kVL1, 0);
+    std::vector<int16_t> ft_b(kVL1, 0);
+    std::vector<int8_t> fc1_w(kVL2 * 2 * kVL1);
+    for (auto& w : fc1_w)
+        w = static_cast<int8_t>(static_cast<int32_t>(next() % 255u) - 127);
+    std::vector<int32_t> fc1_b(kVL2);
+    for (auto& b : fc1_b)
+        b = static_cast<int32_t>(next() % 2001u) - 1000;
+    std::vector<int8_t> fc2_w(kVL3 * kVL2);
+    for (auto& w : fc2_w)
+        w = static_cast<int8_t>(static_cast<int32_t>(next() % 255u) - 127);
+    std::vector<int32_t> fc2_b(kVL3);
+    for (auto& b : fc2_b)
+        b = static_cast<int32_t>(next() % 2001u) - 1000;
+    std::vector<int8_t> out_w(kVL3);
+    for (auto& w : out_w)
+        w = static_cast<int8_t>(static_cast<int32_t>(next() % 255u) - 127);
+    const int32_t out_b = 137;
+
+    append(ft_w);
+    append(ft_b);
+    append(fc1_w);
+    append(fc1_b);
+    append(fc2_w);
+    append(fc2_b);
+    append(out_w);
+    s.append(reinterpret_cast<const char*>(&out_b), sizeof(out_b));
+
+    nnue::Network net;
+    ASSERT_EQ(load_from(s, net), "");
+
+    int32_t us[kVL1], them[kVL1];
+    int disagreements = 0, nonzero = 0;
+    for (int trial = 0; trial < 20000; ++trial) {
+        for (int i = 0; i < kVL1; ++i) {
+            // Include values outside [0, QA] on purpose: the clip and the
+            // narrowing are exactly where the two paths could diverge.
+            us[i] = static_cast<int32_t>(next() % 100000u) - 40000;
+            them[i] = static_cast<int32_t>(next() % 100000u) - 40000;
+        }
+        const int a = net.forward(us, them);
+        const int b = net.forward_reference(us, them);
+        disagreements += (a != b) ? 1 : 0;
+        nonzero += (b != 0) ? 1 : 0;
+    }
+    EXPECT_EQ(disagreements, 0);
+    EXPECT_GT(nonzero, 1000) << "the trial network evaluates to zero almost everywhere, so "
+                                "agreement between the two paths proves nothing";
 }

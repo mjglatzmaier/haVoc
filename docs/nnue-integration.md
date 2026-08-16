@@ -344,3 +344,86 @@ at 1.4 s/epoch it was nearly free to test. It cut int8-versus-float error from
 12.2 cp to 14.5 cp, because the constrained network fits the target less well.
 It is kept behind `--qat`, off by default, and recorded here so it is not
 retried on the assumption that it must help.
+
+## 9. Stage 1: the network in the engine
+
+Stage 0 proved a network could be trained, quantised and read back. Stage 1
+puts it behind `IEvaluator` and makes the search drive it, which is where the
+accumulator becomes a thing that can silently drift out of step with the
+board.
+
+### What was built
+
+- `NNUEEvaluator` (`include/havoc/eval/nnue_evaluator.hpp`) — per-thread stack
+  of accumulator frames, one per ply, patched by `push` and unwound by `pop`.
+- `setoption name EvalFile value <path>` loads a network and installs the
+  evaluator on every search thread; `value none` puts the handcrafted
+  evaluation back. A network that fails to load leaves the engine playing with
+  the evaluation it already had rather than refusing to start.
+- An AVX2 kernel for the dense layers, dispatched to only when the layer widths
+  suit it, with `forward_reference` kept as the definition it is checked
+  against.
+
+The HCE path is untouched: `bench` is 709908 with and without the branch.
+
+### Correctness, and what each check can actually see
+
+| check | what it would catch |
+|---|---|
+| accumulator vs full rebuild at every node of a real search, five position families | any desynchronisation, at the node it happens on |
+| every legal king move walked by hand, plus one reply | bucket crossing, which a search is free to prune away entirely |
+| mutation: king events stripped from the delta | a king move that failed to rebuild its own perspective |
+| mutation: removals stripped from the delta | a lost update on the perspective that was *not* rebuilt |
+| 20,000 recorded cases replayed against `quantise.py` | any divergence between the C++ and Python integer paths |
+| vector kernel vs `forward_reference`, 20,000 random accumulators | a SIMD kernel that is only nearly right |
+
+The two mutation tests are the load-bearing ones. Rebuilding a perspective is
+always correct, so a sync check alone cannot distinguish "updated correctly"
+from "rebuilt anyway" — it can only prove something if deliberately breaking
+each half makes it fail. Both do.
+
+The cross-language replay agreed on **20,000 of 20,000** positions exactly.
+
+### Speed, measured rather than assumed
+
+The scalar reference was never going to be fast enough, and was not:
+
+| kernel | ns per forward | bench nps |
+|---|---|---|
+| scalar reference | 1174 | 657k |
+| AVX2, one output row at a time | 481 | 959k |
+| AVX2, four output rows blocked, stack scratch | 347 | — |
+| AVX2, dense weights pre-widened to int16 at load | **284** | **1047k** |
+| (handcrafted evaluation, for comparison) | — | 1841k |
+
+Three things that were tried and measured as worthless are worth recording so
+they are not retried: **eight-row blocking** (229 ns against 226 ns for four),
+**an explicit packs/permute/clamp for the accumulator narrowing** (identical to
+the plain loop — the compiler was already vectorising it), and `thread_local`
+scratch vectors, which were *worse* than plain stack arrays because a
+`thread_local` with a non-trivial constructor pays a guard check on every
+access.
+
+`_mm256_maddubs_epi16` would double the products per instruction and is what
+most engines use, but it accumulates into int16 and **saturates**: with
+activations in [0, 255] and weights in [-127, 127] a pair of products reaches
+64,770 against a 32,767 ceiling. Engines that use it clip activations to
+[0, 127] instead, where `127·127·2 = 32,258` fits exactly. Since the Stage 0
+sweep showed activation resolution to be worth nothing (QA 255 → 16383 changed
+the error by 0.3 cp), dropping QA to 127 is very likely free and would unlock
+it. That is the next optimisation, together with exploiting the sparsity of the
+clipped accumulator; neither is on the critical path for the staged plan.
+
+### What the Stage 1 SPRT can and cannot say
+
+The original expectation written here was "~0 Elo, and a large number in either
+direction is a bug report". That was wrong in one respect, and the measurement
+above is why: **the network costs 43% of the engine's speed** (1841k → 1047k
+nps). At 10+0.1 that is worth roughly −50 Elo on its own, before the network's
+26.7 cp modelling error and 9.2 cp of quantisation noise are counted at all.
+
+So the honest Stage 1 expectation is a clear *loss*, and the informative
+quantity is not the Elo but how it decomposes. A result far worse than the
+speed cost plus the eval noise would mean something is wrong that the tests
+above did not see; a result better than the speed cost alone would mean the
+comparison is not measuring what it claims.
