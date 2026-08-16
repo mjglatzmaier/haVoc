@@ -423,6 +423,9 @@ struct parameters {
     // machinery can reach them; search.cpp reads them through params_.
     int rfp_max_depth = 6;          // reverse futility only below this depth
     int rfp_margin = 80;            // ...and only if eval - margin*depth >= beta
+    int razor_max_depth = 3;        // razoring only below this depth
+    int razor_base = 300;           // ...and only if eval + base + margin*depth <= alpha
+    int razor_margin = 400;
     int nmp_min_depth = 3;          // null move needs at least this much depth
     int nmp_base_r = 3;             // base null-move reduction
     int nmp_depth_div = 6;          // extra reduction of depth/this

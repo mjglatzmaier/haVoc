@@ -396,6 +396,9 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // worth. They are tuned by SPSA against game results.
         result.emplace_back("rfp_max_depth", &rfp_max_depth);
         result.emplace_back("rfp_margin", &rfp_margin);
+        result.emplace_back("razor_max_depth", &razor_max_depth);
+        result.emplace_back("razor_base", &razor_base);
+        result.emplace_back("razor_margin", &razor_margin);
         result.emplace_back("nmp_min_depth", &nmp_min_depth);
         result.emplace_back("nmp_base_r", &nmp_base_r);
         result.emplace_back("nmp_depth_div", &nmp_depth_div);

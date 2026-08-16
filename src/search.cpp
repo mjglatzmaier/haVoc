@@ -904,6 +904,27 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     const bool forward_prune = (!in_check && !pvNode && !stack->null_search && !singular_search &&
                                 std::abs(alpha - beta) == 1 && hasStaticValue);
 
+    // Razoring: the mirror of reverse futility. If the static eval is so far
+    // below alpha that a margin cannot plausibly bridge it, spend a quiescence
+    // search instead of a full-width one. The quiescence result is what decides:
+    // only if it *also* fails low do we return, so a position saved by a capture
+    // or a check evasion still gets searched properly. That verification is what
+    // separates razoring from simply pruning the node, which would be unsound.
+    //
+    // qsearch is handed *this* node's stack frame, not `stack + 1`, because it
+    // searches the same position and must therefore sit at the same ply. That
+    // makes the placement load-bearing: qsearch clobbers `threat_move` and
+    // `curr_move` on the frame it is given, and both are re-initialised below
+    // before anything reads them (`curr_move` at the null-move guard,
+    // `threat_move` by the null search itself). Moving this block after either
+    // of those would corrupt the node.
+    if (forward_prune && depth <= params_.razor_max_depth &&
+        static_eval_val + params_.razor_base + params_.razor_margin * depth <= alpha &&
+        std::abs(alpha) < score::kMateMaxPly) {
+        const int razor_score = qsearch<non_pv>(pos, alpha - 1, alpha, 0, stack, thread_id);
+        if (razor_score < alpha) return razor_score;
+    }
+
     // Null move pruning
     bool null_move_allowed =
         (pos.to_move() == white ? pos.non_pawn_material<white>() : pos.non_pawn_material<black>());
