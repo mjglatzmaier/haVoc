@@ -216,3 +216,131 @@ contracts are worth stating before anything is built on it.
   `do_move`/`undo_move` directly rather than through an RAII guard, so an
   exception escaping a hook would leave the pair unbalanced. Nothing in the
   engine throws during search today; if that changes, make the pairing a guard.
+
+---
+
+## 8. The staged ladder for step 5
+
+Step 5 is where the money is spent, so it is broken into stages that each end
+in a **cheap, unambiguous verdict**. The ordering principle is that every
+stage whose answer we already know comes before every stage whose answer we
+do not, because a pipeline bug found on a known answer costs hours and the
+same bug found on real labels costs days of GPU and CPU time.
+
+| stage | what runs | expected answer | cost if it fails |
+|---|---|---|---|
+| 0 | train a net to reproduce the **HCE static eval** | converges to a small MAE | hours |
+| 1 | quantise, write the C++ kernel, install the stage-0 net | C++ matches Python; SPRT vs HCE ≈ **0 Elo** | hours |
+| 1b | accumulator vs full recompute, incl. king moves | exact agreement at every node | hours |
+| 2 | label-quality study on real datagen scores | tells us the depth/volume tradeoff | a day |
+| 3 | small net on real labels | first honest strength reading | a day |
+| 4 | full-size net on the full corpus | the actual gain | days |
+
+**Stage 0 is a known-answer test, and that is its entire purpose.** The target
+is haVoc's own static evaluation: a deterministic function we already possess
+and can label for free from any corpus of positions, with no self-play at all.
+Everything except the idea itself is under test — the feature export, the
+loader, the model shape, the loss, the optimiser, the checkpoint. A network
+that cannot learn a function we can already compute is not evidence about
+NNUE; it is evidence about our pipeline.
+
+**Stage 1's expected result is zero Elo, and a large number in either
+direction is a bug report.** Installing a network that mimics the HCE should
+play like the HCE. If it is much worse, the quantisation or the kernel lost
+the network. If it is much *better*, something is wrong with the comparison
+rather than good with the network — most likely the two builds differ in
+something besides the evaluator. This is the only stage in the plan where a
+positive result should be distrusted.
+
+### Where the feature encoding lives, and why only once
+
+`include/havoc/nnue/features.hpp` is the sole definition of what a network
+input index means. `tools/nnue_export.cpp` writes the indices it produces
+directly into the training file, so the trainer receives features rather than
+positions and **never parses a FEN**. This is not tidiness. A second
+implementation of the encoding in Python is the classic way this project is
+lost for a week: the two encoders agree on almost every position, the network
+trains cleanly against whichever one made the data, and the disagreement
+surfaces only as an engine that is inexplicably weak. Transporting the indices
+makes that failure inexpressible.
+
+The file carries `feature_set_version`, and the loader refuses a mismatch, so
+data generated under an older encoding cannot be silently trained on.
+
+`tests/test_nnue_features.cpp` pins the encoding before anything is trained on
+it. The load-bearing cases are mirror invariance — a position and its
+colour-and-rank reflection must produce swapped perspectives, which catches a
+missing orientation, an orientation applied to the piece square but not the
+king square, and an inverted own/enemy polarity — and full reconstruction of
+the board from the indices, which catches a lossy encoding. A lossy encoding
+still trains; it just caps how good the network can ever be, and it does so
+without any visible symptom.
+
+### What stage 0 measured
+
+The pipeline works. Relabelling the existing 3.6M-position corpus with the HCE
+took **1 second** (3M positions/sec, 0 rows skipped), and training on one
+consumer GPU with the corpus held resident in VRAM runs at **1.4 seconds per
+epoch** — which is why the capacity sweep below cost minutes rather than a day.
+
+| L1 | held-out MAE vs the HCE |
+|---|---|
+| 128 | 27.9 cp |
+| 256 | 26.7 cp |
+| 512 | **22.2 cp** |
+
+against a **303 cp** predict-the-mean baseline, at correlation 0.9965.
+
+The residual is representational, not a defect. Error is concentrated in
+endgames — 38 cp with six men or fewer, falling monotonically to 13 cp with
+23–30 — which is exactly where the HCE stops being a smooth sum of piece terms
+and starts consulting a KPK bitbase and mate-distance drives. Those are
+discontinuous functions of piece placement, and HalfKP cannot express them as
+a sum of per-piece contributions. Relative to the label spread the endgame fit
+is actually the *better* one (38 cp against an 854 cp spread, versus 13 cp
+against 170 cp). Nothing here needs fixing: real training labels are search
+scores, in which the bitbase verdict is already baked in consistently.
+
+### The 46 cp quantisation bug, and how it was found
+
+Stage 1 immediately earned its place. The first quantised network disagreed
+with its own float weights by **46 cp**, and the sequence that found the cause
+is worth recording because the obvious hypothesis was wrong.
+
+The error turned out to be almost pure **bias** — mean +45.7 cp against a
+46.5 cp MAE, uniform across every evaluation band — which already ruled out
+"random rounding noise" and pointed at something systematic.
+
+- **Sweeping the activation scale QA over 255 → 16383 changed nothing**
+  (46.11 → 45.82 cp), and rounding instead of truncating the rescale changed
+  nothing either. Activation resolution was not the problem, which killed the
+  first and most plausible theory outright.
+- **Sweeping the dense weight scale found it.** At the shared scale of 64 the
+  error was 46 cp; at 101 it was 10 cp; at int16 precision it bottomed out
+  around 2 cp.
+
+The cause: the scale had been fixed at 64 to match the clamp applied during
+training (127/64 ≈ 1.98), but the trained network's largest weight was only
+**1.25**, so two thirds of the int8 range went unused — and a third of `fc1`'s
+weights, whose rms is 0.062, were smaller than a single quantisation step.
+
+The fix is to fit **a scale per layer** from that layer's own peak weight
+(`fc1`=101, `fc2`=156, `out`=141) and store the scales in the file, since they
+are a property of the trained network rather than of the engine. That took the
+error from **46 cp to 9.2 cp** at no runtime cost. Against a modelling error of
+26.7 cp, 9.2 cp of quantisation noise is a second-order term, and real training
+labels carry far more noise than that.
+
+The general lesson is the one this project keeps relearning: **sweep the
+parameter before believing the mechanism.** The activation sweep cost two
+minutes and disproved the theory everything else would have been built on.
+
+### Quantisation-aware training: tried, did not help
+
+Rounding the weights onto the int8 grid inside the forward pass, with a
+straight-through estimator, is the textbook answer to quantisation loss, and
+at 1.4 s/epoch it was nearly free to test. It cut int8-versus-float error from
+9.2 cp to 7.4 cp — but *raised* end-to-end error against the labels from
+12.2 cp to 14.5 cp, because the constrained network fits the target less well.
+It is kept behind `--qat`, off by default, and recorded here so it is not
+retried on the assumption that it must help.
