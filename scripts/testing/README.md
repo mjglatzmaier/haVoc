@@ -262,9 +262,30 @@ across runs far more than the number.
 
 ### Current standing
 
-From `gauntlet-r20260813` (120 games per anchor): Fruit implied 2491, Glaurung
-2561, pooled **2525 ± 27** (statistical only). Two other runs of ≥100 games
-agree: 2492/2451 and 2536/2448.
+From `gauntlet-r20260816-main`, 200 games against each of five anchors, the
+first run with anchors at or below the engine:
+
+| anchor | published | haVoc score | implied |
+|---|---|---|---|
+| Zurichess Fribourg | 2412 | 69.5% | 2555 |
+| Arasan 12.2 | 2505 | 69.2% | 2646 |
+| Phalanx XXIV | 2521 | 55.2% | 2558 |
+| Fruit 2.1 | 2694 | 34.5% | 2583 |
+| Glaurung 2.2 | 2793 | 21.5% | 2568 |
+
+Pooled **2582 ± 12** statistical, spread 91. Excluding Arasan, **2566 ± 13**.
+
+Arasan is the one that does not fit: haVoc scores 69.2% against it and 55.2%
+against Phalanx, which is published 16 points *higher*. That is a ~100 Elo
+contradiction between two engines rated the same, so at least one published
+rating does not describe the binary built here. It is kept in the pool anyway —
+dropping the anchor that disagrees is choosing the answer — and the spread is
+reported instead. If Arasan keeps behaving this way across runs, retire it
+rather than quietly excluding it per-run.
+
+Earlier runs (2525, 2492/2451, 2536/2448) used Fruit and Glaurung alone, both
+~200 points above the engine, so the fit was extrapolating. They also used
+anchor binaries that no longer exist. Not comparable to the above.
 
 ## Tactics
 

@@ -168,6 +168,13 @@ build_arasan() {
     cp -f "$d/data/kpk-w.bit" "$d/data/kpk-b.bit" "$d/export/" 2>/dev/null
     cp -f "$d/book/book.bin" "$d/export/" 2>/dev/null
     cp -f "$d/src/arasan.rc" "$d/export/" 2>/dev/null
+    # Every concurrent Arasan in a gauntlet shares this directory, so leaving
+    # logging on has ~30 processes opening and truncating one arasan.log at
+    # once. It is not supported under UCI anyway.
+    if [ -f "$d/export/arasan.rc" ]; then
+        sed -i -e 's/^log\.enabled=.*/log.enabled=false/' \
+               -e 's/^store_games=.*/store_games=false/' "$d/export/arasan.rc"
+    fi
     ( cd "$d/export" && verify_uci "./arasanx" "arasan" ) \
         && record "arasan     OK" || record "arasan     FAILED (no uciok)"
 }

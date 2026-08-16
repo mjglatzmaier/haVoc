@@ -13,50 +13,69 @@ a hand-written evaluation function.
 
 ## Strength
 
-Estimated **~2503 Elo** on the CCRL 40/40 scale (95% CI ±55), measured
-14 August 2026.
+Estimated **~2580 Elo** on the CCRL 40/40 scale, measured 16 August 2026 over
+1000 games against five anchors. Treat the uncertainty as roughly ±50, not the
+±12 the fit reports; see below.
 
-| Date | Rating | 95% CI | Games | Notes |
-|------|--------|--------|-------|-------|
-| 2026-08-14 | **2503** | ±55 | 240 | Correction history, mobility counts captures, storm advancement |
-| 2026-08-14 | 2523 | ±53 | 240 | Evaluation coverage batch |
-| 2026-08-13 | 2473 | ±60 | 224 | Correctness batch |
-| (earlier) | 2413 | ±82 | 150 | Prior baseline |
+| Date | Rating | fit ± | Games | Anchors | Notes |
+|------|--------|-------|-------|---------|-------|
+| 2026-08-16 | **2582** | ±12 | 1000 | 5 | First run with anchors below the engine |
+| 2026-08-14 | 2503 | ±55 | 240 | 2 | Correction history, mobility counts captures |
+| 2026-08-14 | 2523 | ±53 | 240 | 2 | Evaluation coverage batch |
+| 2026-08-13 | 2473 | ±60 | 224 | 2 | Correctness batch |
+| (earlier) | 2413 | ±82 | 150 | 2 | Prior baseline |
 
-Read this as "somewhere around 2500 since 13 August" rather than as a trajectory.
-Three things limit it, and they are worth stating plainly:
+The jump from ~2500 to ~2580 is mostly a change of instrument, not of engine.
+Every earlier row was fitted against Fruit and Glaurung alone, both ~200 Elo
+*above* haVoc, where the model extrapolates; this run adds three anchors at or
+below it, so the fit interpolates. The anchor binaries were also rebuilt from
+source for this run, and are not the same builds that produced the older rows.
+Do not read the column as a trajectory.
 
-- **240 games cannot resolve 50 Elo.** The interval is ±55, so two runs differing
-  by 20 are one run.
-- **Self-play overstates field Elo.** A change is measured against an opponent
-  that shares all of its blind spots, so gains confined to positions both sides
-  misplay do not transfer to the field.
-- **The anchors disagree with each other** by more than the stated interval: this
-  run implies 2536 from Fruit and 2448 from Glaurung, and the previous run
-  implied 2491 and 2561 — the same two engines, opposite directions. A fit
-  assuming a single strength scale is being asked to reconcile a non-transitive
-  matchup, so the real uncertainty is wider than the statistical one.
+Per-anchor results, which are more informative than the pooled number:
 
-The per-change SPRTs are the trustworthy measurements; this table is a periodic
-check that the engine has not drifted away from the field.
+| anchor | published | haVoc score | implies |
+|---|---|---|---|
+| Zurichess Fribourg | 2412 | 69.5% | 2555 |
+| Arasan 12.2 | 2505 | 69.2% | 2646 |
+| Phalanx XXIV | 2521 | 55.2% | 2558 |
+| Fruit 2.1 | 2694 | 34.5% | 2583 |
+| Glaurung 2.2 | 2793 | 21.5% | 2568 |
 
-These rows were measured against Fruit 2.1 and Glaurung 2.2 alone, both ~200
-points above the engine, where a fit is extrapolating rather than interpolating.
-Three bracketing anchors have since been added — Zurichess Fribourg (2412),
-Arasan 12.2 (2505) and Phalanx XXIV (2521) — so later rows will be more reliable
-but not directly comparable to these.
+Four of the five agree closely (2555–2583). Arasan is an outlier: haVoc scores
+69.2% against it but only 55.2% against Phalanx, whose published rating is 16
+points *higher* — a ~100 Elo discrepancy between two engines rated the same.
+One of those published ratings does not describe the engine as built here, and
+dropping the anchor that disagrees would be choosing the answer, so the pooled
+figure keeps it and the spread is reported instead. Excluding Arasan the fit
+gives 2566 ± 13.
+
+Two further things limit the number, and they are worth stating plainly:
+
+- **The fit's ± is statistical only.** It describes how well the model fits
+  these games. It says nothing about measuring at blitz against ratings
+  established at 40/40, and older engines tend to look relatively stronger at
+  long time control, so a systematic offset sits on top of it.
+- **A single strength scale is an approximation.** The Arasan and Phalanx
+  results above cannot both be right under one scale, which is what a
+  non-transitive matchup looks like when a one-parameter model is asked to
+  absorb it.
+
+The per-change SPRTs remain the trustworthy measurements; this table is a
+periodic check that the engine has not drifted away from the field.
 
 The method is a maximum-likelihood fit of the logistic Elo model with opponent
-ratings held fixed at their published CCRL 40/40 values, at 20+0.2 on one
-thread with `OwnBook` and `Ponder` forced off. It is an estimate *on* the CCRL
-scale, not a CCRL rating. The scripts, the
-opening book and the rules for choosing anchors are in
+ratings held fixed at their published CCRL 40/40 values, at 20+0.2 on one thread
+with `OwnBook` and `Ponder` forced off. It is an estimate *on* the CCRL scale,
+not a CCRL rating. The anchors are built by
+[`scripts/testing/fetch-anchors.sh`](scripts/testing/fetch-anchors.sh), which
+pins each version; the harness and the rules for choosing anchors are in
 [`scripts/testing/`](scripts/testing/README.md).
 
-To reproduce a rating from a gauntlet PGN:
+To reproduce a rating from a gauntlet log:
 
 ```sh
-python3 scripts/rate.py gauntlet.pgn --only fruit,glaurung
+scripts/testing/anchor_rating.py testruns/gauntlet-<tag>.log
 ```
 
 ## Building
