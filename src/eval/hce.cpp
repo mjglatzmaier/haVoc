@@ -293,9 +293,7 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
     // until now only reached a one-point king-harassment term in eval_pawns
     // while the real pawn structure bypassed it entirely.
     score += ei.pe->material;
-    score += ((ei.pe->score_eg * ei.me->phase_interpolant +
-               ei.pe->score_mg * (24 - ei.me->phase_interpolant)) /
-              24) *
+    score += ei.me->taper(ei.pe->score_mg, ei.pe->score_eg) *
              params_.pawn_structure_category_scale / 100;
     score += ei.me->score;
 
@@ -915,8 +913,8 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
     // They used to switch off in one step when the material happened to match
     // a classified ending, which is 8.5% of positions, so a king was still
     // charged full middlegame shelter through most real endgames and then had
-    // the whole term vanish at an arbitrary boundary.
-    const int mg = ei.me->mg_weight();
+    // the whole term vanish at an arbitrary boundary. They now go through
+    // mg_only(), which is the same phase model as every other tapered term.
 
     for (Square s = *kings; s != no_square; s = *++kings) {
         U64 sq_bb = bitboards::squares[s];
@@ -1090,7 +1088,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
             if (!kflank)
                 shelter -= params_.pawnless_flank_penalty;
 
-            score += (shelter * mg) / material_entry::kPhaseMax;
+            score += ei.me->mg_only(shelter);
 
             // Open and half-open files beside the king.
             //
@@ -1119,7 +1117,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 if ((file & heavies) != 0ULL)
                     file_penalty += params_.king_open_file_heavy_penalty;
             }
-            score -= (file_penalty * mg) / material_entry::kPhaseMax;
+            score -= ei.me->mg_only(file_penalty);
         }
 
 
@@ -1161,7 +1159,7 @@ template <Color c> int HCEEvaluator::eval_king(const position& p, einfo& ei) {
                 }
             }
             storm -= params_.king_storm_penalty[std::min(3, numAttackers)];
-            score += (storm * mg) / material_entry::kPhaseMax;
+            score += ei.me->mg_only(storm);
         }
     }
     return score;
@@ -1174,9 +1172,9 @@ template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
     // Space is worth having because pieces need somewhere to go, so it fades
     // as the pieces do. Returning zero the moment the material matched a
     // classified ending made it worth full value right up to that boundary and
-    // nothing after it.
-    const int mg = ei.me->mg_weight();
-    if (mg == 0)
+    // nothing after it. The early exit is an optimisation only: mg_only()
+    // would return zero anyway once the middlegame weight reaches zero.
+    if (ei.me->mg_weight() == 0)
         return score;
 
     U64 spacemask =
@@ -1195,7 +1193,7 @@ template <Color c> int HCEEvaluator::eval_space(const position& p, einfo& ei) {
         space |= util::squares_behind(bitboards::col[util::col(s)], c, s);
     }
     score += bits::count(space) * params_.space_bonus;
-    return (score * mg) / material_entry::kPhaseMax;
+    return ei.me->mg_only(score);
 }
 
 // ─── eval_threats ───────────────────────────────────────────────────────────

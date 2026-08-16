@@ -31,7 +31,7 @@ struct material_entry {
     /// board, which over a random walk of 89,062 positions was 8.5% of them
     /// and only 24% of the positions with phase 16 or beyond. Anything that
     /// wants to know how far into the endgame we are wants the phase, not
-    /// this: use mg_weight() and eg_weight().
+    /// this: use taper() or mg_only().
     [[nodiscard]] bool is_endgame() const { return endgame != EndgameType::none; }
 
     /// Weight of the middlegame half of a tapered term, out of kPhaseMax.
@@ -40,12 +40,16 @@ struct material_entry {
     /// Weight of the endgame half of a tapered term, out of kPhaseMax.
     [[nodiscard]] int eg_weight() const { return phase_interpolant; }
 
-    /// Blends a middlegame and an endgame value by game phase.
+    /// Blends a middlegame and an endgame value by this position's game phase.
     [[nodiscard]] int taper(int mg, int eg) const {
-        return (mg * mg_weight() + eg * eg_weight()) / kPhaseMax;
+        return havoc::taper(mg, eg, phase_interpolant);
     }
 
-    static constexpr int kPhaseMax = 24;
+    /// A term that is worth its full value in the opening and nothing at all
+    /// with bare kings: pawn shelter, the king's open-file penalty, the pawn
+    /// storm and space. Spelling these as taper(v, 0) rather than by hand
+    /// keeps them on the same phase model as everything else.
+    [[nodiscard]] int mg_only(int v) const { return taper(v, 0); }
 };
 
 class material_table {
