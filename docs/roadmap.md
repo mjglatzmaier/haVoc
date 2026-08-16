@@ -124,10 +124,32 @@ which is the question the check exists to answer.
   `--decisions` (what actually changes a move) each settled questions that had
   been circular. When stuck, the fastest route has consistently been to build the
   measurement rather than reason harder.
+- **Double singular extensions.** When the hash move beats the singular beta by
+  a wide margin it is extended two plies instead of one. Measured **+10.0 ± 6.4
+  Elo over 6000 games** (3.1σ), from two independent 3000-game SPRTs: +7.2 ±
+  8.9 against pre-razoring main and +13.0 ± 9.1 against main with razoring,
+  combined by inverse-variance weighting. The baselines differ, but razoring
+  itself measured flat (−0.7 ± 9.3), so they are statistically equivalent.
+  Notably **tree-neutral** — the bench node count barely moves — so this buys
+  strength by spending the same effort in better places, not by spending more.
+  The *negative* extension that usually ships alongside it was tried and
+  discarded: see below.
 
 ### Did not work
 
 - **Texel tuning.** Covered in section 5 — do not retry it.
+- **Negative singular extensions.** The standard companion to the double
+  extension: when the hash move fails the singular test badly, search it a ply
+  *shallower* to spend less on a node that looks unpromising. Here it grew the
+  bench tree by **35%**, which is the opposite of the entire point. The reason
+  is mechanical: searching the hash move shallower stops it producing the
+  cutoff, so the node goes on to search every alternative at full depth. It
+  was removed and the double extension shipped alone. A comment in
+  `src/search.cpp` records this so it is not retried blind.
+
+  Anyone reattempting it must know that
+  `extensions = std::max(givesCheck ? 1 : 0, singular_ext)` **silently swallows
+  a negative extension**, so the first attempt will appear to do nothing.
 - **Extending PV moves with strong history in LMR.** This one arrived by
   accident: an unsigned underflow was extending strong-history PV moves by a ply,
   unchosen and unmeasured, and #123 removed it. Removing it cost ~1.5% more nodes

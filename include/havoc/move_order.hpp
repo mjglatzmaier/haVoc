@@ -37,6 +37,11 @@ struct SearchNode {
     Move excluded_move;
     Move* pv = nullptr;
     int sel_depth = 0;
+    /// How many double extensions are already on the path to this node. A
+    /// doubly-extended move gives its child more depth than the parent spent,
+    /// so without a cap a chain of them can grow the tree without bound. This
+    /// counter is inherited, not reset per node.
+    int double_extensions = 0;
     std::unique_ptr<BestMoveHistory> bmh;
     Move killers[4];
     int16_t static_eval = score::kNegInf;

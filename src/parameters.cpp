@@ -394,6 +394,8 @@ std::vector<std::pair<std::string, int*>> parameters::all_params(TuneStage stage
         // -- a Texel gradient over these is identically zero, because they
         // change which nodes the search visits rather than what a position is
         // worth. They are tuned by SPSA against game results.
+        result.emplace_back("double_ext_margin", &double_ext_margin);
+        result.emplace_back("max_double_ext", &max_double_ext);
         result.emplace_back("rfp_max_depth", &rfp_max_depth);
         result.emplace_back("rfp_margin", &rfp_margin);
         result.emplace_back("razor_max_depth", &razor_max_depth);
