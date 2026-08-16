@@ -237,3 +237,29 @@ scripts/testing/tactics.sh ./build/havoc 3000
 
 Ten positions with forced best moves. A coarse smoke test for search sanity, not
 a strength measure — it is far too small to resolve Elo.
+
+## Correctness scripts
+
+Two scripts in this directory check things a match cannot. Neither measures
+strength; both are pass/fail, and both exist because the unit tests structurally
+cannot reach what they cover.
+
+| script | what it covers | why the test suite misses it |
+| --- | --- | --- |
+| `fuzz-uci.sh` | malformed UCI input | the tests drive the C++ interface, never the UCI parser |
+| `tsan-search.sh` | data races between search threads | the tests are single-threaded, so nothing is ever contended |
+
+Both run in CI on every PR. Run them locally against the matching sanitizer
+build before proposing anything that touches parsing or threading:
+
+```sh
+cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHAVOC_NATIVE=OFF \
+      -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+cmake --build build-tsan --parallel
+scripts/testing/tsan-search.sh build-tsan/havoc full
+```
+
+`full` adds deeper and more heavily threaded searches than CI runs, which is
+worth doing on a machine with the cores to contend with. If TSan aborts with
+`unexpected memory mapping`, that is the known ASLR conflict on current kernels;
+the script already reruns itself under `setarch -R` to avoid it.

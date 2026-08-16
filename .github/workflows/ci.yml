@@ -120,3 +120,47 @@ jobs:
       - name: Fuzz UCI (ASan + UBSan)
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
         run: ./scripts/testing/fuzz-uci.sh build-debug/havoc 7
+
+  # ThreadSanitizer needs its own build: it cannot be combined with ASan, and
+  # the job above is already the long pole, so this runs in parallel instead of
+  # being bolted onto it.
+  #
+  # Nothing else in CI can catch a data race. The unit tests drive the engine
+  # through its C++ interface on one thread, so the shared transposition table,
+  # the cross-thread node counters and the stop flag are never contended. Both
+  # races found so far were invisible to the entire rest of the suite.
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    name: ubuntu-latest / tsan
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC 13
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13
+
+      # RelWithDebInfo, not Debug: TSan is slow enough on its own, and the line
+      # numbers in a race report are what matter, not the optimisation level.
+      # Tests are off because this job runs searches, not the test suite.
+      - name: Configure TSan
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: >
+          cmake -B build-tsan
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DHAVOC_NATIVE=OFF
+          -DHAVOC_WERROR=ON
+          -DCMAKE_CXX_FLAGS=-fsanitize=thread
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+
+      - name: Build TSan
+        run: cmake --build build-tsan --parallel
+
+      # "quick" keeps this to three searches, ~30s on a 4-core runner. The
+      # heavier thread counts in "full" are for running locally on a machine
+      # that actually has the cores to contend with.
+      - name: Search under TSan
+        run: ./scripts/testing/tsan-search.sh build-tsan/havoc quick
