@@ -52,7 +52,7 @@ class NNUEEvaluator : public IEvaluator {
     [[nodiscard]] int evaluate(const position& pos, int lazy_margin = -1) override {
         (void)lazy_margin;
         const int us = static_cast<int>(pos.to_move());
-        const int32_t* base = frame(top_);
+        const int16_t* base = frame(top_);
         return net_->forward(base + static_cast<size_t>(us) * static_cast<size_t>(l1_),
                              base + static_cast<size_t>(us ^ 1) * static_cast<size_t>(l1_));
     }
@@ -70,7 +70,7 @@ class NNUEEvaluator : public IEvaluator {
 
     void refresh(const position& pos) override {
         top_ = 0;
-        int32_t* base = frame(0);
+        int16_t* base = frame(0);
         recompute(base, pos, white);
         recompute(base + static_cast<size_t>(l1_), pos, black);
     }
@@ -93,15 +93,15 @@ class NNUEEvaluator : public IEvaluator {
 
     [[nodiscard]] size_t frame_stride() const { return static_cast<size_t>(2 * l1_); }
 
-    [[nodiscard]] int32_t* frame(int i) {
+    [[nodiscard]] int16_t* frame(int i) {
         return frames_.data() + static_cast<size_t>(i) * frame_stride();
     }
-    [[nodiscard]] const int32_t* frame(int i) const {
+    [[nodiscard]] const int16_t* frame(int i) const {
         return frames_.data() + static_cast<size_t>(i) * frame_stride();
     }
 
     /// Rebuild one perspective from the board. `dst` is `l1_` wide.
-    void recompute(int32_t* dst, const position& pos, Color perspective) const {
+    void recompute(int16_t* dst, const position& pos, Color perspective) const {
         const int16_t* bias = net_->ft_bias();
         for (int i = 0; i < l1_; ++i)
             dst[i] = bias[i];
@@ -116,7 +116,7 @@ class NNUEEvaluator : public IEvaluator {
     int l1_ = 0;
     int top_ = 0;
     int capacity_ = 0;
-    std::vector<int32_t> frames_;
+    std::vector<int16_t> frames_;
 };
 
 inline void NNUEEvaluator::push(const position& pos, const FeatureDelta& d) {
@@ -124,9 +124,9 @@ inline void NNUEEvaluator::push(const position& pos, const FeatureDelta& d) {
         capacity_ *= 2;
         frames_.resize(static_cast<size_t>(capacity_) * frame_stride(), 0);
     }
-    const int32_t* prev = frame(top_);
+    const int16_t* prev = frame(top_);
     ++top_;
-    int32_t* cur = frame(top_);
+    int16_t* cur = frame(top_);
 
     // A king move rebuilds only its own perspective. Detect it before touching
     // anything, because the events for the two perspectives are the same list
@@ -138,13 +138,13 @@ inline void NNUEEvaluator::push(const position& pos, const FeatureDelta& d) {
 
     for (int ci = 0; ci < 2; ++ci) {
         const Color perspective = static_cast<Color>(ci);
-        int32_t* dst = cur + static_cast<size_t>(ci) * static_cast<size_t>(l1_);
+        int16_t* dst = cur + static_cast<size_t>(ci) * static_cast<size_t>(l1_);
         if (king_moved[ci]) {
             recompute(dst, pos, perspective);
             continue;
         }
         std::memcpy(dst, prev + static_cast<size_t>(ci) * static_cast<size_t>(l1_),
-                    static_cast<size_t>(l1_) * sizeof(int32_t));
+                    static_cast<size_t>(l1_) * sizeof(int16_t));
 
         // This perspective's king did not move, so its bucket is the same
         // before and after -- reading it from the post-move board is safe.
@@ -164,10 +164,10 @@ inline void NNUEEvaluator::push(const position& pos, const FeatureDelta& d) {
 }
 
 inline bool NNUEEvaluator::matches_full_recompute(const position& pos) const {
-    std::vector<int32_t> want(static_cast<size_t>(l1_));
+    std::vector<int16_t> want(static_cast<size_t>(l1_));
     for (int ci = 0; ci < 2; ++ci) {
         recompute(want.data(), pos, static_cast<Color>(ci));
-        const int32_t* have = frame(top_) + static_cast<size_t>(ci) * static_cast<size_t>(l1_);
+        const int16_t* have = frame(top_) + static_cast<size_t>(ci) * static_cast<size_t>(l1_);
         for (int i = 0; i < l1_; ++i)
             if (have[i] != want[i])
                 return false;

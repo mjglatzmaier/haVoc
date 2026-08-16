@@ -132,8 +132,8 @@ TEST(NnueNetwork, ComputesTheDocumentedFixedPointArithmetic) {
     nnue::Network net;
     ASSERT_EQ(load_from(w.serialise(), net), "");
 
-    const int32_t acc_us[kL1] = {nnue::kQA, 0};
-    const int32_t acc_them[kL1] = {0, 0};
+    const int16_t acc_us[kL1] = {nnue::kQA, 0};
+    const int16_t acc_them[kL1] = {0, 0};
     EXPECT_EQ(net.forward(acc_us, acc_them), 0);
 
     // Scale the output weight up so the result clears the truncation and the
@@ -155,10 +155,10 @@ TEST(NnueNetwork, ClipsAccumulatorsIntoTheActivationRange) {
     nnue::Network net;
     ASSERT_EQ(load_from(w.serialise(), net), "");
 
-    const int32_t huge[kL1] = {1 << 20, 0};
-    const int32_t at_max[kL1] = {nnue::kQA, 0};
-    const int32_t zero[kL1] = {0, 0};
-    const int32_t negative[kL1] = {-(1 << 20), 0};
+    const int16_t huge[kL1] = {30000, 0};  // far above kQA, still representable in the accumulator
+    const int16_t at_max[kL1] = {nnue::kQA, 0};
+    const int16_t zero[kL1] = {0, 0};
+    const int16_t negative[kL1] = {-30000, 0};
     EXPECT_EQ(net.forward(huge, zero), net.forward(at_max, zero));
     EXPECT_EQ(net.forward(negative, zero), net.forward(zero, zero));
 }
@@ -178,8 +178,8 @@ TEST(NnueNetwork, TheSideToMoveHalfIsNotInterchangeableWithTheOther) {
 
     nnue::Network net;
     ASSERT_EQ(load_from(w.serialise(), net), "");
-    const int32_t on[kL1] = {nnue::kQA, 0};
-    const int32_t off[kL1] = {0, 0};
+    const int16_t on[kL1] = {nnue::kQA, 0};
+    const int16_t off[kL1] = {0, 0};
     EXPECT_NE(net.forward(on, off), net.forward(off, on));
 }
 
@@ -262,8 +262,8 @@ TEST(NnueNetwork, MatchesThePythonQuantiserExactlyOnRecordedCases) {
     ASSERT_GT(count, 0u);
 
     const int l1 = net.l1();
-    std::vector<int32_t> acc_us(static_cast<size_t>(l1)), acc_them(static_cast<size_t>(l1));
-    auto build = [&](const uint16_t* feats, std::vector<int32_t>& acc) {
+    std::vector<int16_t> acc_us(static_cast<size_t>(l1)), acc_them(static_cast<size_t>(l1));
+    auto build = [&](const uint16_t* feats, std::vector<int16_t>& acc) {
         const int16_t* bias = net.ft_bias();
         for (int i = 0; i < l1; ++i)
             acc[static_cast<size_t>(i)] = bias[i];
@@ -373,7 +373,7 @@ void expect_vector_kernel_matches_reference(int kVL1, int kVL2, int kVL3) {
     nnue::Network net;
     ASSERT_EQ(load_from(s, net), "");
 
-    std::vector<int32_t> us(static_cast<size_t>(kVL1)), them(static_cast<size_t>(kVL1));
+    std::vector<int16_t> us(static_cast<size_t>(kVL1)), them(static_cast<size_t>(kVL1));
     int disagreements = 0, nonzero = 0;
     for (int trial = 0; trial < 20000; ++trial) {
         for (int i = 0; i < kVL1; ++i) {
