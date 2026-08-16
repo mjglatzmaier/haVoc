@@ -210,13 +210,50 @@ Anchor defaults are hostile and are forced in the script: Glaurung defaults to
 Glaurung and Arasan all default to `OwnBook=true`. A 300-game run was
 invalidated once by not forcing these.
 
-Zurichess is Go source with pre-modules import paths. To build it:
+### Building the anchors
 
 ```sh
-cd $REFENGINES/zurichess-fribourg
-go mod init bitbucket.org/zurichess/zurichess   # once; it has no external deps
-go build -o zurichess-bin ./zurichess
+scripts/testing/fetch-anchors.sh            # all five, skips what exists
+scripts/testing/fetch-anchors.sh --force arasan
 ```
+
+It installs into `$REFENGINES` (default `~/code/refengines`), pins every
+version, applies the patches these 2005-2015 codebases need on current
+compilers, and refuses to report success for a binary that does not answer
+`uci` — a mis-built anchor would otherwise be scored as losing every game and
+would drag the fit down silently. It provisions a local Go toolchain if none is
+installed. Do not run it during a match; builds are CPU-heavy and SPRTs are
+timing measurements.
+
+This script exists because the anchors were lost once, to a reboot, having been
+built by hand into a path that did not persist. Four of the five had no recorded
+recipe anywhere, so every absolute rating published here rested on binaries that
+could not be reproduced.
+
+Provenance, since most of these are no longer where they were published:
+
+| engine | source | note |
+|---|---|---|
+| Fruit 2.1 | `github.com/rwbc/Fruit-2.1` | original host wbec-ridderkerk.nl is dead |
+| Glaurung 2.2 | `github.com/phenri/glaurung` | personal mirror; no upstream remains |
+| Arasan 12.2 | `arasanchess.org` | author's own site, still maintained |
+| Phalanx XXIV | SourceForge | Debian ships XXII and XXV, never XXIV |
+| Zurichess Fribourg | `github.com/easychessanimations/zurichess` @ `c2bcb164` | see below |
+
+Zurichess needed recovering. Its Bitbucket Mercurial repository was deleted in
+the June 2020 purge, Software Heritage never crawled it, the release tarball and
+prebuilt binary were never captured by the Wayback Machine, and the author's
+domain is now parked — so the release genuinely is gone from every location it
+was ever published at. What survives is a git conversion pushed two months
+before the deletion, carrying the full history. No tags came across, but the
+release is identifiable by commit: `c2bcb164` is the last commit of the release
+day, the two before it touch only the readme and the release script, the last
+functional change is two weeks earlier, and `main.go` there reads
+`buildVersion = "fribourg"`, which the binary prints. That commit is pinned in
+the script.
+
+Worth keeping in mind that this is the only anchor *below* haVoc, so it is the
+one doing the bracketing. Mirror it rather than assume it will still be there.
 
 CCRL 40/40 is far slower than the blitz TC used here, and older engines tend to
 look relatively stronger at long TC, so a systematic offset sits on top of the

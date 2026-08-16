@@ -47,6 +47,13 @@
 # Ponder=true; Fruit, Glaurung and Arasan all default to OwnBook=true. A
 # 300-game run was invalidated once by not forcing these. Phalanx speaks xboard
 # only, not UCI.
+#
+# Arasan and Phalanx also read data files (arasan.rc, book) from their working
+# directory, so both are given an explicit dir=. Without it Arasan starts with
+# default settings rather than the ones in its own rc file.
+#
+# The anchors themselves are built by fetch-anchors.sh, which pins each
+# version; a different version has a different rating and is not an anchor.
 
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -72,8 +79,10 @@ add_anchor() {
 add_anchor "$R/zurichess-fribourg/zurichess-bin" name=zurichess proto=uci \
            option.Ponder=false
 add_anchor "$R/arasan-12.2.0/export/arasanx"     name=arasan122 proto=uci \
+           dir="$R/arasan-12.2.0/export" \
            option.OwnBook=false option.Ponder=false option.Threads=1
-add_anchor "$R/phalanx-XXIV/phalanx"             name=phalanx24 proto=xboard
+add_anchor "$R/phalanx-XXIV/phalanx"             name=phalanx24 proto=xboard \
+           dir="$R/phalanx-XXIV"
 add_anchor "$R/fruit-2.1/src/fruit"              name=fruit     proto=uci \
            option.OwnBook=false
 add_anchor "$R/glaurung-2.2/src/glaurung"        name=glaurung  proto=uci \
