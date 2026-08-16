@@ -35,6 +35,8 @@
 /// approximately but identically. Anything less and the two implementations
 /// have merely been observed to be similar.
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <istream>
@@ -87,6 +89,11 @@ inline constexpr int32_t kQA = 127;
 /// The scales live in the file rather than here, because they are a property
 /// of the trained network and not of the engine.
 inline constexpr int32_t kMaxDenseWeight = 127;
+
+/// Accumulators are int16. `kMaxActiveFeatures` (features.hpp) is the most
+/// HalfKP features that can be active at once -- one per non-king piece -- and
+/// bounds how far a single accumulator slot can travel from its bias.
+inline constexpr int32_t kAccumulatorMax = 32767;
 
 /// Centipawns per unit of network output. Must equal `CP_SCALE` in
 /// `scripts/nnue/train.py`; it is stored in the file and checked on load.
@@ -152,7 +159,7 @@ class Network {
     /// widths suit it, and to `forward_reference` otherwise. The two must
     /// agree exactly, not nearly -- integer addition is associative, so a
     /// different summation order is not an excuse for a different answer.
-    [[nodiscard]] int forward(const int32_t* acc_us, const int32_t* acc_them) const {
+    [[nodiscard]] int forward(const int16_t* acc_us, const int16_t* acc_them) const {
 #if defined(__AVX2__)
         if (simd_ok_)
             return forward_avx2(acc_us, acc_them);
@@ -162,11 +169,11 @@ class Network {
 
     /// The definition of what the network computes. Never dispatched around;
     /// a vectorised kernel is checked against this, not trusted instead of it.
-    [[nodiscard]] int forward_reference(const int32_t* acc_us, const int32_t* acc_them) const;
+    [[nodiscard]] int forward_reference(const int16_t* acc_us, const int16_t* acc_them) const;
 
   private:
 #if defined(__AVX2__)
-    [[nodiscard]] int forward_avx2(const int32_t* acc_us, const int32_t* acc_them) const;
+    [[nodiscard]] int forward_avx2(const int16_t* acc_us, const int16_t* acc_them) const;
 #endif
 
     bool loaded_ = false;
@@ -189,7 +196,7 @@ class Network {
 
     };
 
-inline int Network::forward_reference(const int32_t* acc_us, const int32_t* acc_them) const {
+inline int Network::forward_reference(const int16_t* acc_us, const int16_t* acc_them) const {
     // Scratch is thread_local rather than automatic because this runs at every
     // node: three fresh allocations per evaluation cost more than the network.
     // It is per-thread, so a shared const Network stays safe to call from every
@@ -246,7 +253,7 @@ inline int Network::forward_reference(const int32_t* acc_us, const int32_t* acc_
 /// approximation of the scalar one; it is the same sum in a different order,
 /// and integer addition does not care about the order. `tests/
 /// test_nnue_network.cpp` asserts that over 20,000 random accumulators.
-inline int Network::forward_avx2(const int32_t* acc_us, const int32_t* acc_them) const {
+inline int Network::forward_avx2(const int16_t* acc_us, const int16_t* acc_them) const {
     // Plain stack arrays, not thread_local vectors: a thread_local with a
     // non-trivial constructor costs a guard check and an indirection on every
     // access, which at this call rate was measurably larger than the layer it
@@ -412,6 +419,23 @@ inline std::string Network::load(std::istream& in) {
     in.read(&extra, 1);
     if (in)
         return "network: file is longer than the declared architecture";
+
+    // Accumulators are int16, so a network whose feature weights could sum
+    // past that range would evaluate garbage rather than fail. HalfKP activates
+    // one feature per non-king piece, so thirty is the most that can ever be
+    // summed into one accumulator slot. Checked against the loosest bound that
+    // is still sound -- every weight simultaneously at the maximum -- because a
+    // false accept here is silent and a false reject is not.
+    {
+        int32_t w_max = 0;
+        for (int16_t w : ft_weights_)
+            w_max = std::max(w_max, std::abs(static_cast<int32_t>(w)));
+        int32_t b_max = 0;
+        for (int16_t b : ft_bias_)
+            b_max = std::max(b_max, std::abs(static_cast<int32_t>(b)));
+        if (b_max + kMaxActiveFeatures * w_max > kAccumulatorMax)
+            return "network: feature weights can overflow an int16 accumulator";
+    }
 
     // The vector kernel walks thirty-two values at a time and carries a single
     // sixteen-wide remainder, so it is used only when every inner dimension is
