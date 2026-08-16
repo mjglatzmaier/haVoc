@@ -1,4 +1,5 @@
 /// @file datagen.cpp
+#include "havoc/build_info.hpp"
 #include "havoc/kpk.hpp"
 /// @brief Training data generator: parallel self-play games → quiet position EPD file.
 
@@ -8,6 +9,7 @@
 #include "havoc/position.hpp"
 #include "havoc/search.hpp"
 #include "havoc/uci.hpp"
+#include "havoc/version.hpp"
 #include "havoc/zobrist.hpp"
 
 #include <atomic>
@@ -364,6 +366,31 @@ int main(int argc, char* argv[]) {
     std::cout << "\nDone: " << total_positions.load() << " total positions in " << output
               << " (" << static_cast<int>(secs) << "s, " << static_cast<int>(gps)
               << " games/sec)" << std::endl;
+
+    // A corpus that cannot be traced back to the evaluation that labelled it
+    // is very hard to reason about later, and the binary is the only thing
+    // that knows which commit it came from. Write it down next to the data.
+    {
+        std::ofstream meta(output + ".meta.json");
+        meta << "{\n"
+             << "  \"file\": \"" << output << "\",\n"
+             << "  \"engine_commit\": \"" << havoc::GIT_COMMIT << "\",\n"
+             << "  \"engine_tree_dirty\": " << (havoc::GIT_DIRTY ? "true" : "false") << ",\n"
+             << "  \"engine_version\": \"" << havoc::VERSION_STRING << "\",\n"
+             << "  \"provenance_grade\": \"self-reported\",\n"
+             << "  \"label\": \"search d" << depth << "\",\n"
+             << "  \"depth\": " << depth << ",\n"
+             << "  \"games_requested\": " << num_games << ",\n"
+             << "  \"games_abandoned\": " << games_abandoned.load() << ",\n"
+             << "  \"positions\": " << total_positions.load() << ",\n"
+             << "  \"threads\": " << num_threads << ",\n"
+             << "  \"random_plies\": " << random_plies << ",\n"
+             << "  \"seed\": " << seed << ",\n"
+             << "  \"elapsed_seconds\": " << static_cast<int>(secs) << "\n"
+             << "}\n";
+        if (!meta)
+            std::cerr << "datagen: could not write " << output << ".meta.json" << std::endl;
+    }
 
     const int abandoned = games_abandoned.load();
     if (abandoned > 0) {

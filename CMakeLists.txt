@@ -56,8 +56,29 @@ set(HAVOC_CORE_SOURCES
 
 add_library(havoc_core STATIC ${HAVOC_CORE_SOURCES})
 
+# The commit a binary was built from, regenerated on every build so it cannot
+# go stale. Anything that writes a training corpus stamps it into the sidecar,
+# which is the only way a corpus stays traceable to the evaluation that
+# labelled it.
+set(HAVOC_BUILD_INFO_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/havoc")
+file(MAKE_DIRECTORY "${HAVOC_BUILD_INFO_DIR}")
+add_custom_target(havoc_build_info
+    COMMAND ${CMAKE_COMMAND}
+            -DHAVOC_GIT_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DHAVOC_OUTPUT=${HAVOC_BUILD_INFO_DIR}/build_info.hpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake
+    BYPRODUCTS ${HAVOC_BUILD_INFO_DIR}/build_info.hpp
+    COMMENT "Recording the build's git commit")
+# Generate it once now too, so a first configure+compile has a header to find.
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DHAVOC_GIT_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DHAVOC_OUTPUT=${HAVOC_BUILD_INFO_DIR}/build_info.hpp
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake)
+add_dependencies(havoc_core havoc_build_info)
+
 target_include_directories(havoc_core
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
