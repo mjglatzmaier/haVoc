@@ -1,5 +1,6 @@
 /// @file datagen.cpp
 #include "havoc/build_info.hpp"
+#include "havoc/eval/nnue_evaluator.hpp"
 #include "havoc/kpk.hpp"
 /// @brief Training data generator: parallel self-play games → quiet position EPD file.
 
@@ -145,7 +146,8 @@ static GameOutcome play_game(SearchEngine& engine, int depth, int random_plies,
 
 /// Worker function: each thread plays its share of games, flushing to disk periodically.
 static void worker(int thread_id, int games_per_thread, int depth, int random_plies,
-                   unsigned seed, int hash_mb, const std::string& output_file,
+                   unsigned seed, int hash_mb, std::shared_ptr<const nnue::Network> net,
+                   const std::string& output_file,
                    std::mutex& file_mutex, std::atomic<int>& games_done,
                    std::atomic<uint64_t>& total_positions, int total_games,
                    std::atomic<int>& games_abandoned, std::atomic<bool>& write_failed) {
@@ -159,6 +161,11 @@ static void worker(int thread_id, int games_per_thread, int depth, int random_pl
     std::mt19937 rng(sequence);
 
     SearchEngine engine;
+    // Weights are immutable and shared; only the accumulators are per-thread,
+    // so one loaded network serves every worker.
+    if (net)
+        engine.set_evaluator_factory(
+            [net](Searchthread&) { return std::make_unique<NNUEEvaluator>(net); });
     if (!engine.set_hash_size(hash_mb)) {
         // Refused rather than clamped, so the engine is still holding its
         // default. Say so rather than report a size that is not in use.
@@ -239,6 +246,10 @@ static void print_usage(const char* prog) {
               << "  --random-plies N Random opening plies (default: 6)\n"
               << "  --hash N         Transposition table MB per thread (default: 16)\n"
               << "  --output FILE    Output EPD file (default: training_data.epd)\n"
+              << "  --eval-file FILE Label with this NNUE network instead of the\n"
+              << "                   handcrafted evaluation. A stronger evaluator makes a\n"
+              << "                   depth-N label more accurate, which is what makes a\n"
+              << "                   second training iteration worth running.\n"
               << "  --append         Append to an existing file. This adds games, it does\n"
               << "                   not resume a run: no RNG or game position is restored,\n"
               << "                   so reusing the same --seed regenerates the same games.\n"
@@ -256,6 +267,7 @@ int main(int argc, char* argv[]) {
     // that never comes close to filling it.
     int hash_mb = 16;
     std::string output = "training_data.epd";
+    std::string eval_file;
     bool append = false;
     unsigned seed =
         static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -276,6 +288,8 @@ int main(int argc, char* argv[]) {
             output = argv[++i];
         else if (key == "--append" || key == "-a")
             append = true;
+        else if (key == "--eval-file" && i + 1 < argc)
+            eval_file = argv[++i];
         else if (key == "--seed" && i + 1 < argc)
             seed = static_cast<unsigned>(std::stoul(argv[++i]));
         else if (key == "--help" || key == "-h") {
@@ -285,6 +299,21 @@ int main(int argc, char* argv[]) {
     }
 
     if (num_threads < 1) num_threads = 1;
+
+    // Loaded once, before any game is played. A network that cannot be loaded
+    // stops the run rather than quietly relabelling the whole corpus with the
+    // handcrafted evaluation: the labels are the product, and which evaluator
+    // produced them is not something a later reader can recover from the file.
+    std::shared_ptr<const nnue::Network> net;
+    if (!eval_file.empty()) {
+        std::string err;
+        net = load_network_file(eval_file, err);
+        if (!net) {
+            std::cerr << "datagen: " << err << std::endl;
+            return 1;
+        }
+        std::cout << "Labelling with network " << eval_file << std::endl;
+    }
 
     // Count existing positions if appending
     uint64_t existing_positions = 0;
@@ -343,7 +372,7 @@ int main(int argc, char* argv[]) {
 
     for (int t = 0; t < num_threads; ++t) {
         int count = base + (t < remainder ? 1 : 0);
-        threads.emplace_back(worker, t, count, depth, random_plies, seed, hash_mb,
+        threads.emplace_back(worker, t, count, depth, random_plies, seed, hash_mb, net,
                              std::cref(output), std::ref(file_mutex),
                              std::ref(games_done), std::ref(total_positions), num_games,
                              std::ref(games_abandoned), std::ref(write_failed));
