@@ -477,6 +477,17 @@ struct parameters {
     // the upper half of the threads a first iteration of depth 17 to 32 with no
     // iterative-deepening warmup behind it -- searches no move's time budget
     // can finish, so those cores contributed nothing but TT traffic.
+    //
+    // Deliberately *not* registered with the tuner. It only changes behaviour
+    // with helper threads running, and the tuner drives a single-threaded
+    // search, so SPSA would perturb it against an identically zero gradient --
+    // which is exactly what EverySearchParameterReachesTheSearch asserts
+    // cannot happen. Registering it fails that test, correctly.
+    //
+    // The span itself is a heuristic, not a measured optimum: the differences
+    // between spans of 2, 4 and 8 in the table in docs/thread-scaling.md are
+    // smaller than the run-to-run spread of the measurement that produced
+    // them. What is measured is that *some* bound beats none at 32 threads.
     int smp_stagger_span = 4;       // helper start depths wrap modulo this
 
     int lmr_hist_bad = 2000;        // reduce one extra ply below -this

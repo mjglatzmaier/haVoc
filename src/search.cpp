@@ -295,8 +295,9 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
         search_threads_.wait_finished();
         signals_.stop = true;
 
-        // Collect results. Helper threads all search to different depths, so
-        // their root scores are not directly comparable: a shallow thread can
+        // Collect results. Helper threads start at staggered depths and stop
+        // wherever the clock caught them, so their root scores are not
+        // directly comparable: a shallow thread can
         // easily return a higher score than a deeper, more reliable one. Prefer
         // the thread that finished the deepest iteration, breaking ties on
         // score, and prefer a proven shorter mate over any of that.
