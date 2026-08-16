@@ -63,7 +63,11 @@ void hash_table::clear() {
     // zero default initialiser, so the two are equivalent here, but the type is
     // not trivially default-constructible and memset on it is what -Wclass-memaccess
     // objects to. GCC still lowers this to a memset.
-    std::fill_n(entries_.get(), cluster_count_, hash_cluster{});
+    // Cannot fill with a copy: std::atomic is neither copyable nor assignable.
+    // Relaxed stores are correct here -- clear() runs with no search in flight.
+    for (size_t i = 0; i < cluster_count_; ++i)
+        for (auto& e : entries_[i].cluster_entries)
+            e.put(0, 0);
 }
 
 bool hash_table::fetch(U64 key, hash_data& e) {
@@ -71,8 +75,10 @@ bool hash_table::fetch(U64 key, hash_data& e) {
     prefetch(stored);
 
     for (unsigned i = 0; i < cluster_size; ++i, ++stored) {
-        if ((stored->pkey ^ stored->dkey) == key) {
-            e.decode(stored->dkey);
+        const U64 p = stored->pk();
+        const U64 d = stored->dk();
+        if ((p ^ d) == key) {
+            e.decode(d);
 
             // An entry that is still being hit is still useful, but eviction
             // scores it by when it was *written*, not by when it was last
@@ -86,10 +92,8 @@ bool hash_table::fetch(U64 key, hash_data& e) {
             // bits 55-62 of dkey, so it can be rewritten in place; pkey has to
             // be re-derived from the key so the XOR validation still holds.
             if (e.age != generation_) {
-                const U64 refreshed =
-                    (stored->dkey & ~(0xFFULL << 55)) | (U64(generation_) << 55);
-                stored->dkey = refreshed;
-                stored->pkey = key ^ refreshed;
+                const U64 refreshed = (d & ~(0xFFULL << 55)) | (U64(generation_) << 55);
+                stored->put(key ^ refreshed, refreshed);
                 e.age = generation_;
             }
             return true;
@@ -103,6 +107,12 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
     entry* const first = first_entry(key);
     entry* replace = nullptr;
     bool same_key = false;
+    // The dkey validated by the probe below. Re-reading the slot after
+    // validating it reopens the window this function just closed: another
+    // thread can replace the entry in between, and we would then preserve a
+    // move belonging to a different position, or refuse the save on some other
+    // entry's depth.
+    U64 same_dkey = 0;
 
     for (unsigned i = 0; i < cluster_size; ++i) {
         entry* e = first + i;
@@ -110,9 +120,12 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
             replace = e;
             break;
         }
-        if ((e->pkey ^ e->dkey) == key) {
+        const U64 p = e->pk();
+        const U64 d = e->dk();
+        if ((p ^ d) == key) {
             replace = e;
             same_key = true;
+            same_dkey = d;
             break;
         }
     }
@@ -136,7 +149,7 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
     Move best = m;
     if (same_key) {
         hash_data existing;
-        existing.decode(replace->dkey);
+        existing.decode(same_dkey);
 
         // Keep a much deeper result from this same search unless the new one is
         // exact, which is always worth having.
@@ -149,8 +162,8 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
             best = existing.move;
     }
 
-    replace->encode(depth, bound, generation_, best, score);
-    replace->pkey = key ^ replace->dkey;
+    const U64 d = entry::encode(depth, bound, generation_, best, score);
+    replace->put(key ^ d, d);
 }
 
 int hash_table::hashfull() const {

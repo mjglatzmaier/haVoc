@@ -3,6 +3,7 @@
 /// @file tt.hpp
 /// @brief Transposition table with XOR-based entry encoding.
 
+#include <atomic>
 #include "havoc/types.hpp"
 
 #include <cstring>
@@ -56,27 +57,61 @@ inline void prefetch(const void* addr) {
 //
 // pkey = zobrist_key ^ dkey   (Hyatt's XOR trick)
 
+// Both halves are atomic because every search thread reads and writes them
+// concurrently. The XOR trick below is a *probabilistic* check on the values
+// and does nothing about the fact that concurrent non-atomic access is a data
+// race and so undefined behaviour.
+//
+// Probabilistic is the right word and the guarantee is weaker than it looks.
+// If a slot goes from (Ka^Da, Da) to (Kb^Db, Db), a reader can observe the
+// mixed pair (Ka^Da, Db), which validates cleanly for the phantom key
+// Ka^Da^Db. Nothing here rules that out; it is merely very unlikely, and a
+// bogus hit is caught downstream because the move is legality-checked against
+// the probing thread's own position. A real guarantee would need a sequence
+// counter, a lock, or a 128-bit atomic entry. Without the atomics the compiler is entitled to assume
+// no other thread touches these words, and may reload or split the accesses.
+//
+// The ordering is relaxed throughout. Nothing here publishes any other memory,
+// so there is nothing to synchronise-with; the entry is self-describing and
+// the XOR check validates it. On x86-64 a relaxed 64-bit load or store is a
+// plain mov, so this costs nothing at the instruction level.
 struct entry {
-    U64 pkey = 0;
-    U64 dkey = 0;
+    std::atomic<U64> pkey{0};
+    std::atomic<U64> dkey{0};
 
-    [[nodiscard]] bool empty() const { return pkey == 0 && dkey == 0; }
+    [[nodiscard]] U64 pk() const { return pkey.load(std::memory_order_relaxed); }
+    [[nodiscard]] U64 dk() const { return dkey.load(std::memory_order_relaxed); }
 
-    void encode(U8 depth, U8 bound, U8 age, const Move& m, int16_t score) {
-        dkey = 0;
-        dkey |= U64(m.f);
-        dkey |= U64(m.t) << 8;
-        dkey |= U64(m.type) << 16;
-        dkey |= U64(bound & 0xF) << 26;
-        dkey |= U64(depth) << 30;
-        dkey |= U64(score < 0 ? -score : score) << 38;
-        dkey |= U64(score < 0 ? 1ULL : 0ULL) << 54;
-        dkey |= U64(age) << 55;
+    /// Callers must load each half exactly once and work from the locals, or
+    /// the validation and the decode can see different writes.
+    ///
+    /// dkey is stored first so that pkey acts as the commit word. Probes load
+    /// pkey first for the same reason: a reader that sees a new pkey has
+    /// necessarily already been able to see the new dkey, so the (new pkey,
+    /// stale dkey) interleaving cannot arise.
+    void put(U64 p, U64 d) {
+        dkey.store(d, std::memory_order_relaxed);
+        pkey.store(p, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] U8 depth() const { return U8((dkey >> 30) & 0xFF); }
-    [[nodiscard]] U8 bound() const { return U8((dkey >> 26) & 0xF); }
-    [[nodiscard]] U8 age() const { return U8((dkey >> 55) & 0xFF); }
+    [[nodiscard]] bool empty() const { return pk() == 0 && dk() == 0; }
+
+    [[nodiscard]] static U64 encode(U8 depth, U8 bound, U8 age, const Move& m, int16_t score) {
+        U64 d = 0;
+        d |= U64(m.f);
+        d |= U64(m.t) << 8;
+        d |= U64(m.type) << 16;
+        d |= U64(bound & 0xF) << 26;
+        d |= U64(depth) << 30;
+        d |= U64(score < 0 ? -score : score) << 38;
+        d |= U64(score < 0 ? 1ULL : 0ULL) << 54;
+        d |= U64(age) << 55;
+        return d;
+    }
+
+    [[nodiscard]] U8 depth() const { return U8((dk() >> 30) & 0xFF); }
+    [[nodiscard]] U8 bound() const { return U8((dk() >> 26) & 0xF); }
+    [[nodiscard]] U8 age() const { return U8((dk() >> 55) & 0xFF); }
 };
 
 // ─── Decoded hash data ──────────────────────────────────────────────────────
