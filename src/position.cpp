@@ -1071,8 +1071,8 @@ void position::set_piece(char p, const Square& s) {
 void position::clear() {
     pcs.clear();
     history_.clear();
-    nodes_searched = 0;
-    qnodes_searched = 0;
+    nodes_searched.set(0);
+    qnodes_searched.set(0);
     ifo = {};
 }
 

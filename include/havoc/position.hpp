@@ -3,6 +3,7 @@
 #include "havoc/bitboard.hpp"
 #include "havoc/feature_delta.hpp"
 #include "havoc/magics.hpp"
+#include "havoc/single_writer_counter.hpp"
 #include "havoc/types.hpp"
 #include "havoc/utils.hpp"
 #include "havoc/zobrist.hpp"
@@ -104,8 +105,10 @@ class position {
     std::vector<info> history_;
     info ifo{};
     piece_data pcs;
-    U64 nodes_searched = 0;
-    U64 qnodes_searched = 0;
+    // Incremented only by the thread that owns this position, but summed by
+    // every thread for the node limit and by the UCI loop for live nps.
+    single_writer_counter nodes_searched;
+    single_writer_counter qnodes_searched;
 
   public:
     position() { history_.reserve(1024); }
@@ -233,12 +236,12 @@ class position {
     [[nodiscard]] bool is_cap_promotion(const Movetype& mt);
     [[nodiscard]] bool is_promotion(const U8& mt);
 
-    [[nodiscard]] inline U64 nodes() const { return nodes_searched; }
-    [[nodiscard]] inline U64 qnodes() const { return qnodes_searched; }
-    inline void set_nodes_searched(U64 n) { nodes_searched = n; }
-    inline void set_qnodes_searched(U64 qn) { qnodes_searched = qn; }
-    inline void adjust_nodes(const U64& dn) { nodes_searched += dn; }
-    inline void adjust_qnodes(const U64& dn) { qnodes_searched += dn; }
+    [[nodiscard]] inline U64 nodes() const { return nodes_searched.get(); }
+    [[nodiscard]] inline U64 qnodes() const { return qnodes_searched.get(); }
+    inline void set_nodes_searched(U64 n) { nodes_searched.set(n); }
+    inline void set_qnodes_searched(U64 qn) { qnodes_searched.set(qn); }
+    inline void adjust_nodes(const U64& dn) { nodes_searched.add(dn); }
+    inline void adjust_qnodes(const U64& dn) { qnodes_searched.add(dn); }
 
     template <Color c, Piece p> [[nodiscard]] inline U64 get_pieces() const {
         return pcs.bitmap[c][p];
