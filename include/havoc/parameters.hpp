@@ -542,9 +542,7 @@ struct parameters {
 template <Color c>
 [[nodiscard]] inline int square_score(const parameters& p, Piece pc, Square s, int game_phase) {
     const int idx = (c == white) ? static_cast<int>(s) : mirror_square(s);
-    const int mid = p.pst_mg[pc][idx];
-    const int eg = p.pst_eg[pc][idx];
-    return (eg * game_phase + mid * (24 - game_phase)) / 24;
+    return taper(p.pst_mg[pc][idx], p.pst_eg[pc][idx], game_phase);
 }
 
 } // namespace havoc

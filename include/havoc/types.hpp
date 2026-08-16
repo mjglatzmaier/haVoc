@@ -402,4 +402,35 @@ constexpr std::array<char, 8> kSanCols = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'
            (on_diagonal(s1, s3) && on_diagonal(s1, s2) && on_diagonal(s2, s3));
 }
 
+// ─── Game phase ─────────────────────────────────────────────────────────────
+//
+// The phase runs from 0 (opening, every piece still on) to kPhaseMax (bare
+// kings). Every tapered term in the evaluation is blended by the one function
+// below.
+//
+// It lives here, at the bottom of the include graph, because the alternative
+// is what it replaced: the same expression written out by hand in four places
+// -- material_entry::taper, square_score, the pawn-hash blend in hce.cpp, and
+// the middlegame-only king and space terms -- two of them spelled with a bare
+// literal 24 rather than the named constant. A phase model written four ways
+// is a phase model that will eventually get changed in three of them.
+
+/// Number of phase units between a full opening position and bare kings.
+inline constexpr int kPhaseMax = 24;
+
+/// Blends a middlegame and an endgame value by game phase.
+///
+/// @param mg    the value this term is worth with every piece on the board
+/// @param eg    the value it is worth with bare kings
+/// @param phase 0 (opening) to kPhaseMax (endgame)
+///
+/// Integer division truncates towards zero, which pulls both bonuses and
+/// penalties slightly towards zero. That is symmetric, so it introduces no
+/// side-to-move or sign bias, but it does mean a term tapered in several small
+/// pieces loses more than the same term tapered once. Prefer to sum first and
+/// taper the total.
+[[nodiscard]] constexpr int taper(int mg, int eg, int phase) {
+    return (mg * (kPhaseMax - phase) + eg * phase) / kPhaseMax;
+}
+
 } // namespace havoc
