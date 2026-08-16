@@ -128,6 +128,23 @@ which is the question the check exists to answer.
 ### Did not work
 
 - **Texel tuning.** Covered in section 5 — do not retry it.
+- **Extending PV moves with strong history in LMR.** This one arrived by
+  accident: an unsigned underflow was extending strong-history PV moves by a ply,
+  unchosen and unmeasured, and #123 removed it. Removing it cost ~1.5% more nodes
+  to the same bench, which raised the obvious question of whether the accident
+  had been carrying Elo. Reimplemented deliberately in signed arithmetic and
+  measured properly. The reproduction was verified faithful before the match:
+  bench came back at exactly the pre-#123 figure (684468) and the per-move node
+  vector over a nine-move game was byte-identical to #121. **−6.6 ± 9.1 over the
+  full 3000 games, LOS 7.7%.** Flat. The extension buys 1.5% fewer nodes and no
+  strength, so it is not worth carrying as deliberate complexity, and #123 was
+  right to remove it.
+
+  Read the partials as a lesson rather than as data: this run sat at **−44 at 223
+  games, −31 at 343, −27 at 970**, and finished at −6.6. Three consecutive
+  readings said "clearly harmful" and every one of them was noise. That is the
+  fourth time a partial reading in this project has pointed somewhere the
+  finished run did not go.
 - **Moving `moves_left` off 25.** The sudden-death divisor in the time budget
   (`our_time / moves_left + inc * 0.9`) is the single largest lever in a formula
   that is worth +35–42 Elo, and 25 was never measured — it was assumed. Swept as
