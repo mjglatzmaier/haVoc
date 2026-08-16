@@ -421,6 +421,8 @@ struct parameters {
     // position is worth. They can only be tuned against game results, which
     // is what SPSA is for. They live here so the tuner and the ParamFile
     // machinery can reach them; search.cpp reads them through params_.
+    int double_ext_margin = 24;     // singular by more than this extends twice
+    int max_double_ext = 6;         // ...but at most this many times on a path
     int rfp_max_depth = 6;          // reverse futility only below this depth
     int rfp_margin = 80;            // ...and only if eval - margin*depth >= beta
     int razor_max_depth = 3;        // razoring only below this depth

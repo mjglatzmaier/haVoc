@@ -1186,9 +1186,27 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
             if (singular_score < singular_beta) {
                 singular_ext = 1;
+                // Double extension: how far the alternatives fell short says
+                // *how* singular the move is, and a move that is singular by a
+                // wide margin is usually the only thing holding the position
+                // together. Restricted to non-PV nodes and capped along the
+                // path, because a doubly-extended move hands its child more
+                // depth than this node spent -- a chain of them grows the tree
+                // without bound, which is the standard way this technique goes
+                // wrong.
+                if (!pvNode && singular_score < singular_beta - params_.double_ext_margin &&
+                    stack->double_extensions < params_.max_double_ext) {
+                    singular_ext = 2;
+                }
             } else if (singular_beta >= beta) {
                 return singular_beta; // Multi-cut
             }
+            // A negative extension for the non-singular `ttvalue >= beta` case
+            // was tried here and removed: it grew the bench tree 35%, which
+            // defeats the point of a technique whose whole purpose is to spend
+            // less. Searching the hash move a ply shallower stops it producing
+            // the cutoff, so the node goes on to search everything else at full
+            // depth. See docs/roadmap.md.
         }
 
         stack->push_context(pos.piece_on(static_cast<Square>(move.f)), move.t);
@@ -1196,7 +1214,12 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         stack->curr_move = move;
 
         bool givesCheck = pos.in_check();
-        int extensions = std::max(givesCheck ? 1 : 0, singular_ext);
+        // A negative singular extension has to survive this: taking std::max
+        // against the check extension would silently swallow it.
+        int extensions = singular_ext < 0 ? singular_ext
+                                          : std::max(givesCheck ? 1 : 0, singular_ext);
+        (stack + 1)->double_extensions =
+            stack->double_extensions + (singular_ext == 2 ? 1 : 0);
         // Extra reductions beyond the one ply every move already consumes.
         int reductions_val = 0;
 
