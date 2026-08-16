@@ -61,16 +61,27 @@ run() {
     fi
 }
 
-# A binary that builds but does not speak its protocol is worse than one that
-# is missing, because the gauntlet will silently score it as losing every game.
+# A binary that builds but cannot play is worse than one that is missing: the
+# gauntlet scores it as losing every game and silently drags the rating fit
+# down. The handshake alone is NOT sufficient to establish this -- Glaurung
+# answered `uci` perfectly and then dumped core on the first search -- so both
+# checks below run a real search and require a move to come back.
+# stdin is held open with a sleep rather than closed after the commands. On
+# EOF some engines exit immediately (zurichess prints "error: EOF") and others
+# are cut off mid-search, so closing the pipe fails engines that are perfectly
+# healthy under a real GUI, which never closes their input.
 verify_uci() {
-    local bin="$1" expect="$2"
-    printf 'uci\nquit\n' | timeout 10 "$bin" 2>/dev/null | grep -qi "$expect"
+    local bin="$1" expect="$2" out
+    out=$({ printf 'uci\nisready\nposition startpos\ngo depth 8\n'; sleep 8; } \
+          | timeout 40 "$bin" 2>/dev/null)
+    grep -qi "$expect" <<<"$out" && grep -q "^bestmove" <<<"$out"
 }
 
 verify_xboard() {
-    local bin="$1"
-    printf 'xboard\nprotover 2\nquit\n' | timeout 10 "$bin" 2>/dev/null | grep -qi "feature\|done="
+    local bin="$1" out
+    out=$({ printf 'xboard\nprotover 2\nnew\nst 2\ngo\n'; sleep 8; } \
+          | timeout 40 "$bin" 2>/dev/null)
+    grep -qiE "^move |my move" <<<"$out"
 }
 
 record() { RESULTS+=("$1"); echo "  $1"; }
@@ -110,6 +121,15 @@ build_glaurung() {
     if [ -f "$d/src/value.h" ] && ! grep -q '#include <string>' "$d/src/value.h"; then
         sed -i '1i #include <string>' "$d/src/value.h"
     fi
+    # Upstream bug: this loop reads SafetyTable[i+1] with i running to 99, one
+    # past the end of SafetyTable[100]. The out-of-bounds read is undefined
+    # behaviour, and from -O2 upwards GCC miscompiles the loop into a segfault
+    # on the first search. The inner loop cannot execute when i == 99 anyway,
+    # so bounding it is behaviour-preserving; do not "fix" this by dropping to
+    # -O1, which would leave the anchor playing well below its rated strength.
+    if grep -q 'for(i = 0; i < 100; i++)$' "$d/src/evaluate.cpp" 2>/dev/null; then
+        perl -0pi -e 's/for\(i = 0; i < 100; i\+\+\)\n      if\(SafetyTable\[i\+1\]/for(i = 0; i < 99; i++)\n      if(SafetyTable[i+1]/' "$d/src/evaluate.cpp"
+    fi
     make -C "$d/src" clean >/dev/null 2>&1
     if ! run make -C "$d/src" -j"$JOBS" CXX="g++ -std=c++14"; then
         record "glaurung   FAILED (build)"; return
@@ -133,11 +153,21 @@ build_arasan() {
             record "arasan     FAILED (extract)"; return; }
     fi
     [ -d "$d/src" ] || { record "arasan     FAILED (unexpected layout)"; return; }
-    # 2012 code: std::auto_ptr and friends are gone in C++17.
-    if ! run make -C "$d/src" -j"$JOBS" CXX="g++ -std=c++14"; then
+    # Override CC, not CXX. Arasan's Makefile says `CC ?= g++` and then
+    # `CPP := $(CC)`, but make has a built-in default for CC, so ?= never
+    # fires and it silently compiles C++ with `cc` at the default dialect --
+    # where C++17's std::byte collides with Arasan's own byte typedef.
+    make -C "$d/src" clean >/dev/null 2>&1
+    if ! run make -C "$d/src" -j"$JOBS" CC="g++ -std=c++14"; then
         record "arasan     FAILED (build)"; return
     fi
     [ -x "$bin" ] || { record "arasan     FAILED (no binary at export/arasanx)"; return; }
+    # Arasan derives every data path from its own argv[0] directory, and exits
+    # at startup if the KPK bitbases are missing. Without these it builds
+    # perfectly and then refuses to play a single move.
+    cp -f "$d/data/kpk-w.bit" "$d/data/kpk-b.bit" "$d/export/" 2>/dev/null
+    cp -f "$d/book/book.bin" "$d/export/" 2>/dev/null
+    cp -f "$d/src/arasan.rc" "$d/export/" 2>/dev/null
     ( cd "$d/export" && verify_uci "./arasanx" "arasan" ) \
         && record "arasan     OK" || record "arasan     FAILED (no uciok)"
 }
