@@ -30,8 +30,31 @@ course.
 | King safety constants (`pawnless_flank_penalty`, `king_storm_penalty`, `king_shelter`) | `fix/king-safety-untunable` | These were literals in the evaluation and are now parameters at exactly the values they had, so nothing about them was ever measured. `king_shelter` in particular spent its life halved by integer division, which means the array's tuned history was fit against a truncated version of itself; treat its current values as arbitrary. The storm penalty ignores how far advanced the storming pawns are, which is the signal that actually matters -- worth adding once the flat version has been fit. |
 | `eval_threats` weights (`threat_by_pawn`, `threat_weak_pawn`, `queen_pin_*`, `discovered_check_bonus`, `restriction_weight`, `skewer_bonus`) | `fix/threat-weights-untunable` | An entire evaluation component that was frozen at unmeasured literals. `restriction_weight` is the one to watch: it multiplies a difference of attacked-square counts that can reach several dozen, so it is the highest-leverage single number in the file and a fit may want it well below 1, which the integer type cannot express. If the fit pushes it to zero, the term probably needs a divisor or the counts need scaling down. |
 | ProbCut (`probcut_min_depth`, `probcut_margin`, `probcut_depth_reduction`) | `feat/probcut` | Search parameters, so SPSA rather than Texel. Measured node-neutral on bench (1884909 -> 1871476) with a 61% cutoff rate on entry, which says the technique works but that the verification search costs about what it saves at these settings. The margin and the reduction are the two knobs that decide whether it pays; if SPSA cannot find a profitable setting, the honest conclusion is that haVoc's tree is too shallow at fixed depth for ProbCut to earn its keep. |
+| Razoring (`razor_max_depth`, `razor_base`, `razor_margin`) | `feat/razoring` | Landed measuring **-0.7 +/- 9.3 over 3000 games** -- flat, not a gain. Kept on the ProbCut precedent: it is a search parameter, so SPSA rather than Texel, and its value is entirely a function of its margins. Instrumentation says there is room: the quiescence verification succeeds **94-99% of the time at every margin tried**, so razoring is nowhere near the point where it starts being wrong, which means the current settings are too timid rather than too bold. But the aggressive direction is not free either -- firing 4x more often grew the bench tree ~50%, monotonically. If SPSA cannot find a setting that beats flat, remove it; a technique that cannot earn its keep should not stay for the sake of completeness. **Do not tune this on bench node count** -- see the warning below. |
 | King zone open files (`king_open_file_penalty`, `king_semi_open_file_penalty`) | `integration/ordering-shelter` | Landed on a batched SPRT that measured +3.8 +/- 25.9 over 460 games, which is a statement about the batch and not about these two numbers. Both defaults are guesses. They also overlap the shelter term, which already charges for a missing pawn in front of the king: an open file beside the king implies no shelter pawn on it, so some of this penalty is being paid twice. Check whether the fit drives one of the two toward zero, which is what collinearity looks like. |
 | Threat-escape move ordering | `integration/ordering-shelter` | Not a weight but an ordering rule: moves of the piece the null-move threat lands on are lifted by `kCounterMoveBonus`, a fixed eighth of the history range. That constant was picked for the countermove term and reused here without measurement. It is an SPSA candidate rather than a Texel one. |
+
+## Why bench node count cannot tune a pruning heuristic
+
+Razoring made this concrete and it generalises to every forward-pruning
+parameter here. Measured over the bench suite with firing counters:
+
+| razor setting | times fired | bench nodes vs 694503 |
+| --- | --- | --- |
+| base 800 | 179 | **+16%** |
+| base 500 | 1669 | +7% |
+| base 300 | 2441 | -1% |
+| base 1000 | 39 | **-5%** |
+
+Firing 179 times made the tree 16% *bigger*; firing 39 times made it 5%
+smaller. The relationship is neither monotonic nor causal in the way it looks:
+an early return changes what lands in the transposition table, which changes
+move ordering at every node that later probes it, and the tree reorganises. The
+node count is a chaotic function of the parameter, not a measure of efficiency.
+
+The same caution applies to reading bench as evidence a pruning change "works".
+It is a reliable *identity* check -- an unchanged bench means an unchanged tree
+-- and an unreliable *quality* check. Only games decide these.
 
 ## Evaluation defaults introduced with no evidence behind them
 
