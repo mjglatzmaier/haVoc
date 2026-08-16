@@ -39,7 +39,7 @@ PADDING_INDEX = INPUT_DIM
 
 
 # Accumulator/activation scale, mirrored from quantise.py and network.hpp.
-QA = 255
+QA = 127
 INT8_MAX = 127
 
 
