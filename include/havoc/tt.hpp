@@ -58,10 +58,17 @@ inline void prefetch(const void* addr) {
 // pkey = zobrist_key ^ dkey   (Hyatt's XOR trick)
 
 // Both halves are atomic because every search thread reads and writes them
-// concurrently. The XOR trick below detects a *torn* pair, which is a
-// different problem: it is a semantic check on the values, and it does nothing
-// about the fact that concurrent non-atomic access is a data race and so
-// undefined behaviour. Without the atomics the compiler is entitled to assume
+// concurrently. The XOR trick below is a *probabilistic* check on the values
+// and does nothing about the fact that concurrent non-atomic access is a data
+// race and so undefined behaviour.
+//
+// Probabilistic is the right word and the guarantee is weaker than it looks.
+// If a slot goes from (Ka^Da, Da) to (Kb^Db, Db), a reader can observe the
+// mixed pair (Ka^Da, Db), which validates cleanly for the phantom key
+// Ka^Da^Db. Nothing here rules that out; it is merely very unlikely, and a
+// bogus hit is caught downstream because the move is legality-checked against
+// the probing thread's own position. A real guarantee would need a sequence
+// counter, a lock, or a 128-bit atomic entry. Without the atomics the compiler is entitled to assume
 // no other thread touches these words, and may reload or split the accesses.
 //
 // The ordering is relaxed throughout. Nothing here publishes any other memory,
@@ -77,6 +84,11 @@ struct entry {
 
     /// Callers must load each half exactly once and work from the locals, or
     /// the validation and the decode can see different writes.
+    ///
+    /// dkey is stored first so that pkey acts as the commit word. Probes load
+    /// pkey first for the same reason: a reader that sees a new pkey has
+    /// necessarily already been able to see the new dkey, so the (new pkey,
+    /// stale dkey) interleaving cannot arise.
     void put(U64 p, U64 d) {
         dkey.store(d, std::memory_order_relaxed);
         pkey.store(p, std::memory_order_relaxed);

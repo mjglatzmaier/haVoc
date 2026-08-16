@@ -75,8 +75,9 @@ bool hash_table::fetch(U64 key, hash_data& e) {
     prefetch(stored);
 
     for (unsigned i = 0; i < cluster_size; ++i, ++stored) {
+        const U64 p = stored->pk();
         const U64 d = stored->dk();
-        if ((stored->pk() ^ d) == key) {
+        if ((p ^ d) == key) {
             e.decode(d);
 
             // An entry that is still being hit is still useful, but eviction
@@ -106,6 +107,12 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
     entry* const first = first_entry(key);
     entry* replace = nullptr;
     bool same_key = false;
+    // The dkey validated by the probe below. Re-reading the slot after
+    // validating it reopens the window this function just closed: another
+    // thread can replace the entry in between, and we would then preserve a
+    // move belonging to a different position, or refuse the save on some other
+    // entry's depth.
+    U64 same_dkey = 0;
 
     for (unsigned i = 0; i < cluster_size; ++i) {
         entry* e = first + i;
@@ -113,9 +120,12 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
             replace = e;
             break;
         }
-        if ((e->pk() ^ e->dk()) == key) {
+        const U64 p = e->pk();
+        const U64 d = e->dk();
+        if ((p ^ d) == key) {
             replace = e;
             same_key = true;
+            same_dkey = d;
             break;
         }
     }
@@ -139,7 +149,7 @@ void hash_table::save(U64 key, U8 depth, U8 bound, const Move& m, int16_t score,
     Move best = m;
     if (same_key) {
         hash_data existing;
-        existing.decode(replace->dk());
+        existing.decode(same_dkey);
 
         // Keep a much deeper result from this same search unless the new one is
         // exact, which is always worth having.
