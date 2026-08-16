@@ -34,3 +34,7 @@ b/
 # Measurement output: logs, PGNs and optimiser state. Machine-specific and
 # large; results that matter belong in docs, not in the tree.
 testruns/
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc

@@ -14,8 +14,8 @@ import re
 import sys
 from collections import defaultdict
 
-# CCRL 40/15 ratings, single-CPU 64-bit entries, list dated 7 August 2026,
-# taken from computerchess.org.uk/ccrl/4040/rating_list_all.html.
+# CCRL 40/40 ratings ("all engines" list), single-CPU 64-bit entries, list
+# dated 7 August 2026, from computerchess.org.uk/ccrl/4040/rating_list_all.html.
 #
 # Only fruit and glaurung should normally be used as anchors -- pass
 # `--only fruit,glaurung`. Both have very large CCRL sample sizes, so their
@@ -26,7 +26,7 @@ from collections import defaultdict
 # evaluation surface and a thinly-played published rating do to a fit that
 # assumes a single strength scale.
 #
-# Fairy-Max is deliberately absent: it does not appear on the 40/15 list at
+# Fairy-Max is deliberately absent: it does not appear on the 40/40 list at
 # all, so the 1975 figure used in earlier sessions was never sourced. It can
 # still be played for interest, it just cannot anchor anything.
 ANCHORS = {
@@ -159,7 +159,7 @@ def main():
     se_elo = se_score / slope if slope > 0 else float("inf")
     print(f"\ntotal {s_tot:.1f} / {n_tot}")
     print(f"haVoc estimated rating: {r:.0f}  (+/- {1.96*se_elo:.0f}, 95%)")
-    print("anchored on CCRL Blitz; same hardware and time control for all "
+    print("anchored on CCRL 40/40; same hardware and time control for all "
           "engines")
 
 
