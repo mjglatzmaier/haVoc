@@ -530,3 +530,108 @@ error. The stage did exactly what a known-answer test is for — it failed on th
 thing that was actually wrong, which was the answer, not the code. Finding this
 now cost an afternoon; finding it after a full training run would have cost
 days and would have been blamed on the labels.
+
+## 11. Stage 2: the bottleneck was a type declaration
+
+Stage 2 set out to answer "which datagen depth produces the best labels" and
+ended up answering a different question, because the answer to the first one
+turned out not to matter yet.
+
+### The two numbers that had to be read together
+
+The first honestly-trained net (depth-6 labels, 15.7M positions, L1=256) was
+measured against the HCE it was distilled from:
+
+| comparison | result |
+|---|---|
+| d6 net vs HCE, **fixed depth 8**, 1000 games | **+93.6 ± 19.2 Elo** (LOS 100%) |
+| d6 net vs HCE, **10+0.1**, 1000 games | **−4.2 ± 18.8 Elo** (LOS 33%) |
+
+The evaluation was decisively better and the speed penalty ate all of it. Quoting
+either number alone would have been misleading in opposite directions, which is
+why they belong in the same table.
+
+The gap between them is ~98 Elo. A 36.9% nps loss is 0.66 doublings and should
+cost roughly 46 Elo, so the observed cost was more than twice the simple model.
+That discrepancy was the useful part: a model that is wrong by 2× is pointing at
+something, and here it was pointing at the measurement.
+
+### The accumulator was int32 and the weights were int16
+
+The feature transformer's weights are `int16` and its accumulator was `int32`,
+so every incremental update moved twice the bytes it needed to and filled half
+as many AVX2 lanes per vector.
+
+The evidence had already been collected and not read correctly. Dropping QA to
+127 so the dense layers could use `maddubs` (section 9) doubled the dense
+multiply throughput and bought only 7% — which was not a disappointing result,
+it was a measurement saying *the dense layers were never the bottleneck*. The
+L1=256 accumulator was.
+
+Safety is a property of the weights, so the loader checks it rather than
+assuming it. HalfKP activates one feature per non-king piece, so thirty is the
+most that can ever sum into a single accumulator slot; a network whose feature
+weights could carry that past `int16` is rejected at load. The first net's worst
+case was ±1288 against a range of ±32767 — 25× headroom, so no training-side
+clamp was needed.
+
+| bench depth 11, 5-rep medians | single-threaded | 24-way concurrent (per instance) |
+|---|---|---|
+| HCE | 1,906,803 | 1,239,751 |
+| int32 accumulator | 1,116,725 | 514,620 |
+| int16 accumulator | **1,800,920** | **817,981** |
+
+The penalty against the HCE falls from **41.4% to 5.6%** single-threaded. The
+same time-control match, rerun with only the storage type changed:
+
+| build | 10+0.1, 1000 games |
+|---|---|
+| int32 accumulator | −4.2 ± 18.8 Elo |
+| int16 accumulator | **+75.9 ± 18.9 Elo** (LOS 100%) |
+
+An **+80 Elo swing with a bit-identical evaluation** — same net, same weights,
+identical bestmoves on 200 book positions at depth 9. This is haVoc's first real
+NNUE strength gain, and it came from none of the three things that had been
+measured all day.
+
+### Two methodological lessons, both expensive
+
+**Measure under the load the result will be used at.** Every NNUE nps figure in
+this document before this section was taken single-threaded on an idle box. The
+int32 penalty is 41.4% measured that way and 58.5% under the 24-way concurrency
+that matches actually run at. The idle-box figure was not merely imprecise, it
+was biased in the flattering direction, and it hid the bottleneck for months.
+
+**Validation MAE does not gate NNUE decisions.** It was used all through Stage 2
+to rank label sources, and it is close to blind at the gaps that matter:
+
+| MAE gap | measured Elo |
+|---|---|
+| 37 cp (two of our own nets) | +260.5 ± 24.2 |
+| 3.6 cp (d6 net vs HCE) | +93.6 at fixed depth |
+
+A 10× smaller MAE gap produced only a 2.8× smaller Elo gap, so the relationship
+is steeply nonlinear and MAE badly understates a good net. The likely reason is
+structural rather than incidental: MAE is a *mean* over a distribution with a
+heavy tactical tail — the 90th percentile is 209 cp — and those positions
+dominate the mean while contributing almost nothing to move choice, which is
+decided by quiet positions and by the *ordering* of candidate moves. MAE is
+therefore retired as a gate and kept only as a sign-only screen: `mae(net) <
+mae(baseline)` is a cheap necessary-but-not-sufficient check before spending an
+hour of machine time on a match.
+
+### What this changes downstream
+
+- **A wider L1 is now affordable.** L1=256 was chosen under a 41% penalty. At
+  5.6% the trade has moved and 384 or 512 should be re-examined.
+- **The net is now the better labeller.** It is +75.9 Elo over the HCE at time
+  control, and a label is a depth-N search score whose accuracy is bounded by
+  the evaluator that produced it. This is what makes a second training iteration
+  worth running, and it answers the standing question of whether the HCE must be
+  improved first to get better labels: it need not be, because the net has
+  already replaced it in that role.
+- **It is not free.** Labelling with the net costs 31.5% of datagen throughput
+  at depth 8 on 24 threads (1,877 → 1,286 pos/s), and Stage 2 established that
+  we are data-limited rather than label-limited. Which side of that trade wins
+  is a question for a match, and Stage 3 runs both arms at equal machine time
+  rather than assuming.
