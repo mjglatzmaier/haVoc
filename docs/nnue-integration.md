@@ -427,3 +427,101 @@ quantity is not the Elo but how it decomposes. A result far worse than the
 speed cost plus the eval noise would mean something is wrong that the tests
 above did not see; a result better than the speed cost alone would mean the
 comparison is not measuring what it claims.
+
+## 10. What Stage 1 actually found: the held-out number was a lie
+
+The Stage 1 match was supposed to be a formality. It was not, and this section
+is the most useful thing in this document.
+
+### The measurements
+
+| comparison | result |
+|---|---|
+| NNUE-mimic vs HCE, 10+0.1, 200 games | **−252 ± 52 Elo** |
+| NNUE-mimic vs HCE, **fixed depth 8**, 200 games | **−111 ± 45 Elo** |
+
+Fixed depth removes the 43% speed cost from the comparison, so roughly 140 Elo
+was speed and 111 Elo was the evaluation itself. A network reproducing the HCE
+to 26.7 cp should not lose 111 Elo at equal depth, so either the integration
+was wrong or the 26.7 cp was.
+
+### The 26.7 cp was
+
+Relabelling positions taken from **real games** with the HCE and running the
+same network over them gave **82 cp**, not 26.7. Nothing in the C++ was
+involved in either number, so this was not an integration fault — and the
+integration tests, including a 20,000-position exact replay of the Python
+quantiser, all passed.
+
+The corpus is written by self-play datagen in game order. Measured on it:
+
+- adjacent records share **85%** of their features (median Jaccard) — they are
+  consecutive plies of one game;
+- records 1,000 apart share **0.8%**;
+- **11.5%** of feature vectors occur more than once outright.
+
+A random train/validation split therefore places nearly every validation
+position's near-twin, and often its exact twin, into the training set. The
+26.7 cp was measuring memorisation.
+
+### Three numbers for the same network
+
+| validation protocol | MAE |
+|---|---|
+| random split of the corpus | 26.7 cp |
+| contiguous tail block, 200k-record gap, exact duplicates dropped | 48.7 cp |
+| independent positions from real games | **67–71 cp** |
+
+Both effects are real and separable. The gap between the first two rows is
+**leakage**; the gap between the last two is **distribution shift** — a
+held-out block of a datagen corpus is still a datagen position, and the engine
+does not play datagen positions. `train.py` now defaults to the contiguous
+protocol and takes `--val-file` for the third, which is the only one that is
+honest by construction and is what every real run should use.
+
+### What is actually limiting the network
+
+With the honest measurement in place, two sweeps say the same thing.
+
+**Data (L1=256, 25 epochs, validated on game positions):**
+
+| positions | MAE |
+|---|---|
+| 0.36M | 139.8 cp |
+| 0.9M | 100.6 cp |
+| 1.8M | 83.8 cp |
+| 3.6M | 71.3 cp |
+
+Every doubling buys about 15%, with no sign of flattening.
+
+**Capacity (3.6M positions, 25 epochs):**
+
+| L1 | MAE |
+|---|---|
+| 64 | 68.3 cp |
+| 128 | 68.1 cp |
+| 512 | 67.1 cp |
+| 1024 | 67.0 cp |
+
+Flat. Sixteen times the first-layer width buys 2%.
+
+The network is **data-limited, not capacity-limited**, and it is not close. At
+~15% per doubling, 30M positions lands near 45 cp and 100M near 35 cp; datagen
+runs at 2,100 positions/second, which makes 30M about four hours and 100M about
+thirteen. That is the lever, and it is cheap.
+
+The capacity result has an immediate practical consequence: **L1=64 costs a
+quarter of L1=256 in the dense layer** — which is where all the evaluation time
+goes — and at present data volumes evaluates just as well. Stage 3 should start
+small and grow the network only when the data justifies it, rather than the
+other way round.
+
+### Verdict on Stage 1
+
+The integration is correct: every exactness and synchronisation test passes,
+the C++ and Python integer paths agree on 20,000 of 20,000 positions, and the
+Elo loss is fully accounted for by 43% of the speed plus 70–80 cp of evaluation
+error. The stage did exactly what a known-answer test is for — it failed on the
+thing that was actually wrong, which was the answer, not the code. Finding this
+now cost an afternoon; finding it after a full training run would have cost
+days and would have been blamed on the labels.
