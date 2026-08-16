@@ -43,10 +43,10 @@ import dataset as ds_mod  # noqa: E402
 from model import NNUE, PADDING_INDEX, sanitise  # noqa: E402
 
 MAGIC = b"HVNW"
-NETWORK_FORMAT_VERSION = 1
+NETWORK_FORMAT_VERSION = 2
 
 # Accumulator/activation scale.
-QA = 255
+QA = 127
 
 # Dense weights are int8. Each layer's scale is fitted to that layer's own
 # largest weight rather than shared, because sharing one was measured to cost

@@ -113,21 +113,21 @@ TEST(NnueNetwork, LoadsAWellFormedFile) {
 TEST(NnueNetwork, ComputesTheDocumentedFixedPointArithmetic) {
     RawWeights w;
     // One accumulator unit on for the side to move, everything else silent.
-    // acc_us = {QA, 0}, acc_them = {0, 0}, so x = {255, 0, 0, 0}.
+    // acc_us = {QA, 0}, acc_them = {0, 0}, so x = {127, 0, 0, 0}.
     //
-    // fc1 row 0 = {1,0,0,0} -> sum = 255, h1[0] = clip(255/64) = 3
+    // fc1 row 0 = {1,0,0,0} -> sum = 127, h1[0] = clip(127/64) = 1
     // fc1 row 1 = {0,...}   -> h1[1] = 0
-    // fc2 row 0 = {2,0}     -> sum = 6,   h2[0] = clip(6/64)   = 0
+    // fc2 row 0 = {2,0}     -> sum = 2,   h2[0] = clip(2/64)   = 0
     // fc2 row 1 = {0,0}, but bias 64*8 -> sum = 512, h2[1] = 8
-    // out = {0, 3} -> o = 3*8 = 24
-    // eval = 24 * 400 / (255 * 64) = 9600 / 16320 = 0 (truncated)
+    // out = {0, 2} -> o = 2*8 = 16
+    // eval = 16 * 400 / (127 * 64) = 6400 / 8128 = 0 (truncated)
     //
     // A truncating divide is the point of the last line: it is what the
     // engine does, and the Python side matches it deliberately.
     w.fc1_w[0] = 1;
     w.fc2_w[0] = 2;
     w.fc2_b[1] = 64 * 8;
-    w.out_w[1] = 3;
+    w.out_w[1] = 2;
 
     nnue::Network net;
     ASSERT_EQ(load_from(w.serialise(), net), "");
@@ -139,11 +139,11 @@ TEST(NnueNetwork, ComputesTheDocumentedFixedPointArithmetic) {
     // Scale the output weight up so the result clears the truncation and the
     // arithmetic is pinned at a non-zero value too.
     w.out_w[1] = 127;
-    w.fc2_b[1] = 64 * 255;  // h2[1] saturates at QA
+    w.fc2_b[1] = 64 * nnue::kQA;  // h2[1] saturates at QA
     nnue::Network net2;
     ASSERT_EQ(load_from(w.serialise(), net2), "");
-    // o = 127 * 255 = 32385; eval = 32385 * 400 / 16320 = 793
-    EXPECT_EQ(net2.forward(acc_us, acc_them), 32385 * 400 / (255 * 64));
+    // o = 127 * 127 = 16129; eval = 16129 * 400 / 8128 = 793
+    EXPECT_EQ(net2.forward(acc_us, acc_them), 16129 * 400 / (127 * 64));
     EXPECT_EQ(net2.forward(acc_us, acc_them), 793);
 }
 
@@ -192,7 +192,7 @@ TEST(NnueNetwork, RefusesFilesItCannotInterpret) {
         {"bad magic", [](RawWeights& w) { w.magic = "XXXX"; }},
         {"future format", [](RawWeights& w) { w.format_version += 1; }},
         {"stale feature set", [](RawWeights& w) { w.feature_set_version += 1; }},
-        {"foreign accumulator scale", [](RawWeights& w) { w.qa = 127; }},
+        {"foreign accumulator scale", [](RawWeights& w) { w.qa = nnue::kQA * 2; }},
         {"zero dense scale", [](RawWeights& w) { w.s_fc1 = 0; }},
     };
     for (const auto& c : cases) {
@@ -307,11 +307,14 @@ TEST(NnueNetwork, MatchesThePythonQuantiserExactlyOnRecordedCases) {
 // "different order" is not licence for a different answer -- and a kernel that
 // is only nearly right is the failure mode that shows up as an engine playing
 // slightly badly with nothing to point at.
-TEST(NnueNetwork, TheVectorKernelAgreesWithTheReferenceExactly) {
-    // Widths the vector path accepts; RawWeights' 2x2x2 is deliberately not
-    // one of them, so this needs its own network.
-    constexpr int kVL1 = 16, kVL2 = 16, kVL3 = 4;
-
+// Widths the vector path accepts; RawWeights' 2x2x2 is deliberately not one
+// of them, so this needs its own network. The dense kernel walks 32 values at
+// a time and finishes with at most one 16-wide remainder, so the widths below
+// are chosen to reach every combination: fc2 with in_dim 16 is remainder only,
+// 32 is main loop only, and 48 is both.
+void expect_vector_kernel_matches_reference(int kVL1, int kVL2, int kVL3) {
+    SCOPED_TRACE("l1=" + std::to_string(kVL1) + " l2=" + std::to_string(kVL2) + " l3=" +
+                 std::to_string(kVL3));
     nnue::NetworkHeader h{};
     std::memcpy(h.magic, "HVNW", 4);
     h.format_version = nnue::kNetworkFormatVersion;
@@ -370,7 +373,7 @@ TEST(NnueNetwork, TheVectorKernelAgreesWithTheReferenceExactly) {
     nnue::Network net;
     ASSERT_EQ(load_from(s, net), "");
 
-    int32_t us[kVL1], them[kVL1];
+    std::vector<int32_t> us(static_cast<size_t>(kVL1)), them(static_cast<size_t>(kVL1));
     int disagreements = 0, nonzero = 0;
     for (int trial = 0; trial < 20000; ++trial) {
         for (int i = 0; i < kVL1; ++i) {
@@ -379,12 +382,18 @@ TEST(NnueNetwork, TheVectorKernelAgreesWithTheReferenceExactly) {
             us[i] = static_cast<int32_t>(next() % 100000u) - 40000;
             them[i] = static_cast<int32_t>(next() % 100000u) - 40000;
         }
-        const int a = net.forward(us, them);
-        const int b = net.forward_reference(us, them);
+        const int a = net.forward(us.data(), them.data());
+        const int b = net.forward_reference(us.data(), them.data());
         disagreements += (a != b) ? 1 : 0;
         nonzero += (b != 0) ? 1 : 0;
     }
     EXPECT_EQ(disagreements, 0);
     EXPECT_GT(nonzero, 1000) << "the trial network evaluates to zero almost everywhere, so "
                                 "agreement between the two paths proves nothing";
+}
+
+TEST(NnueNetwork, TheVectorKernelAgreesWithTheReferenceExactly) {
+    expect_vector_kernel_matches_reference(16, 16, 4);   // fc2: remainder only
+    expect_vector_kernel_matches_reference(32, 32, 4);   // fc2: main loop only
+    expect_vector_kernel_matches_reference(16, 48, 4);   // fc2: main loop + remainder
 }

@@ -26,6 +26,7 @@
 /// mutation tests below break each of those deliberately and require the
 /// check to notice.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -221,6 +222,13 @@ const std::vector<std::string>& sync_fens() {
 // all of those paths, and it is where a bucket-crossing king move happens
 // thousands of times.
 TEST_F(NnueEvaluatorTest, AccumulatorSurvivesARealSearchOnEveryLine) {
+    // A per-position floor of 1000 pushes was tried and is the wrong guard: a
+    // king-and-pawn ending at depth 6 has a genuinely small tree, and the
+    // exact size moves whenever the evaluation does -- lowering kQA changed it
+    // from just over the line to just under, with nothing actually wrong. The
+    // guard has to rule out a *vacuous* test, so it asks for a small floor
+    // everywhere and a large one somewhere.
+    long deepest = 0;
     for (const auto& fen : sync_fens()) {
         SearchEngine engine;
         engine.set_threads(1);
@@ -243,10 +251,12 @@ TEST_F(NnueEvaluatorTest, AccumulatorSurvivesARealSearchOnEveryLine) {
         ASSERT_NE(probe, nullptr) << "the factory was never used for " << fen;
         EXPECT_TRUE(probe->first_mismatch().empty()) << "in " << fen << "\n"
                                                      << probe->first_mismatch();
-        EXPECT_GT(probe->pushes(), 1000) << "in " << fen << ": the search barely ran";
+        EXPECT_GT(probe->pushes(), 100) << "in " << fen << ": the search barely ran";
         EXPECT_EQ(probe->pushes(), probe->pops()) << "in " << fen;
         EXPECT_GT(probe->refreshes(), 0) << "in " << fen;
+        deepest = std::max(deepest, probe->pushes());
     }
+    EXPECT_GT(deepest, 1000) << "no position searched a tree big enough for this to mean anything";
 }
 
 // Every king move in a set of positions, walked by hand, so the bucket-

@@ -117,6 +117,14 @@ def main() -> int:
         "the only measurement that is honest by construction.",
     )
     ap.add_argument(
+        "--val-limit",
+        type=int,
+        default=None,
+        help="Cap on records taken from --val-file. The validation set is "
+        "re-scored every epoch, so an oversized one buys no precision and "
+        "costs real time on a long run.",
+    )
+    ap.add_argument(
         "--val-gap",
         type=int,
         default=200_000,
@@ -157,7 +165,7 @@ def main() -> int:
         return 1
 
     if args.val_file:
-        val_data = ds_mod.load(args.val_file)
+        val_data = ds_mod.load(args.val_file, limit=args.val_limit)
         if val_data.label_kind != data.label_kind:
             print(
                 f"refusing: training on {data.label_kind} labels but validating "
