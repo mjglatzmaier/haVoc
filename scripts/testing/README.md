@@ -81,8 +81,36 @@ gain in batches where the effect is large enough to see.
 ### Tier 0 — no match at all
 
 Docs, tests, CI, refactors, and any change whose bench node count is
-byte-identical. An identical bench is a *stronger* proof of inertness than any
-match could provide, and it is free. Do not spend games on it.
+byte-identical. An identical bench is strong evidence of inertness and it is
+free. Do not spend games on it.
+
+**Bench alone is not enough for a behavioural claim.** It searches fixed
+positions at fixed depth and carries no state between them: every position gets
+a fresh table and fresh history. Anything that only shows up once the engine has
+accumulated state — move-ordering history, correction history, transposition
+entries surviving into the next search — is invisible to it. Two builds can
+print the same bench number and search different trees in a game.
+
+Two scripts cover what bench cannot:
+
+```sh
+scripts/testing/seq-nodes.py <binary-a> <binary-b>      # state carried across moves
+scripts/testing/time-profile.py <wtime> <winc> <bin>... # behaviour under a clock
+```
+
+`seq-nodes.py` issues one `ucinewgame` and walks a real game, so state carries
+forward as it does in play, and compares per-move node vectors. Identical
+vectors are strong evidence of identity; a mismatch is conclusive. It exits
+non-zero on disagreement, so it can gate a match.
+
+`time-profile.py` plays with an actual clock and records per-move think time and
+depth. Both bench and `seq-nodes.py` use fixed depth and are therefore blind to
+time management, which is worth +35–42 Elo here and is exactly the kind of thing
+that regresses unnoticed.
+
+Use `seq-nodes.py` to confirm a *reimplementation* reproduces the original
+before spending games on it. That check is the difference between a match that
+answers the question asked and one that silently answers a different one.
 
 ### Tier A — sanity check, cap 1200 games, ~20 min
 
