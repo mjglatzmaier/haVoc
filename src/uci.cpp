@@ -1,6 +1,7 @@
 #include "havoc/uci.hpp"
 
 #include "havoc/book.hpp"
+#include "havoc/eval/nnue_evaluator.hpp"
 #include "havoc/movegen.hpp"
 #include "havoc/position.hpp"
 #include "havoc/tablebase.hpp"
@@ -142,6 +143,30 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                 havoc::book::load(cmd);
                 break;
             }
+            if (cmd == "evalfile" && instream >> cmd && instream >> cmd) {
+                // "none" is how a GUI turns the network back off; without it
+                // installing one would be a one-way door for the session.
+                if (cmd == "none" || cmd == "<empty>") {
+                    engine.set_evaluator_factory(nullptr);
+                    std::cout << "info string EvalFile cleared, using the handcrafted evaluation"
+                              << std::endl;
+                    break;
+                }
+                std::string err;
+                auto net = load_network_file(cmd, err);
+                if (!net) {
+                    // Keep playing with the evaluation that already works
+                    // rather than refusing to start: a missing net is a
+                    // configuration mistake, not a reason to forfeit.
+                    std::cout << "info string " << err << ", keeping the current evaluation"
+                              << std::endl;
+                    break;
+                }
+                engine.set_evaluator_factory(
+                    [net](Searchthread&) { return std::make_unique<NNUEEvaluator>(net); });
+                std::cout << "info string Loaded network from " << cmd << std::endl;
+                break;
+            }
             if (cmd == "paramfile" && instream >> cmd && instream >> cmd) {
                 engine.load_params(cmd);
                 std::cout << "info string Loaded parameters from " << cmd << std::endl;
@@ -230,6 +255,7 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             std::cout << "option name SyzygyPath type string default <empty>" << std::endl;
             std::cout << "option name BookFile type string default <empty>" << std::endl;
             std::cout << "option name ParamFile type string default <empty>" << std::endl;
+            std::cout << "option name EvalFile type string default <empty>" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (cmd == "bench") {
             settle();

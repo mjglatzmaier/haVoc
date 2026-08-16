@@ -9,6 +9,26 @@ quantisation and the C++ kernel. If a network cannot learn a function we can
 compute, nothing downstream is worth debugging yet, and finding that out costs
 hours instead of the days a full run costs.
 
+How the validation set is chosen, and why it is not random
+-----------------------------------------------------------
+A random split of this corpus does not measure generalisation. The file is
+written by self-play datagen in game order, so neighbouring records are
+consecutive plies of the same game: sampled 20,000 records apart they share
+0.8% of their features, but *adjacent* ones share 85%, and 11.5% of feature
+vectors appear more than once outright. A random split therefore puts each
+validation position's near-twin -- often its exact twin -- in the training set,
+and the resulting number is a measure of memorisation.
+
+That is not a hypothetical. Stage 0 reported a 26.7 cp held-out error this way.
+Measured on positions from real games instead, the same network was **82 cp**
+off, and the engine using it lost 111 Elo at fixed depth. The split was the bug.
+
+So the validation set is a *contiguous block* at the end of the file, separated
+from the training data by a gap of whole games, and any validation record whose
+feature vector also occurs in training is dropped. `--val-file` overrides all
+of it with a genuinely independent corpus, which is the only fully honest
+option and is what a real run should use.
+
 The dataset is held resident on the GPU. At 128 bytes a record, several
 million positions fit in VRAM with room to spare, and keeping them there
 removes the host-to-device copy that otherwise dominates a network this small.
@@ -55,6 +75,29 @@ def build_tensors(records: np.ndarray, device: torch.device):
     return feat_us, feat_them, score
 
 
+def drop_leaked(records: np.ndarray, train_idx: np.ndarray, val_idx: np.ndarray) -> np.ndarray:
+    """Remove validation records whose exact position also occurs in training.
+
+    A gap between the two blocks separates games, not positions: common
+    openings and simplified endgames recur across games, and a repeated
+    position is a memorised one. Comparing the raw feature bytes is exact and
+    costs a second, which is cheap next to reporting a number that is wrong.
+    """
+    view = np.ascontiguousarray(
+        np.stack(
+            [records["feat_white"].view(np.uint8), records["feat_black"].view(np.uint8)], axis=1
+        )
+    ).reshape(len(records), -1)
+    key = view.view([("", view.dtype)] * view.shape[1]).ravel()
+
+    train_keys = np.unique(key[train_idx])
+    leaked = np.isin(key[val_idx], train_keys)
+    n = int(leaked.sum())
+    if n:
+        print(f"dropped {n:,} of {len(val_idx):,} validation positions that also occur in training")
+    return val_idx[~leaked]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -67,6 +110,19 @@ def main() -> int:
     ap.add_argument("--l3", type=int, default=32)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--val-frac", type=float, default=0.05)
+    ap.add_argument(
+        "--val-file",
+        default=None,
+        help="An independent .hbin to validate on. Overrides --val-frac and is "
+        "the only measurement that is honest by construction.",
+    )
+    ap.add_argument(
+        "--val-gap",
+        type=int,
+        default=200_000,
+        help="Records dropped between the training block and the validation "
+        "block, so the two cannot share a game.",
+    )
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument(
         "--qat",
@@ -100,11 +156,32 @@ def main() -> int:
         )
         return 1
 
-    perm = np.random.permutation(len(data))
-    n_val = max(1, int(len(data) * args.val_frac))
-    val_idx, train_idx = perm[:n_val], perm[n_val:]
+    if args.val_file:
+        val_data = ds_mod.load(args.val_file)
+        if val_data.label_kind != data.label_kind:
+            print(
+                f"refusing: training on {data.label_kind} labels but validating "
+                f"on {val_data.label_kind}"
+            )
+            return 1
+        records = np.concatenate([data.records, val_data.records])
+        train_idx = np.arange(len(data), dtype=np.int64)
+        val_idx = np.arange(len(data), len(records), dtype=np.int64)
+        print(f"validating on {args.val_file}: {len(val_idx):,} independent positions")
+    else:
+        records = data.records
+        n_val = max(1, int(len(records) * args.val_frac))
+        gap = min(args.val_gap, max(0, len(records) - n_val - 1))
+        val_idx = np.arange(len(records) - n_val, len(records), dtype=np.int64)
+        train_idx = np.arange(0, len(records) - n_val - gap, dtype=np.int64)
+        print(
+            f"contiguous split: train [0,{train_idx[-1]:,}]  gap {gap:,}  "
+            f"val [{val_idx[0]:,},{val_idx[-1]:,}]"
+        )
 
-    feat_us, feat_them, score = build_tensors(data.records, device)
+    val_idx = drop_leaked(records, train_idx, val_idx)
+
+    feat_us, feat_them, score = build_tensors(records, device)
     del data
     tr = torch.from_numpy(train_idx.astype(np.int64)).to(device)
     va = torch.from_numpy(val_idx.astype(np.int64)).to(device)

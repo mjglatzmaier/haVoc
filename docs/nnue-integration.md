@@ -344,3 +344,184 @@ at 1.4 s/epoch it was nearly free to test. It cut int8-versus-float error from
 12.2 cp to 14.5 cp, because the constrained network fits the target less well.
 It is kept behind `--qat`, off by default, and recorded here so it is not
 retried on the assumption that it must help.
+
+## 9. Stage 1: the network in the engine
+
+Stage 0 proved a network could be trained, quantised and read back. Stage 1
+puts it behind `IEvaluator` and makes the search drive it, which is where the
+accumulator becomes a thing that can silently drift out of step with the
+board.
+
+### What was built
+
+- `NNUEEvaluator` (`include/havoc/eval/nnue_evaluator.hpp`) — per-thread stack
+  of accumulator frames, one per ply, patched by `push` and unwound by `pop`.
+- `setoption name EvalFile value <path>` loads a network and installs the
+  evaluator on every search thread; `value none` puts the handcrafted
+  evaluation back. A network that fails to load leaves the engine playing with
+  the evaluation it already had rather than refusing to start.
+- An AVX2 kernel for the dense layers, dispatched to only when the layer widths
+  suit it, with `forward_reference` kept as the definition it is checked
+  against.
+
+The HCE path is untouched: `bench` is 709908 with and without the branch.
+
+### Correctness, and what each check can actually see
+
+| check | what it would catch |
+|---|---|
+| accumulator vs full rebuild at every node of a real search, five position families | any desynchronisation, at the node it happens on |
+| every legal king move walked by hand, plus one reply | bucket crossing, which a search is free to prune away entirely |
+| mutation: king events stripped from the delta | a king move that failed to rebuild its own perspective |
+| mutation: removals stripped from the delta | a lost update on the perspective that was *not* rebuilt |
+| 20,000 recorded cases replayed against `quantise.py` | any divergence between the C++ and Python integer paths |
+| vector kernel vs `forward_reference`, 20,000 random accumulators | a SIMD kernel that is only nearly right |
+
+The two mutation tests are the load-bearing ones. Rebuilding a perspective is
+always correct, so a sync check alone cannot distinguish "updated correctly"
+from "rebuilt anyway" — it can only prove something if deliberately breaking
+each half makes it fail. Both do.
+
+The cross-language replay agreed on **20,000 of 20,000** positions exactly.
+
+### Speed, measured rather than assumed
+
+The scalar reference was never going to be fast enough, and was not:
+
+| kernel | ns per forward | bench nps |
+|---|---|---|
+| scalar reference | 1174 | 657k |
+| AVX2, one output row at a time | 481 | 959k |
+| AVX2, four output rows blocked, stack scratch | 347 | — |
+| AVX2, dense weights pre-widened to int16 at load | **284** | **1047k** |
+| (handcrafted evaluation, for comparison) | — | 1841k |
+
+Three things that were tried and measured as worthless are worth recording so
+they are not retried: **eight-row blocking** (229 ns against 226 ns for four),
+**an explicit packs/permute/clamp for the accumulator narrowing** (identical to
+the plain loop — the compiler was already vectorising it), and `thread_local`
+scratch vectors, which were *worse* than plain stack arrays because a
+`thread_local` with a non-trivial constructor pays a guard check on every
+access.
+
+`_mm256_maddubs_epi16` would double the products per instruction and is what
+most engines use, but it accumulates into int16 and **saturates**: with
+activations in [0, 255] and weights in [-127, 127] a pair of products reaches
+64,770 against a 32,767 ceiling. Engines that use it clip activations to
+[0, 127] instead, where `127·127·2 = 32,258` fits exactly. Since the Stage 0
+sweep showed activation resolution to be worth nothing (QA 255 → 16383 changed
+the error by 0.3 cp), dropping QA to 127 is very likely free and would unlock
+it. That is the next optimisation, together with exploiting the sparsity of the
+clipped accumulator; neither is on the critical path for the staged plan.
+
+### What the Stage 1 SPRT can and cannot say
+
+The original expectation written here was "~0 Elo, and a large number in either
+direction is a bug report". That was wrong in one respect, and the measurement
+above is why: **the network costs 43% of the engine's speed** (1841k → 1047k
+nps). At 10+0.1 that is worth roughly −50 Elo on its own, before the network's
+26.7 cp modelling error and 9.2 cp of quantisation noise are counted at all.
+
+So the honest Stage 1 expectation is a clear *loss*, and the informative
+quantity is not the Elo but how it decomposes. A result far worse than the
+speed cost plus the eval noise would mean something is wrong that the tests
+above did not see; a result better than the speed cost alone would mean the
+comparison is not measuring what it claims.
+
+## 10. What Stage 1 actually found: the held-out number was a lie
+
+The Stage 1 match was supposed to be a formality. It was not, and this section
+is the most useful thing in this document.
+
+### The measurements
+
+| comparison | result |
+|---|---|
+| NNUE-mimic vs HCE, 10+0.1, 200 games | **−252 ± 52 Elo** |
+| NNUE-mimic vs HCE, **fixed depth 8**, 200 games | **−111 ± 45 Elo** |
+
+Fixed depth removes the 43% speed cost from the comparison, so roughly 140 Elo
+was speed and 111 Elo was the evaluation itself. A network reproducing the HCE
+to 26.7 cp should not lose 111 Elo at equal depth, so either the integration
+was wrong or the 26.7 cp was.
+
+### The 26.7 cp was
+
+Relabelling positions taken from **real games** with the HCE and running the
+same network over them gave **82 cp**, not 26.7. Nothing in the C++ was
+involved in either number, so this was not an integration fault — and the
+integration tests, including a 20,000-position exact replay of the Python
+quantiser, all passed.
+
+The corpus is written by self-play datagen in game order. Measured on it:
+
+- adjacent records share **85%** of their features (median Jaccard) — they are
+  consecutive plies of one game;
+- records 1,000 apart share **0.8%**;
+- **11.5%** of feature vectors occur more than once outright.
+
+A random train/validation split therefore places nearly every validation
+position's near-twin, and often its exact twin, into the training set. The
+26.7 cp was measuring memorisation.
+
+### Three numbers for the same network
+
+| validation protocol | MAE |
+|---|---|
+| random split of the corpus | 26.7 cp |
+| contiguous tail block, 200k-record gap, exact duplicates dropped | 48.7 cp |
+| independent positions from real games | **67–71 cp** |
+
+Both effects are real and separable. The gap between the first two rows is
+**leakage**; the gap between the last two is **distribution shift** — a
+held-out block of a datagen corpus is still a datagen position, and the engine
+does not play datagen positions. `train.py` now defaults to the contiguous
+protocol and takes `--val-file` for the third, which is the only one that is
+honest by construction and is what every real run should use.
+
+### What is actually limiting the network
+
+With the honest measurement in place, two sweeps say the same thing.
+
+**Data (L1=256, 25 epochs, validated on game positions):**
+
+| positions | MAE |
+|---|---|
+| 0.36M | 139.8 cp |
+| 0.9M | 100.6 cp |
+| 1.8M | 83.8 cp |
+| 3.6M | 71.3 cp |
+
+Every doubling buys about 15%, with no sign of flattening.
+
+**Capacity (3.6M positions, 25 epochs):**
+
+| L1 | MAE |
+|---|---|
+| 64 | 68.3 cp |
+| 128 | 68.1 cp |
+| 512 | 67.1 cp |
+| 1024 | 67.0 cp |
+
+Flat. Sixteen times the first-layer width buys 2%.
+
+The network is **data-limited, not capacity-limited**, and it is not close. At
+~15% per doubling, 30M positions lands near 45 cp and 100M near 35 cp; datagen
+runs at 2,100 positions/second, which makes 30M about four hours and 100M about
+thirteen. That is the lever, and it is cheap.
+
+The capacity result has an immediate practical consequence: **L1=64 costs a
+quarter of L1=256 in the dense layer** — which is where all the evaluation time
+goes — and at present data volumes evaluates just as well. Stage 3 should start
+small and grow the network only when the data justifies it, rather than the
+other way round.
+
+### Verdict on Stage 1
+
+The integration is correct: every exactness and synchronisation test passes,
+the C++ and Python integer paths agree on 20,000 of 20,000 positions, and the
+Elo loss is fully accounted for by 43% of the speed plus 70–80 cp of evaluation
+error. The stage did exactly what a known-answer test is for — it failed on the
+thing that was actually wrong, which was the answer, not the code. Finding this
+now cost an afternoon; finding it after a full training run would have cost
+days and would have been blamed on the labels.
