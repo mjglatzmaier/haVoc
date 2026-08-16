@@ -21,8 +21,11 @@ namespace havoc {
 /// x86: tens of cycles, on a line other threads are reading, in the hottest
 /// loop in the engine. With a single writer no atomic RMW is needed -- nothing
 /// else can change the value between the load and the store -- so `add()` is a
-/// deliberately separate relaxed load and relaxed store, which is a pair of
-/// plain MOVs.
+/// deliberately separate relaxed load and relaxed store, which on x86-64 is a
+/// pair of plain MOVs. That last part is target-specific: the language does not
+/// promise std::atomic<U64> is lock-free, and on a target where it is not, this
+/// would put a mutex in the hot path. The static_assert below refuses to build
+/// there rather than silently going slow.
 ///
 /// What readers get is *a* value the counter held at some point. A sum across
 /// threads is not a consistent snapshot of anything. Both consumers only need
@@ -32,6 +35,9 @@ namespace havoc {
 /// Copy and move are value copies rather than the deleted ones std::atomic
 /// would otherwise impose on every enclosing class.
 class single_writer_counter {
+    static_assert(std::atomic<U64>::is_always_lock_free,
+                  "single_writer_counter would take a lock in the search's hottest loop");
+
   public:
     single_writer_counter() = default;
     ~single_writer_counter() = default;
