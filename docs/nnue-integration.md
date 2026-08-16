@@ -178,6 +178,11 @@ about 5.5 machine-days, which is the number to plan against. Depth, not
 throughput, is now the open question: depth 8 labels are cheap but noisy, and
 nobody has yet measured how label quality trades against volume here.
 
+**Where the corpora actually live, and how to tell whether one can be
+trusted, is `nnue-data.md`.** Every artefact under `~/havoc-data/` carries a
+`.meta.json` sidecar naming the commit that labelled it, and `MANIFEST.md`
+indexes them. Read that before training on anything found lying around.
+
 ## 6. What this does not decide
 
 The network architecture, the quantisation scheme, and the CPU inference kernel
