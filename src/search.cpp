@@ -514,7 +514,12 @@ void SearchEngine::iterative_deepening(position& p, U16 depth, bool silent, int 
     Move prev_best{};
     int stable_iterations = 0;
 
-    for (unsigned id = 1 + static_cast<unsigned>(thread_id); id <= depth; ++id) {
+    // See parameters.hpp: the stagger wraps so that no helper begins at a depth
+    // it cannot reach. A span of 1 disables staggering entirely.
+    const unsigned span = static_cast<unsigned>(std::max(1, params_.smp_stagger_span));
+    const unsigned stagger = static_cast<unsigned>(thread_id) % span;
+
+    for (unsigned id = 1 + stagger; id <= depth; ++id) {
         if (signals_.stop.load())
             break;
 
