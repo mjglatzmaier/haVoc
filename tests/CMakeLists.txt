@@ -19,6 +19,8 @@ set(HAVOC_TEST_SOURCES
     test_eval.cpp
     test_eval_discrimination.cpp
     test_incremental_eval.cpp
+    test_nnue_features.cpp
+    test_nnue_network.cpp
     test_search.cpp
 )
 
