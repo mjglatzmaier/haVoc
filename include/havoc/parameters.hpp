@@ -421,20 +421,37 @@ struct parameters {
     // position is worth. They can only be tuned against game results, which
     // is what SPSA is for. They live here so the tuner and the ParamFile
     // machinery can reach them; search.cpp reads them through params_.
+    //
+    // These values were tuned against the NNUE evaluation and are specific to
+    // it. Several are margins compared against a static evaluation in
+    // centipawns, and the two evaluators do not produce the same distribution
+    // of centipawns, so a margin that is well placed for one is not for the
+    // other. Running them on the handcrafted evaluation costs it ~45% more
+    // nodes for the same bench, because reverse futility pruning fires far
+    // less often than it was calibrated to, and measures -16.5 Elo (95% CI
+    // -41.8 to +8.7, 400 games at 10+0.1) against the same evaluation on the
+    // values below. The network gains +10.4 Elo from the same change.
+    //
+    // That is accepted rather than fixed: the engine ships with a network and
+    // the handcrafted evaluation is kept as provenance, not as a playing
+    // configuration. Anyone who wants a handcrafted-only engine should take
+    // the values from commit 158e5445a25c95254063d8d566a5ef5a399964c5, the
+    // last one whose defaults were tuned against it. Making the margins
+    // evaluation-dependent is the real repair; see search-retune-nnue-2.
     int double_ext_margin = 24;     // singular by more than this extends twice
     int max_double_ext = 6;         // ...but at most this many times on a path
-    int rfp_max_depth = 6;          // reverse futility only below this depth
-    int rfp_margin = 80;            // ...and only if eval - margin*depth >= beta
+    int rfp_max_depth = 4;          // reverse futility only below this depth
+    int rfp_margin = 87;            // ...and only if eval - margin*depth >= beta
     int razor_max_depth = 3;        // razoring only below this depth
     int razor_base = 300;           // ...and only if eval + base + margin*depth <= alpha
     int razor_margin = 400;
     int nmp_min_depth = 3;          // null move needs at least this much depth
     int nmp_base_r = 3;             // base null-move reduction
     int nmp_depth_div = 6;          // extra reduction of depth/this
-    int nmp_eval_div = 200;         // extra reduction of (eval-beta)/this
+    int nmp_eval_div = 217;         // extra reduction of (eval-beta)/this
     int nmp_eval_max = 3;           // ...capped here
-    int futility_base = 6;          // (base + depth^2) / (2 - improving)
-    int fp_max_depth = 6;           // forward futility pruning of quiets below this depth
+    int futility_base = 7;          // (base + depth^2) / (2 - improving)
+    int fp_max_depth = 7;           // forward futility pruning of quiets below this depth
     int fp_base = 100;              // ...prune when eval + base + margin*depth <= alpha
     int fp_margin = 90;
     int history_prune_depth = 3;    // history pruning only below this depth

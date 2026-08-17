@@ -162,6 +162,14 @@ unaware of which is in use. Training and data-generation details are in
 
 - **The search is capped at 64 plies** (`MAX_PLY`). Ten seconds already reaches
   ply 29.
+- **The search constants are tuned for the network, not for the handcrafted
+  evaluation.** Several are margins compared against a static evaluation in
+  centipawns, and the two evaluators do not produce centipawns with the same
+  distribution, so `EvalFile none` now runs on margins calibrated for something
+  else — it searches ~45% more nodes for the same bench and measures -16.5 Elo
+  against its own older settings, while the network gains +10.4. The handcrafted
+  evaluation is kept as provenance rather than as a playing configuration; for
+  a handcrafted-only engine, take the parameters from commit `158e544`.
 - **Search parameters are tuned below their own resolution.** SPSA at 32 games
   an iteration cannot resolve anything below ~8–10 Elo per parameter, which is
   why recent tunes move one parameter and leave the rest untouched. Fixed-node
