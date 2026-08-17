@@ -74,7 +74,7 @@ network, and networks are only added there, never replaced.
 A network is named after the first 12 hex digits of its own sha256:
 
 ```
-nn-69c7d05e4298.nnue
+havoc-69c7d05e4298.nnue
    └── sha256sum of the file begins 69c7d05e4298
 ```
 
@@ -85,9 +85,9 @@ cannot masquerade as a good network, and two files with the same name are
 necessarily the same file.
 
 ```bash
-scripts/nnue/fetch-net.sh            # the network this checkout expects
-scripts/nnue/fetch-net.sh --list     # everything published
-scripts/nnue/fetch-net.sh --dir ./   # install somewhere specific
+scripts/fetch-net.sh            # the network this checkout expects
+scripts/fetch-net.sh --list     # everything published
+scripts/fetch-net.sh --dir ./   # install somewhere specific
 ```
 
 With no arguments it reads `HAVOC_DEFAULT_NET` out of `CMakeLists.txt`, so it
@@ -115,13 +115,13 @@ and keeps playing rather than refusing to start.
 
 | network | L1 | corpus | notes |
 |---|---|---|---|
-| `nn-69c7d05e4298.nnue` | 256 | 28.9M positions, iteration 4 | ships with v2.3; +60.8 ± 22.0 Elo over the iteration-3 net |
+| `havoc-69c7d05e4298.nnue` | 256 | 28.9M positions, iteration 4 | ships with v2.3; +60.8 ± 22.0 Elo over the iteration-3 net |
 
 Because `bench` node counts differ between evaluations, the bench line names
 the evaluation it used. Do not compare across them:
 
 ```
-Bench: 728941 nodes, ..., eval NNUE     # with nn-69c7d05e4298.nnue
+Bench: 728941 nodes, ..., eval NNUE     # with havoc-69c7d05e4298.nnue
 Bench: 709908 nodes, ..., eval HCE      # no network, e.g. in CI
 ```
 

@@ -28,7 +28,7 @@ void load_default_network(havoc::SearchEngine& engine) {
     if (!path) {
         std::cout << "info string no network found (expected " << name
                   << "), using the handcrafted evaluation, which is much weaker.\n"
-                  << "info string fetch it with scripts/nnue/fetch-net.sh, or set EvalFile."
+                  << "info string fetch it with scripts/fetch-net.sh, or set EvalFile."
                   << std::endl;
         return;
     }

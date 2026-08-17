@@ -3,6 +3,11 @@
 # Networks are not kept in git: ~20 MB per iteration would make the repository
 # permanently expensive to clone. The hash and the provenance are what make a
 # network reproducible, so those are committed and the bytes are not.
-name=havoc-a311596752e1.nnue
-sha256=a311596752e1cbbaa634fd3d799e598dbaaf804d93af086d1d128ed37149e7b8
-url=https://github.com/mjglatzmaier/haVoc/releases/download/net-a311596752e1/havoc-a311596752e1.nnue
+#
+# The name carries the first 12 hex digits of the sha256 below, so the filename
+# alone identifies the contents. This file is the single source of truth: the
+# build reads the name from here, so the binary and the fetch script cannot
+# disagree about which network is current.
+name=havoc-69c7d05e4298.nnue
+sha256=69c7d05e429873cb10c1f42738daee4f474a637b71bd42f5ef57b328952b8975
+url=https://github.com/mjglatzmaier/haVoc/releases/download/net-69c7d05e4298/havoc-69c7d05e4298.nnue

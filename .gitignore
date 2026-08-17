@@ -38,3 +38,8 @@ testruns/
 # Python bytecode from scripts/
 __pycache__/
 *.pyc
+
+# Networks are distributed from the release page, not from git: one ~20 MB blob
+# per training iteration would make the repository permanently expensive to
+# clone. nets/default.txt pins the hash, which is what makes one reproducible.
+*.nnue
