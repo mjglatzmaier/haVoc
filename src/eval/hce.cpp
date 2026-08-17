@@ -2,6 +2,7 @@
 
 #include "havoc/bitboard.hpp"
 #include "havoc/magics.hpp"
+#include "havoc/eval/endgame_probe.hpp"
 #include "havoc/kpk.hpp"
 #include "havoc/position.hpp"
 #include "havoc/squares.hpp"
@@ -340,29 +341,11 @@ int HCEEvaluator::evaluate(const position& p, int /*lazy_margin*/) {
         case KpK: {
             // A single pawn against a bare king is solved exactly by the
             // bitbase, so there is nothing here for the evaluation to guess at.
-            const U64 wp = p.get_pieces<white, pawn>();
-            const U64 bp = p.get_pieces<black, pawn>();
-            if (bits::count(wp | bp) == 1) {
-                const Color strong = wp ? white : black;
-                U64 pawns = wp | bp;
-                int psq = bits::lsb(pawns);
-                int sk = static_cast<int>(p.king_square(strong));
-                int wk_ = static_cast<int>(p.king_square(strong == white ? black : white));
-                // Normalise so the pawn is white's and stands on files a-d.
-                if (strong == black) {
-                    psq ^= 56;
-                    sk ^= 56;
-                    wk_ ^= 56;
-                }
-                if (util::col(psq) > Col::D) {
-                    psq ^= 7;
-                    sk ^= 7;
-                    wk_ ^= 7;
-                }
-                const Color stm = (p.to_move() == strong) ? white : black;
-                if (!kpk::probe(sk, psq, wk_, stm))
-                    return score::kDraw;
-            }
+            // Shared with the network evaluator, which has the same problem and
+            // used to have no answer to it.
+            bool strong_wins = false;
+            if (eval::probe_kpk(p, strong_wins) && !strong_wins)
+                return score::kDraw;
             score += eval_kpk<white>(p, ei) - eval_kpk<black>(p, ei);
             break;
         }

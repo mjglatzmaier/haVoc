@@ -551,4 +551,47 @@ TEST_F(NnueEvaluatorTest, DeadMaterialIsWorthNothingWhateverTheNetworkThinks) {
     EXPECT_NE(ev.evaluate(alive), score::kDraw) << "king and rook against a bare king is not dead";
 }
 
+// KPvK is not dead, it is *solved*, and the network guesses at it. Graded
+// against Syzygy over 300 sampled KPvK positions at depth 10, the handcrafted
+// evaluation scores every theoretically drawn one at 0 cp; the network averaged
+// 122 cp on them and put 28% above 150 cp, and threw away one win in 99. With
+// the bitbase wired in those figures are 0 cp, 0% and 99/99.
+//
+// Only the drawn verdict is imposed. A proven draw is exact and cannot cost
+// information; a proven win still needs the network's gradient to tell the
+// search which won position to steer for.
+TEST_F(NnueEvaluatorTest, SolvedKingAndPawnDrawsAreDrawsWhateverTheNetworkThinks) {
+    // The textbook draw the bitbase was written for: the pawn cannot be escorted
+    // past the defending king. haVoc once scored this at +118.
+    const char* drawn[] = {
+        "7k/8/7K/7P/8/8/8/8 w - - 0 1",
+        "8/8/8/8/8/1k6/p7/K7 w - - 0 1",
+    };
+    for (const char* fen : drawn) {
+        std::istringstream ss(fen);
+        position p(ss);
+        NNUEEvaluator ev(net_);
+        ev.refresh(p);
+        EXPECT_EQ(ev.evaluate(p), score::kDraw) << "solved draw -- " << fen;
+    }
+
+    // A won king and pawn ending must still be scored by the network. Forcing
+    // anything here would flatten the gradient the search steers by. Both this
+    // FEN and the drawn ones above are Syzygy-confirmed rather than assumed --
+    // the first draft of this test asserted a win on a position the bitbase
+    // rightly calls a draw, and the code was correct where the test was not.
+    std::istringstream ws("8/8/8/8/8/1K6/1P6/7k w - - 0 1");
+    position won(ws);
+    NNUEEvaluator wev(net_);
+    wev.refresh(won);
+    EXPECT_NE(wev.evaluate(won), score::kDraw) << "a won king and pawn ending is not a draw";
+
+    // And the probe must not fire on anything that is not KPvK.
+    std::istringstream rs("8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1");
+    position rook(rs);
+    NNUEEvaluator rev(net_);
+    rev.refresh(rook);
+    EXPECT_NE(rev.evaluate(rook), score::kDraw) << "king, rook and pawn is not king and pawn";
+}
+
 } // namespace havoc

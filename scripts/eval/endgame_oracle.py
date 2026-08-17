@@ -358,6 +358,13 @@ def main() -> int:
         "Costs one tablebase probe per legal move but makes the metric "
         "discriminating rather than saturated near 100%%.",
     )
+    ap.add_argument(
+        "--eval-file",
+        default=None,
+        help="network to grade. Pass 'hce' to force the handcrafted evaluation. "
+             "Without this the engine grades whatever it loads by default, which "
+             "makes an HCE run and an NNUE run silently incomparable.",
+    )
     ap.add_argument("--hash", type=int, default=64, help="engine hash in MB")
     ap.add_argument("--json", default=None, help="write raw results here")
     args = ap.parse_args()
@@ -379,6 +386,15 @@ def main() -> int:
             engine.configure({"hash": args.hash})
         except chess.engine.EngineError:
             pass
+
+        # Which evaluator is being graded is the whole point of the exercise
+        # when the question is whether the network needs endgame help, so it is
+        # selected explicitly rather than inherited from nets/default.txt.
+        if args.eval_file is not None:
+            if args.eval_file.lower() == "hce":
+                engine.configure({"EvalFile": "<empty>"})
+            else:
+                engine.configure({"EvalFile": args.eval_file})
 
         buckets: dict[str, Bucket] = defaultdict(Bucket)
 
