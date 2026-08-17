@@ -16,8 +16,10 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <random>
 #include <sstream>
@@ -144,22 +146,122 @@ static GameOutcome play_game(SearchEngine& engine, int depth, int random_plies,
     return {false, 0.5};
 }
 
+/// A crash-resume point for a datagen run.
+///
+/// A run is hours long and occupies the whole machine, so losing one to a
+/// reboot costs more than the run itself. What has to be restored is the exact
+/// set of games already written: the file is shared by every thread and their
+/// writes interleave, so a line count says nothing about which thread got how
+/// far.
+///
+/// Two things make that recoverable. Each game seeds its own RNG from the
+/// global game index, so a game is reproducible without replaying the ones
+/// before it -- resuming is a matter of skipping indices, not fast-forwarding
+/// a stream. And the checkpoint is written under the same mutex that guards
+/// the EPD write, immediately after it, recording the file size at that
+/// instant. Truncating back to that size on resume drops the tail of any
+/// write that was in flight when the process died, so the data file and the
+/// per-thread counts always agree.
+///
+/// Games buffered but not yet flushed are lost, which bounds the loss at
+/// FLUSH_INTERVAL games per thread.
+struct RunCheckpoint {
+    // Identity of the run. A resume onto a different configuration would
+    // silently produce a corpus that is neither of the two runs it came from.
+    int games = 0;
+    int depth = 0;
+    int threads = 0;
+    int random_plies = 0;
+    // Not obviously part of a run's identity, but it is: at a fixed depth the
+    // transposition table changes which moves the search finds, so resuming a
+    // run under a different hash size continues it with a different engine.
+    int hash_mb = 0;
+    unsigned seed = 0;
+    std::string eval_file;
+
+    std::uintmax_t file_size = 0;
+    uint64_t positions = 0;
+    int abandoned = 0;
+    std::vector<int> games_done_per_thread;
+};
+
+static std::string checkpoint_path(const std::string& output) {
+    return output + ".progress";
+}
+
+/// Written under `file_mutex`, immediately after the EPD write it describes.
+/// Via a temporary plus rename so that a crash during the checkpoint write
+/// leaves the previous checkpoint intact rather than a half-written one.
+static bool write_checkpoint(const std::string& output, const RunCheckpoint& cp) {
+    const std::string path = checkpoint_path(output);
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << "games " << cp.games << "\n"
+            << "depth " << cp.depth << "\n"
+            << "threads " << cp.threads << "\n"
+            << "random_plies " << cp.random_plies << "\n"
+            << "hash_mb " << cp.hash_mb << "\n"
+            << "seed " << cp.seed << "\n"
+            << "eval_file " << (cp.eval_file.empty() ? "-" : cp.eval_file) << "\n"
+            << "file_size " << cp.file_size << "\n"
+            << "positions " << cp.positions << "\n"
+            << "abandoned " << cp.abandoned << "\n";
+        for (size_t t = 0; t < cp.games_done_per_thread.size(); ++t)
+            out << "thread " << t << " " << cp.games_done_per_thread[t] << "\n";
+        if (!out)
+            return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    return !ec;
+}
+
+static bool read_checkpoint(const std::string& output, RunCheckpoint& cp, std::string& err) {
+    std::ifstream in(checkpoint_path(output));
+    if (!in.is_open()) {
+        err = "no checkpoint at " + checkpoint_path(output);
+        return false;
+    }
+    std::map<int, int> per_thread;
+    std::string key;
+    while (in >> key) {
+        if (key == "games") in >> cp.games;
+        else if (key == "depth") in >> cp.depth;
+        else if (key == "threads") in >> cp.threads;
+        else if (key == "random_plies") in >> cp.random_plies;
+        else if (key == "hash_mb") in >> cp.hash_mb;
+        else if (key == "seed") in >> cp.seed;
+        else if (key == "eval_file") { in >> cp.eval_file; if (cp.eval_file == "-") cp.eval_file.clear(); }
+        else if (key == "file_size") in >> cp.file_size;
+        else if (key == "positions") in >> cp.positions;
+        else if (key == "abandoned") in >> cp.abandoned;
+        else if (key == "thread") { int t = 0, n = 0; in >> t >> n; per_thread[t] = n; }
+        else { err = "unrecognised key '" + key + "' in " + checkpoint_path(output); return false; }
+        if (!in) { err = "truncated checkpoint " + checkpoint_path(output); return false; }
+    }
+    if (cp.threads <= 0 || static_cast<int>(per_thread.size()) != cp.threads) {
+        err = "checkpoint records " + std::to_string(per_thread.size()) + " thread entries for "
+              + std::to_string(cp.threads) + " threads";
+        return false;
+    }
+    cp.games_done_per_thread.assign(static_cast<size_t>(cp.threads), 0);
+    for (const auto& [t, n] : per_thread) {
+        if (t < 0 || t >= cp.threads) { err = "checkpoint thread index out of range"; return false; }
+        cp.games_done_per_thread[static_cast<size_t>(t)] = n;
+    }
+    return true;
+}
+
 /// Worker function: each thread plays its share of games, flushing to disk periodically.
-static void worker(int thread_id, int games_per_thread, int depth, int random_plies,
+static void worker(int thread_id, int first_game, int games_per_thread, int games_already_done,
+                   int depth, int random_plies,
                    unsigned seed, int hash_mb, std::shared_ptr<const nnue::Network> net,
                    const std::string& output_file,
                    std::mutex& file_mutex, std::atomic<int>& games_done,
                    std::atomic<uint64_t>& total_positions, int total_games,
-                   std::atomic<int>& games_abandoned, std::atomic<bool>& write_failed) {
-    // `seed + thread_id` makes two runs whose seeds differ by less than the
-    // thread count generate overlapping streams -- with 8 threads, --seed 2
-    // and --seed 5 share five of their eight -- which is exactly what sharding
-    // a dataset across consecutive seeds would do. Mix the two instead so that
-    // neighbouring seeds are uncorrelated, while a given seed still reproduces
-    // its dataset exactly.
-    std::seed_seq sequence{seed, static_cast<unsigned>(thread_id)};
-    std::mt19937 rng(sequence);
-
+                   std::atomic<int>& games_abandoned, std::atomic<bool>& write_failed,
+                   RunCheckpoint& checkpoint, std::atomic<bool>& checkpoint_failed) {
     SearchEngine engine;
     // Weights are immutable and shared; only the accumulators are per-thread,
     // so one loaded network serves every worker.
@@ -176,7 +278,15 @@ static void worker(int thread_id, int games_per_thread, int depth, int random_pl
     std::vector<DatagenPosition> buffer;
     constexpr int FLUSH_INTERVAL = 10; // flush every N games
 
-    for (int g = 0; g < games_per_thread; ++g) {
+    for (int g = games_already_done; g < games_per_thread; ++g) {
+        // Seeded per game from the game's global index rather than once per
+        // thread. Mixing the index in keeps neighbouring seeds uncorrelated --
+        // the reason the old code mixed the thread id -- while making each
+        // game reproducible on its own, which is what lets a resumed run skip
+        // finished games instead of replaying them to advance the stream.
+        std::seed_seq sequence{seed, static_cast<unsigned>(first_game + g)};
+        std::mt19937 rng(sequence);
+
         // Once per game, not once per move. Games have to be independent of
         // each other, but within one game the table describes the tree the
         // next search is about to walk -- reusing it is what an engine does
@@ -229,6 +339,21 @@ static void worker(int thread_id, int games_per_thread, int depth, int random_pl
             total_positions += buffer.size();
             buffer.clear();
 
+            // Under the same lock and after the write it describes, so the
+            // recorded size and the per-thread counts always describe the same
+            // instant. A failure here is not fatal to the data -- it only
+            // costs the ability to resume -- so it warns once and carries on.
+            checkpoint.games_done_per_thread[static_cast<size_t>(thread_id)] = g + 1;
+            checkpoint.positions = total_positions.load();
+            checkpoint.abandoned = games_abandoned.load();
+            std::error_code ec;
+            checkpoint.file_size = std::filesystem::file_size(output_file, ec);
+            if (!ec && !write_checkpoint(output_file, checkpoint)) {
+                if (!checkpoint_failed.exchange(true))
+                    std::cerr << "datagen: could not write " << checkpoint_path(output_file)
+                              << "; this run will not be resumable" << std::endl;
+            }
+
             if (done % 50 == 0 || done == total_games) {
                 std::cout << "Progress: " << done << "/" << total_games
                           << "  total positions: " << total_positions.load()
@@ -251,9 +376,13 @@ static void print_usage(const char* prog) {
               << "                   depth-N label more accurate, which is what makes a\n"
               << "                   second training iteration worth running.\n"
               << "  --append         Append to an existing file. This adds games, it does\n"
-              << "                   not resume a run: no RNG or game position is restored,\n"
-              << "                   so reusing the same --seed regenerates the same games.\n"
-              << "                   Give each shard its own seed.\n"
+              << "                   not resume a run: no game is skipped, so reusing the\n"
+              << "                   same --seed regenerates the same games. Give each\n"
+              << "                   shard its own seed.\n"
+              << "  --resume         Continue an interrupted run from its checkpoint. The\n"
+              << "                   other options must match the run being resumed; the\n"
+              << "                   EPD is truncated back to the last checkpointed byte,\n"
+              << "                   losing at most a handful of games per thread.\n"
               << "  --seed N         Random seed (default: time-based)\n";
 }
 
@@ -269,6 +398,7 @@ int main(int argc, char* argv[]) {
     std::string output = "training_data.epd";
     std::string eval_file;
     bool append = false;
+    bool resume = false;
     unsigned seed =
         static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
 
@@ -288,6 +418,8 @@ int main(int argc, char* argv[]) {
             output = argv[++i];
         else if (key == "--append" || key == "-a")
             append = true;
+        else if (key == "--resume")
+            resume = true;
         else if (key == "--eval-file" && i + 1 < argc)
             eval_file = argv[++i];
         else if (key == "--seed" && i + 1 < argc)
@@ -299,6 +431,69 @@ int main(int argc, char* argv[]) {
     }
 
     if (num_threads < 1) num_threads = 1;
+
+    if (resume && append) {
+        std::cerr << "datagen: --resume and --append do the opposite of each other. "
+                     "--append adds a new shard, --resume continues an interrupted one."
+                  << std::endl;
+        return 1;
+    }
+
+    // A resumed run has to be the same run. Rather than trust the caller to
+    // retype nine options identically, adopt them from the checkpoint and
+    // refuse only when an explicitly supplied value contradicts it -- a silent
+    // mismatch would produce a corpus that is neither of the two runs.
+    RunCheckpoint resumed;
+    if (resume) {
+        std::string err;
+        if (!read_checkpoint(output, resumed, err)) {
+            std::cerr << "datagen: cannot resume: " << err << std::endl;
+            return 1;
+        }
+        auto supplied = [&](const char* name) {
+            for (int i = 1; i < argc; ++i)
+                if (std::string(argv[i]) == name)
+                    return true;
+            return false;
+        };
+        struct Mismatch {
+            const char* flag;
+            const char* alias;
+            std::string want;
+            std::string got;
+            bool differs;
+        };
+        const Mismatch checks[] = {
+            {"--games", "-g", std::to_string(resumed.games), std::to_string(num_games),
+             num_games != resumed.games},
+            {"--depth", "-d", std::to_string(resumed.depth), std::to_string(depth),
+             depth != resumed.depth},
+            {"--threads", "-t", std::to_string(resumed.threads), std::to_string(num_threads),
+             num_threads != resumed.threads},
+            {"--random-plies", "", std::to_string(resumed.random_plies),
+             std::to_string(random_plies), random_plies != resumed.random_plies},
+            {"--hash", "", std::to_string(resumed.hash_mb), std::to_string(hash_mb),
+             hash_mb != resumed.hash_mb},
+            {"--seed", "", std::to_string(resumed.seed), std::to_string(seed),
+             seed != resumed.seed},
+            {"--eval-file", "", resumed.eval_file, eval_file, eval_file != resumed.eval_file},
+        };
+        for (const auto& c : checks) {
+            if (c.differs && (supplied(c.flag) || (*c.alias && supplied(c.alias)))) {
+                std::cerr << "datagen: cannot resume: checkpoint has " << c.flag << " "
+                          << (c.want.empty() ? "(none)" : c.want) << ", command line says "
+                          << (c.got.empty() ? "(none)" : c.got) << std::endl;
+                return 1;
+            }
+        }
+        num_games = resumed.games;
+        depth = resumed.depth;
+        num_threads = resumed.threads;
+        random_plies = resumed.random_plies;
+        hash_mb = resumed.hash_mb;
+        seed = resumed.seed;
+        eval_file = resumed.eval_file;
+    }
 
     // Loaded once, before any game is played. A network that cannot be loaded
     // stops the run rather than quietly relabelling the whole corpus with the
@@ -317,7 +512,41 @@ int main(int argc, char* argv[]) {
 
     // Count existing positions if appending
     uint64_t existing_positions = 0;
-    if (append) {
+    if (resume) {
+        // Truncate back to the checkpointed size. Anything past it belongs to
+        // a write that was in flight when the run died, and the per-thread
+        // counts do not account for it -- keeping it would duplicate games the
+        // resumed run is about to replay.
+        std::error_code ec;
+        const std::uintmax_t actual = std::filesystem::file_size(output, ec);
+        if (ec) {
+            std::cerr << "datagen: cannot resume: " << output << " is not readable"
+                      << std::endl;
+            return 1;
+        }
+        if (actual < resumed.file_size) {
+            std::cerr << "datagen: cannot resume: " << output << " is " << actual
+                      << " bytes but the checkpoint records " << resumed.file_size
+                      << ". The data file has been truncated or replaced." << std::endl;
+            return 1;
+        }
+        if (actual > resumed.file_size) {
+            std::filesystem::resize_file(output, resumed.file_size, ec);
+            if (ec) {
+                std::cerr << "datagen: cannot resume: could not truncate " << output
+                          << " to " << resumed.file_size << " bytes" << std::endl;
+                return 1;
+            }
+            std::cout << "Discarded " << (actual - resumed.file_size)
+                      << " unaccounted bytes past the checkpoint" << std::endl;
+        }
+        existing_positions = resumed.positions;
+        int done = 0;
+        for (int n : resumed.games_done_per_thread)
+            done += n;
+        std::cout << "Resuming " << output << ": " << done << "/" << num_games
+                  << " games done, " << existing_positions << " positions kept" << std::endl;
+    } else if (append) {
         std::ifstream check(output);
         if (check.is_open()) {
             std::string line;
@@ -348,6 +577,14 @@ int main(int argc, char* argv[]) {
         std::ofstream(output, std::ios::trunc).close();
     }
 
+    if (!resume) {
+        // A checkpoint left by an earlier run describes byte offsets into a
+        // file that no longer exists in that form. Remove it now rather than
+        // let a later --resume trust it.
+        std::error_code ec;
+        std::filesystem::remove(checkpoint_path(output), ec);
+    }
+
     std::cout << "haVoc datagen: " << num_games << " games, depth " << depth << ", "
               << num_threads << " threads, " << random_plies << " random plies, " << hash_mb
               << " MB hash/thread" << std::endl;
@@ -364,18 +601,40 @@ int main(int argc, char* argv[]) {
     std::atomic<uint64_t> total_positions{existing_positions};
     std::atomic<int> games_abandoned{0};
     std::atomic<bool> write_failed{false};
+    std::atomic<bool> checkpoint_failed{false};
+
+    RunCheckpoint checkpoint;
+    checkpoint.games = num_games;
+    checkpoint.depth = depth;
+    checkpoint.threads = num_threads;
+    checkpoint.random_plies = random_plies;
+    checkpoint.hash_mb = hash_mb;
+    checkpoint.seed = seed;
+    checkpoint.eval_file = eval_file;
+    checkpoint.games_done_per_thread.assign(static_cast<size_t>(num_threads), 0);
+    if (resume) {
+        checkpoint.games_done_per_thread = resumed.games_done_per_thread;
+        games_done = 0;
+        for (int n : resumed.games_done_per_thread)
+            games_done += n;
+        games_abandoned = resumed.abandoned;
+    }
 
     // Distribute games across threads
     std::vector<std::thread> threads;
     int base = num_games / num_threads;
     int remainder = num_games % num_threads;
 
+    int first_game = 0;
     for (int t = 0; t < num_threads; ++t) {
         int count = base + (t < remainder ? 1 : 0);
-        threads.emplace_back(worker, t, count, depth, random_plies, seed, hash_mb, net,
-                             std::cref(output), std::ref(file_mutex),
+        int already = checkpoint.games_done_per_thread[static_cast<size_t>(t)];
+        threads.emplace_back(worker, t, first_game, count, already, depth, random_plies, seed,
+                             hash_mb, net, std::cref(output), std::ref(file_mutex),
                              std::ref(games_done), std::ref(total_positions), num_games,
-                             std::ref(games_abandoned), std::ref(write_failed));
+                             std::ref(games_abandoned), std::ref(write_failed),
+                             std::ref(checkpoint), std::ref(checkpoint_failed));
+        first_game += count;
     }
 
     for (auto& t : threads)
@@ -383,12 +642,19 @@ int main(int argc, char* argv[]) {
 
     auto elapsed = std::chrono::steady_clock::now() - t0;
     double secs = std::chrono::duration<double>(elapsed).count();
-    double gps = num_games / secs;
+    int games_this_run = num_games;
+    if (resume)
+        for (int n : resumed.games_done_per_thread)
+            games_this_run -= n;
+    double gps = games_this_run / secs;
 
     if (write_failed.load()) {
         std::cerr << "\ndatagen: FAILED. " << output
                   << " is incomplete -- some positions were generated but not stored."
                   << std::endl;
+        if (!checkpoint_failed.load())
+            std::cerr << "datagen: the checkpoint is intact; free space and rerun with "
+                         "--resume to continue from it." << std::endl;
         return 1;
     }
 
@@ -415,6 +681,7 @@ int main(int argc, char* argv[]) {
              << "  \"threads\": " << num_threads << ",\n"
              << "  \"random_plies\": " << random_plies << ",\n"
              << "  \"seed\": " << seed << ",\n"
+             << "  \"resumed\": " << (resume ? "true" : "false") << ",\n"
              << "  \"elapsed_seconds\": " << static_cast<int>(secs) << "\n"
              << "}\n";
         if (!meta)
@@ -428,6 +695,14 @@ int main(int argc, char* argv[]) {
         // as draws, so say how many so that a systematic failure is visible.
         std::cout << "Abandoned " << abandoned << " of " << num_games
                   << " games with no result (positions discarded)" << std::endl;
+    }
+
+    // Only once the run has finished and the metadata is written. Until then
+    // the checkpoint is the thing that makes an interrupted run recoverable,
+    // so it outlives every failure path above.
+    {
+        std::error_code ec;
+        std::filesystem::remove(checkpoint_path(output), ec);
     }
 
     return 0;
