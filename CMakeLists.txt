@@ -20,6 +20,13 @@ option(HAVOC_WERROR            "Treat compiler warnings as errors"    OFF)
 option(HAVOC_NATIVE            "Enable -march=native for SIMD/popcnt" ON)
 option(HAVOC_SYZYGY            "Build Syzygy tablebase probing (Fathom)" ON)
 
+# Network the binary looks for on startup when EvalFile is not set. Networks are
+# named after their own sha256 so the name pins the contents; see
+# include/havoc/net_path.hpp. Set to "" to build an engine that only ever uses
+# the handcrafted evaluation unless told otherwise.
+set(HAVOC_DEFAULT_NET "nn-69c7d05e4298.nnue" CACHE STRING
+    "Filename of the evaluation network to auto-load at startup")
+
 # ── CMake Modules ────────────────────────────────────────────────────────────
 include(cmake/CompilerWarnings.cmake)
 include(cmake/Sanitizers.cmake)
@@ -44,6 +51,7 @@ set(HAVOC_CORE_SOURCES
     src/pawn_table.cpp
     src/material_table.cpp
     src/kpk.cpp
+    src/net_path.cpp
     src/eval/endgame_probe.cpp
     src/eval/hce.cpp
     src/eval/nnue_evaluator.cpp
@@ -57,6 +65,10 @@ set(HAVOC_CORE_SOURCES
 )
 
 add_library(havoc_core STATIC ${HAVOC_CORE_SOURCES})
+
+if(HAVOC_DEFAULT_NET)
+    target_compile_definitions(havoc_core PUBLIC HAVOC_DEFAULT_NET="${HAVOC_DEFAULT_NET}")
+endif()
 
 # ── Syzygy tablebases (Fathom, vendored, MIT) ────────────────────────────────
 # Third-party C sources are their own target: they are not ours to keep clean,

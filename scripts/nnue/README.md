@@ -57,6 +57,73 @@ Read the result as a verdict on the pipeline:
 | `dataset.py` | reads `.hbin`, checks versions, refuses mismatches |
 | `model.py` | the network; clipped ReLU because that is what quantises exactly |
 | `train.py` | training loop, holds the corpus resident in VRAM |
+| `fetch-net.sh` | downloads and verifies a published network |
+
+## Distributing networks
+
+Networks are ~21 MB and there will be many of them, so they are not in git
+history. git-lfs was rejected too: it puts a bandwidth meter on a public
+repository, and the failure mode when the quota runs out is that clones start
+handing people pointer files that the engine cannot load.
+
+Instead they are assets on a permanent GitHub release tagged
+[`nets`](https://github.com/mjglatzmaier/haVoc/releases/tag/nets), which is
+deliberately **not** tied to an engine version — any binary can fetch any
+network, and networks are only added there, never replaced.
+
+A network is named after the first 12 hex digits of its own sha256:
+
+```
+nn-69c7d05e4298.nnue
+   └── sha256sum of the file begins 69c7d05e4298
+```
+
+That makes the name a complete integrity check rather than something to be
+maintained separately. `fetch-net.sh` verifies every download against its own
+filename and refuses to install a mismatch, so a truncated or corrupted fetch
+cannot masquerade as a good network, and two files with the same name are
+necessarily the same file.
+
+```bash
+scripts/nnue/fetch-net.sh            # the network this checkout expects
+scripts/nnue/fetch-net.sh --list     # everything published
+scripts/nnue/fetch-net.sh --dir ./   # install somewhere specific
+```
+
+With no arguments it reads `HAVOC_DEFAULT_NET` out of `CMakeLists.txt`, so it
+always fetches the network matching the code you are about to build.
+
+### Where the engine looks
+
+The engine loads its network at startup without being told to, because the
+alternative — silently falling back to the handcrafted evaluation, ~160 Elo
+weaker, with no error — is a bad default. Search order is in
+`include/havoc/net_path.hpp` and pinned by `tests/test_net_path.cpp`:
+
+1. `$HAVOC_EVAL_FILE` (used verbatim)
+2. next to the binary, then `<binary dir>/nets/`
+3. the working directory, then `./nets/`
+4. `$HAVOC_NET_DIR`
+5. `~/.local/share/havoc/` (`%LOCALAPPDATA%\havoc\` on Windows) — where
+   `fetch-net.sh` installs by default
+
+The UCI `EvalFile` option overrides all of it, and `EvalFile none` returns the
+engine to the handcrafted evaluation. If nothing is found the engine says so
+and keeps playing rather than refusing to start.
+
+### Published networks
+
+| network | L1 | corpus | notes |
+|---|---|---|---|
+| `nn-69c7d05e4298.nnue` | 256 | 28.9M positions, iteration 4 | ships with v2.3; +60.8 ± 22.0 Elo over the iteration-3 net |
+
+Because `bench` node counts differ between evaluations, the bench line names
+the evaluation it used. Do not compare across them:
+
+```
+Bench: 728941 nodes, ..., eval NNUE     # with nn-69c7d05e4298.nnue
+Bench: 709908 nodes, ..., eval HCE      # no network, e.g. in CI
+```
 
 ## Notes
 
