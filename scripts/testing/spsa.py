@@ -82,7 +82,7 @@ def write_params(path, params, values):
 
 
 def play_match(cutechess, engine, pf_a, pf_b, games, tc, book, concurrency,
-               pgnout=None):
+               pgnout=None, eval_file=None):
     """Head-to-head between two parameter files. Returns A's score rate.
 
     -repeat plays every opening twice with the colours reversed, which pairs
@@ -96,6 +96,16 @@ def play_match(cutechess, engine, pf_a, pf_b, games, tc, book, concurrency,
         "-engine", f"cmd={engine}", "name=b", f"option.ParamFile={pf_b}",
         "-each", "proto=uci", f"tc={tc}", "option.Hash=64", "option.Threads=1",
         "timemargin=300",
+    ]
+    # Both sides, never one: this tunes search, so the evaluation has to be
+    # identical across the comparison or the gradient picks up the eval
+    # difference instead of the parameter perturbation. Search margins are
+    # expressed in the eval's units and calibrated to its noise, so tuning them
+    # against an evaluation the engine will not ship with tunes the wrong
+    # thing.
+    if eval_file:
+        cmd += [f"option.EvalFile={eval_file}"]
+    cmd += [
         "-openings", f"file={book}", "format=epd", "order=random",
         "-repeat", "-games", str(games), "-concurrency", str(concurrency),
         "-ratinginterval", str(games),
@@ -143,6 +153,10 @@ def main():
                     help="range fraction moved in iteration 1 by a 100%% score")
     ap.add_argument("--alpha", type=float, default=0.602)
     ap.add_argument("--gamma", type=float, default=0.101)
+    ap.add_argument("--eval-file", default=None,
+                    help="Network to load on both sides. Search margins are in "
+                         "the evaluation's units, so they must be tuned against "
+                         "the evaluation that will ship.")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
@@ -220,7 +234,8 @@ def main():
         t0 = time.time()
         score, w, l, d = play_match(
             args.cutechess, args.engine, pf_plus, pf_minus,
-            args.games_per_iter, args.tc, args.book, args.concurrency)
+            args.games_per_iter, args.tc, args.book, args.concurrency,
+            eval_file=args.eval_file)
         dt = time.time() - t0
 
         # y(+) - y(-) as measured directly by the head-to-head score.
