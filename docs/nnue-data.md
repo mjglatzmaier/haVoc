@@ -59,3 +59,48 @@ the binary at build time by `cmake/GitInfo.cmake`. That header is regenerated on
 every build rather than at configure time, because a stale hash on a corpus is
 worse than no hash: it looks authoritative. A build from a dirty tree sets
 `engine_tree_dirty`, since such a binary corresponds to no commit at all.
+
+## Resuming an interrupted run
+
+A datagen run is hours long and holds the whole machine, so losing one to a
+reboot or a full disk costs more than the run itself. `havoc_datagen --resume`
+continues from where the run died:
+
+```sh
+havoc_datagen --games 200000 --depth 8 --threads 24 --seed 3001 -o iter4.epd
+# ... machine dies at hour four ...
+havoc_datagen --resume -o iter4.epd
+```
+
+The resumed corpus is **the same corpus**, not an approximation of it: killing a
+400-game run partway and resuming it reproduces the uninterrupted run's records
+exactly, with no duplicates.
+
+Two design points make that true.
+
+*Each game seeds its own RNG from its global game index*, rather than one stream
+per thread. Skipping a finished game is then a matter of not playing it, where a
+per-thread stream would have to be fast-forwarded by replaying every game before
+it -- which is the entire cost the resume exists to avoid. Neighbouring `--seed`
+values stay uncorrelated because the index is mixed through `seed_seq` the same
+way the thread id used to be.
+
+*The checkpoint records the EPD's byte size*, written under the same mutex that
+guards the EPD write and immediately after it. On resume the file is truncated
+back to that size, which discards the tail of whatever write was in flight when
+the process died. Without it, a resumed run would append behind a partial record
+and duplicate the games the checkpoint did not know were written.
+
+What is lost is bounded: games buffered but not yet flushed, at most ten per
+thread.
+
+`--resume` reads the run's identity out of `<output>.progress` and adopts it, so
+the options do not have to be retyped. Supplying one that contradicts the
+checkpoint is refused rather than honoured -- including `--hash`, which is part
+of a run's identity because at a fixed depth the transposition table changes
+which moves the search finds. `--append` is the opposite operation (it adds a
+new shard and replays no state) and the two cannot be combined.
+
+The checkpoint is removed only after the run finishes and its metadata is
+written. A run that fails on a full disk keeps it, so freeing space and rerunning
+with `--resume` continues rather than restarts.
