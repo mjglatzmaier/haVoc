@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 
+#include "havoc/eval/endgame_probe.hpp"
 #include "havoc/eval/evaluator.hpp"
 #include "havoc/nnue/features.hpp"
 #include "havoc/nnue/network.hpp"
@@ -68,6 +69,19 @@ class NNUEEvaluator : public IEvaluator {
         // HCEEvaluator has always opened with this test. The network path
         // simply never inherited it, because it is a bare forward pass.
         if (pos.is_material_draw())
+            return score::kDraw;
+
+        // KPvK is not a dead position -- it is a solved one, and the network
+        // guesses at it. Graded against Syzygy over 300 sampled KPvK positions
+        // at depth 10, the handcrafted evaluation scores every theoretically
+        // drawn one at 0 cp while the network averages 122 cp and puts 28%
+        // above 150 cp. Only the drawn verdict is imposed here: a proven draw
+        // is exact and cannot cost information, whereas a proven win still
+        // needs the network's gradient to tell the search which won position to
+        // steer for. The same measurement found wins already held 98 of 99, so
+        // there is nothing to fix on that side.
+        bool strong_wins = false;
+        if (eval::probe_kpk(pos, strong_wins) && !strong_wins)
             return score::kDraw;
 
         const int us = static_cast<int>(pos.to_move());
