@@ -34,6 +34,7 @@
 #   Phalanx XXIV                   2521     887     17
 #   Fruit 2.1                      2694     505     21
 #   Glaurung 2.2 64-bit            2793    1396     13
+#   Senpai 1.0 64-bit              2985    2072     10
 #
 # CCRL 40/40 is far slower than the blitz TC used here, and older engines tend
 # to look relatively stronger at long TC, so a systematic offset sits on top of
@@ -87,6 +88,8 @@ add_anchor "$R/fruit-2.1/src/fruit"              name=fruit     proto=uci \
            option.OwnBook=false
 add_anchor "$R/glaurung-2.2/src/glaurung"        name=glaurung  proto=uci \
            option.Threads=1 option.Ponder=false option.OwnBook=false
+add_anchor "$R/senpai-1.0/senpai"                name=senpai    proto=uci \
+           option.Threads=1 option.Ponder=false
 
 if [ "${#FOUND[@]}" -lt 2 ]; then
     echo "error: fewer than two anchors found under REFENGINES=$R" >&2

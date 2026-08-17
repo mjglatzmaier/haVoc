@@ -37,7 +37,7 @@ for a in "$@"; do
 done
 
 WANT=("${ARGS[@]:-}")
-[ -z "${WANT[0]:-}" ] && WANT=(fruit glaurung arasan phalanx zurichess)
+[ -z "${WANT[0]:-}" ] && WANT=(fruit glaurung arasan phalanx zurichess senpai)
 
 mkdir -p "$REFENGINES"
 LOG="$REFENGINES/build.log"
@@ -90,6 +90,26 @@ record() { RESULTS+=("$1"); echo "  $1"; }
 # Fruit 2.1 -- CCRL 40/40 2694. Original host (wbec-ridderkerk.nl) is dead;
 # this is a mirror of the unmodified 2005 distribution.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Senpai 1.0 -- CCRL 40/40 2985 (64-bit, 1 CPU, 2072 games). The top anchor:
+# without something above ~2900 the rating fit is extrapolating past its
+# highest anchor, which is what invalidated every pre-2582 row in
+# docs/ratings.md. Ships as a single translation unit, so no Makefile.
+# --------------------------------------------------------------------------
+build_senpai() {
+    local d="$REFENGINES/senpai-1.0" bin="$REFENGINES/senpai-1.0/senpai"
+    [ -x "$bin" ] && [ "$FORCE" = 0 ] && { record "senpai     skip (already built)"; return; }
+    echo "senpai 1.0..."
+    [ -d "$d" ] || run git clone --quiet https://github.com/rwbc/Senpai-1.0.git "$d" || {
+        record "senpai     FAILED (clone)"; return; }
+    # The source #defines NDEBUG itself, so passing -DNDEBUG here is a
+    # redefinition warning, not an error. Left off to keep the build quiet.
+    if ! run g++ -O2 -std=c++14 -pthread -o "$bin" "$d/Source/senpai_10.cpp"; then
+        record "senpai     FAILED (build)"; return
+    fi
+    verify_uci "$bin" "senpai" && record "senpai     OK" || record "senpai     FAILED (no uciok)"
+}
+
 build_fruit() {
     local d="$REFENGINES/fruit-2.1" bin="$REFENGINES/fruit-2.1/src/fruit"
     [ -x "$bin" ] && [ "$FORCE" = 0 ] && { record "fruit      skip (already built)"; return; }
@@ -265,6 +285,7 @@ want glaurung  && build_glaurung
 want arasan    && build_arasan
 want phalanx   && build_phalanx
 want zurichess && build_zurichess
+want senpai    && build_senpai
 
 echo
 echo "summary:"

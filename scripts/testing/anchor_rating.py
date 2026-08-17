@@ -33,6 +33,7 @@ ANCHORS = {
     "phalanx24": (2521, 887),
     "fruit":     (2694, 505),
     "glaurung":  (2793, 1396),
+    "senpai":    (2985, 2072),
 }
 
 # Deliberately excluded, with the reason, so nobody re-adds them.
