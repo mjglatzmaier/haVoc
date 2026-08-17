@@ -51,6 +51,25 @@ class NNUEEvaluator : public IEvaluator {
 
     [[nodiscard]] int evaluate(const position& pos, int lazy_margin = -1) override {
         (void)lazy_margin;
+
+        // A dead position is worth exactly nothing, and the network does not
+        // know that. Asked about king and bishop against a bare king it
+        // reports +252 -- it has learned that a bishop is worth a bishop, and
+        // nothing in the training signal separates "ahead" from "ahead in a
+        // position where no legal sequence of moves mates".
+        //
+        // The search cannot cover for it. `search()` tests `is_draw()` before
+        // evaluating, but qsearch does not: it is entered on a child that was
+        // never draw-checked and recurses through captures without checking
+        // either, so a capture into a dead draw stands pat at the network's
+        // number. That is the shape of the bug that matters -- the engine
+        // trades into a drawn ending believing it is winning.
+        //
+        // HCEEvaluator has always opened with this test. The network path
+        // simply never inherited it, because it is a bare forward pass.
+        if (pos.is_material_draw())
+            return score::kDraw;
+
         const int us = static_cast<int>(pos.to_move());
         const int16_t* base = frame(top_);
         return net_->forward(base + static_cast<size_t>(us) * static_cast<size_t>(l1_),

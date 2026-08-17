@@ -511,4 +511,44 @@ TEST_F(NnueEvaluatorTest, SeveralThreadsShareOneNetworkSafely) {
     EXPECT_EQ(engine.evaluator_name(0), "NNUE");
 }
 
+
+// A network has no way to learn that a bishop is worthless when no legal
+// sequence of moves can mate. Asked about king and bishop against a bare king
+// the trained net reported +252, and the search cannot cover for it: search()
+// tests is_draw() before evaluating, but qsearch does not, so a capture into a
+// dead draw stands pat at whatever the network says. The engine then trades
+// into a drawn ending believing it is winning.
+//
+// HCEEvaluator has opened with this test since it was written. The network
+// path is a bare forward pass and never inherited it.
+TEST_F(NnueEvaluatorTest, DeadMaterialIsWorthNothingWhateverTheNetworkThinks) {
+    struct Case {
+        const char* fen;
+        const char* what;
+    };
+    const Case dead[] = {
+        {"8/8/8/4k3/8/8/8/2B1K3 w - - 0 1", "king and bishop against a bare king"},
+        {"8/8/8/4k3/8/8/8/2N1K3 w - - 0 1", "king and knight against a bare king"},
+        {"8/8/8/4k3/8/8/8/4K3 w - - 0 1", "bare kings"},
+        {"8/8/8/2b1k3/8/8/8/2B1K3 w - - 0 1", "a bishop each, same colour complex"},
+    };
+
+    for (const auto& c : dead) {
+        std::istringstream ss(c.fen);
+        position p(ss);
+        NNUEEvaluator ev(net_);
+        ev.refresh(p);
+        EXPECT_EQ(ev.evaluate(p), score::kDraw) << c.what << " -- " << c.fen;
+    }
+
+    // The guard must not swallow positions that are merely quiet. A rook is
+    // still a rook, and returning a draw here would be a far worse bug than
+    // the one being fixed.
+    std::istringstream ss("8/8/8/4k3/8/8/8/R3K3 w - - 0 1");
+    position alive(ss);
+    NNUEEvaluator ev(net_);
+    ev.refresh(alive);
+    EXPECT_NE(ev.evaluate(alive), score::kDraw) << "king and rook against a bare king is not dead";
+}
+
 } // namespace havoc
