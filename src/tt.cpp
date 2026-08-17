@@ -72,7 +72,6 @@ void hash_table::clear() {
 
 bool hash_table::fetch(U64 key, hash_data& e) {
     entry* stored = first_entry(key);
-    prefetch(stored);
 
     for (unsigned i = 0; i < cluster_size; ++i, ++stored) {
         const U64 p = stored->pk();

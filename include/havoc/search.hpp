@@ -228,6 +228,9 @@ class SearchEngine {
     /// telling the evaluator, which would silently desynchronise it.
     void do_move(position& pos, const Move& m, int thread_id) {
         pos.do_move(m);
+        // The child will probe the table almost immediately; start the fetch
+        // now so the accumulator update below overlaps the memory latency.
+        tt_.prefetch_key(pos.key());
         if (search_threads_[thread_id]->wants_deltas())
             search_threads_[thread_id]->evaluator().push(pos, pos.delta());
     }

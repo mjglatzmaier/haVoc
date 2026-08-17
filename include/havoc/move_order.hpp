@@ -13,6 +13,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace havoc {
@@ -171,22 +172,22 @@ struct Movehistory {
     /// kMaxHistory or the table never leaves the neighbourhood of zero and
     /// every threshold read against it is dead.
     void update(const Color& c, const Move& m, const Move& previous, int bonus, int16_t eval,
-                const std::vector<Move>& quiets, Move* killers);
+                std::span<const Move> quiets, Move* killers);
 
     /// Penalty applied to every quiet move that was tried at a node which
     /// failed low. Without it the table only ever learns from beta cutoffs,
     /// where a mean of 0.34 quiets have been tried, so the negative side never
     /// develops and any threshold read against it is unreachable.
-    void malus(const Color& c, int bonus, const std::vector<Move>& quiets);
+    void malus(const Color& c, int bonus, std::span<const Move> quiets);
 
     /// Continuation history counterparts. `stack` is the node whose move loop
     /// produced the cutoff (or fail-low); it carries the predecessor context.
     /// `p` must be the position at that node, with every searched move undone,
     /// so that piece_on(from) still identifies the piece each quiet moved.
     void update_continuation(const position& p, const SearchNode* stack, const Move& best,
-                             int bonus, const std::vector<Move>& quiets);
+                             int bonus, std::span<const Move> quiets);
     void malus_continuation(const position& p, const SearchNode* stack, int bonus,
-                            const std::vector<Move>& quiets);
+                            std::span<const Move> quiets);
 
     void clear();
 
@@ -231,7 +232,7 @@ struct Movehistory {
     /// `p` must be the position at that node with every searched move undone,
     /// so that piece_on identifies both the moving and the captured piece.
     void update_capture(const position& p, const Move& best, int bonus,
-                        const std::vector<Move>& captures);
+                        std::span<const Move> captures);
 
     /// ─── Correction history ─────────────────────────────────────────────
     ///
