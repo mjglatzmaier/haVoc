@@ -1,0 +1,17 @@
+{
+  "name": "havoc-a311596752e1.nnue",
+  "sha256": "a311596752e1cbbaa634fd3d799e598dbaaf804d93af086d1d128ed37149e7b8",
+  "architecture": {"feature_set": "HalfKP", "input_dim": 40960, "l1": 256, "l2": 32, "l3": 32, "qa": 127},
+  "training": {
+    "positions": 15721197,
+    "labels": "search score, depth 6, handcrafted evaluation",
+    "datagen_engine_git": "068bfd1",
+    "epochs": 8,
+    "validation": "held-out depth-12 corpus, leaked positions dropped"
+  },
+  "measured": {
+    "vs_hce_fixed_depth_8": "+93.6 +/- 19.2 Elo, 1000 games",
+    "vs_hce_tc_10+0.1": "+75.9 +/- 18.9 Elo, 1000 games, LOS 100%"
+  },
+  "notes": "First network to beat the handcrafted evaluation it was distilled from at a real time control. Requires the int16 accumulator (#146); on the int32 build the same weights measure -4.2 Elo."
+}
