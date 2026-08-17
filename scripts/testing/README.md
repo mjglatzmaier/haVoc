@@ -191,6 +191,48 @@ Two things to get right:
 State is written after every iteration and `--resume` continues from it, which
 matters on a machine that can lock up under a long run.
 
+## Choosing between several candidates
+
+`pick_best_arm.sh LOG_PREFIX ARM [ARM...]` reads a set of cutechess logs and
+prints the arm with the highest Elo:
+
+```sh
+scripts/testing/pick_best_arm.sh testruns/iter4- a b c d
+#   a: 40.1 Elo
+#   b: 60.8 Elo
+#   c: 6.9 Elo
+#   d: -93.1 Elo
+# b 60.8
+```
+
+It exists because doing this inline got the answer wrong in a way that looked
+right. An automated sweep of four nets installed the **worst** of them, 154 Elo
+below the best, and then tuned search against it for twenty-four minutes before
+anyone looked. Two bugs conspired:
+
+- Completion was tested with `grep -q "^Elo difference"`. cutechess prints that
+  line at every `-ratinginterval`, not only at the end, so an arm that was still
+  playing counted as finished.
+- The value was read with `grep -oE`, which returns *every* match. A finished log
+  holds three, so a multi-line string was substituted into
+  `awk "BEGIN{exit !($e > $best)}"`; awk died of a syntax error, and because the
+  comparison was an `if` condition, that arm was **silently skipped**.
+
+The three finished arms were skipped as unparseable. The one arm still mid-match
+had exactly one interim number, parsed cleanly, and won against no comparison at
+all.
+
+So the script insists on all four of:
+
+- completion is the **terminal** marker (`Finished match`), never a value that
+  also appears in progress output;
+- the **last** value is taken, and must be a single number;
+- a parse failure is **fatal**, never a skip;
+- every named arm must be present and complete before anything is chosen.
+
+The awk comparison passes values through `-v` rather than string interpolation,
+which removes the whole syntax-error class instead of guarding against it.
+
 ## Absolute rating
 
 ```sh
