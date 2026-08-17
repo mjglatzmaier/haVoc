@@ -312,9 +312,15 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
             auto end_time = std::chrono::steady_clock::now();
             double ms = std::chrono::duration<double, std::milli>(end_time - start).count();
 
+            // The evaluation is named alongside the node count because the two
+            // are only meaningful together: the same search over the same
+            // positions visits a different number of nodes under the
+            // handcrafted evaluation than under a network, and CI has no
+            // network to load. An unlabelled bench number invites exactly the
+            // comparison that cannot legitimately be made.
             std::cout << "Bench: " << total_nodes << " nodes, " << static_cast<int>(ms) << " ms, "
                       << static_cast<U64>(static_cast<double>(total_nodes) * 1000.0 / ms)
-                      << " nps" << std::endl;
+                      << " nps, eval " << engine.evaluator_name(0) << std::endl;
         } else if (cmd == "exit" || cmd == "quit") {
             engine.stop();
             engine.wait();

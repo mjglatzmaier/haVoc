@@ -22,6 +22,7 @@ set(HAVOC_TEST_SOURCES
     test_nnue_features.cpp
     test_nnue_network.cpp
     test_nnue_evaluator.cpp
+    test_net_path.cpp
     test_search.cpp
     test_tablebase.cpp
 )
