@@ -1,8 +1,9 @@
 # Plan to 3000
 
-Written 2026-08-17, at an estimated ~2690 on the CCRL 40/40 scale. This is the
-argument for how the engine gets to 3000+, in what order, and why the order is
-that way rather than the more tempting one.
+Written 2026-08-17, revised the same day once the gauntlet came in at **2834
+±12** on the CCRL 40/40 scale. This is the argument for how the engine gets to
+3000+, in what order, and why the order is that way rather than the more
+tempting one.
 
 The short version: **3000 does not require an overhaul.** It requires collecting
 Elo that is already identified and quantified, in an order that keeps the
@@ -13,8 +14,8 @@ ideas are worth doing and should be done *last*, for reasons given below.
 
 | | |
 |---|---|
-| Estimated rating | ~2690 (see §2 for how this is derived; not yet measured) |
-| Last measured rating | 2582 ±12 fit, handcrafted evaluation, 1000 games, 2026-08-16 |
+| Measured rating | **2834 ±12** fit, NNUE L1=256, 1200 games, 6 anchors, 2026-08-17 |
+| Previous | 2582 ±12 fit, handcrafted evaluation, 1000 games, 2026-08-16 |
 | Evaluation | HalfKP 40960→256×2→32→32→1, int8/int16, AVX2 |
 | Corpus | 28.9M self-play positions, training iteration 4 |
 | Speed | ~1.83M nps single-threaded with NNUE |
@@ -24,19 +25,22 @@ the same range as engines rated several hundred points higher, and it is *not*
 the bottleneck. That is the usual reason people conclude an engine needs
 rewriting, and it does not apply here.
 
-## 2. The estimate, and why it is not the naive sum
+## 2. The estimate, and why the naive sum won
+
+This section originally argued that the naive sum of self-play SPRT gains was
+badly inflated. The gauntlet has since been run, so the argument can be scored
+instead of asserted, and **it lost**.
 
 Since the 2582 gauntlet, the SPRT-measured gains sum to roughly +261 Elo:
 +93.6 ±19.2 for the first net over the handcrafted evaluation at fixed depth 8,
 +106.8 ±18.3 for the net-labelled d8 arm, +60.8 ±22.0 for iteration 4. Adding
-those to 2582 gives 2843, and that number should not be believed.
+those to 2582 gives 2843.
 
-Three inflations sit in it:
+Three reasons were given for discounting it:
 
 - **Self-play overstates.** Every one of those figures is haVoc against haVoc:
   same search, same book, same blind spots. A change exploiting a weakness both
-  sides share reads far larger than a foreign field will score it. Transfer is
-  typically 50–75%.
+  sides share reads larger than a foreign field will score it.
 - **Elo does not add across moving baselines.** Compounding assumes
   transitivity, and this engine is measurably non-transitive: Arasan and Phalanx
   are rated 16 points apart and disagree by ~100 Elo about us.
@@ -44,14 +48,29 @@ Three inflations sit in it:
   without charging the speed it costs. The honest time-control number for that
   first step is +75.9 ±18.9 at 10+0.1, not +93.6.
 
-The defensible chain, all at time control: +75.9 (iteration 3 over handcrafted)
-+60.8 (iteration 4 over iteration 3) ≈ **+137 self-play**, plus 5–10 from the
-+9.8% nps in #158. Call it +145–160. At a 0.6–0.75 transfer factor that is
-**+90 to +115**, giving **~2690, 80% interval 2640–2740**.
+That produced a "defensible chain" of ≈+137 self-play, discounted by a 0.6–0.75
+transfer factor to +90–115, giving **~2690, 80% interval 2640–2740**.
+
+The measurement, on the same five anchors as the 2582 run: **2834 ±14, a gain
+of +252.** The naive sum was off by 9 Elo. The careful correction was off by
+144, and outside its own 80% interval.
+
+The three effects above are all real. The error was applying a numeric discount
+for them with nothing calibrating its size — a plausible story standing in for
+a measurement, worth −144 Elo of pessimism. Whatever offsets those effects
+create, they evidently cancel against something in this range (most likely the
+blitz time control used here, which favours the modern engine against anchors
+rated at 40/40).
+
+**Working rule until contradicted:** treat the sum of self-play SPRT gains as an
+unbiased predictor of gauntlet movement, and do not discount it again without
+calibration data. This rests on one paired observation, so the next gauntlet is
+a genuine test of it rather than a formality.
 
 ## 3. The Elo budget to 3000
 
-+310 is needed. The identified levers:
+At a measured 2834, **+166 is needed**, not the +310 this section was written
+against. The identified levers:
 
 | lever | estimate | confidence |
 |---|---|---|
@@ -60,8 +79,16 @@ The defensible chain, all at time control: +75.9 (iteration 3 over handcrafted)
 | Search tuning with adequate statistical power | +30 to +50 | high |
 | Search refinement: LMR terms, pruning, time management | +40 to +70 | medium |
 
-Sum: +250 to +390. It brackets the +310 required, without any entry that
-depends on a novel idea working.
+Sum: +250 to +390, against +166 required. The budget now has roughly a factor
+of two of headroom rather than bracketing the target, which means 3000 no
+longer depends on every lever paying out near the top of its range — and that
+the first two levers alone would do it.
+
+Two cautions against reading that as "3000 is easy". The gauntlet number
+carries a systematic uncertainty of about ±50 that the ±12 does not express, so
+the true starting point may be nearer 2790. And Elo gets harder to buy as it
+accumulates: these estimates were sized against a 2690 engine, and the same
+work is worth less at 2834.
 
 **The strongest single signal is that the network is nowhere near its
 plateau.** It is only training iteration 4, on 28.9M positions, where modern
@@ -200,14 +227,19 @@ Listed so that they can be checked rather than discovered.
   its own artifacts, and that would only become visible after two or three more
   iterations. If it happens, that lever could be worth half the estimate. This
   is the single assumption most likely to break.
-- **The transfer factor is a rule of thumb, not a measurement.** 0.6–0.75 is
-  conventional wisdom. The gauntlet will test it directly, and if the v2.3 result
-  lands far outside 2640–2740 then the method of estimating from self-play
-  chains is itself suspect and should be recalibrated before being used again.
-- **The anchor set no longer brackets the engine.** At ~2690 we sit above four
-  of five anchors, which puts the fit back into extrapolation — the exact defect
-  that made every pre-2582 rating untrustworthy. Anchors above 2750 must be
-  added before the next gauntlet or its number will carry a known flaw.
+- **The transfer factor was a rule of thumb, and it was wrong.** *Settled by the
+  v2.3 gauntlet.* The 0.6–0.75 discount predicted 2690; the measurement was
+  2834, outside the stated interval, while the undiscounted sum was accurate to
+  9 Elo. See §2. The replacement working rule — self-play SPRT sums are
+  unbiased — rests on a single paired observation and is itself now the
+  assumption to check at the next gauntlet.
+- **The anchor set no longer bracketed the engine.** *Addressed.* Senpai 1.0
+  (2985) was added before the v2.3 run, so the fit interpolated rather than
+  extrapolated. At 2834 this is already tightening again: only one anchor is
+  above the engine, and the next gauntlet needs something near 3000–3100 to
+  keep the bracket. Under the previous five-anchor set the v2.3 number would
+  have carried the same known flaw that made every pre-2582 rating
+  untrustworthy.
 - **Architecture gains assume the speed problem is solvable.** If Stage C fails
   its gate, +80 to +120 becomes perhaps +30, and 3000 moves out by an iteration
   or two rather than becoming unreachable.
