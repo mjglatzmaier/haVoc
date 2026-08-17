@@ -1,0 +1,8 @@
+# The network this checkout expects. Fetch it with scripts/fetch-net.sh.
+#
+# Networks are not kept in git: ~20 MB per iteration would make the repository
+# permanently expensive to clone. The hash and the provenance are what make a
+# network reproducible, so those are committed and the bytes are not.
+name=havoc-a311596752e1.nnue
+sha256=a311596752e1cbbaa634fd3d799e598dbaaf804d93af086d1d128ed37149e7b8
+url=https://github.com/mjglatzmaier/haVoc/releases/download/net-a311596752e1/havoc-a311596752e1.nnue

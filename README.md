@@ -123,6 +123,32 @@ position startpos moves e2e4
 go depth 12
 ```
 
+### The network
+
+haVoc plays strongest with a neural network evaluation. Networks are not kept in
+git -- one ~20 MB blob per training iteration would make the repository
+permanently expensive to clone -- so the repository commits the hash and the
+provenance, which is what makes a network reproducible, and serves the bytes
+from the release page:
+
+```
+$ scripts/fetch-net.sh
+fetch-net: verified nets/havoc-a311596752e1.nnue
+```
+
+The script checks the download against the SHA256 in `nets/default.txt` and
+refuses a file that does not match. Then either point the engine at it:
+
+```
+setoption name EvalFile value nets/havoc-a311596752e1.nnue
+```
+
+or set `EvalFile` to `none` to fall back to the handcrafted evaluation. Against
+that handcrafted evaluation the current network measures **+75.9 +/- 18.9 Elo**
+over 1000 games at 10+0.1. `nets/*.provenance.json` records, for each network,
+the architecture, the corpus it was trained on, the engine commit that labelled
+that corpus, and what it measured.
+
 Commonly used commands:
 
 ```
