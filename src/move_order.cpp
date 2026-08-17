@@ -68,7 +68,7 @@ int Movehistory::continuation_score(const position& p, const Move& m, const Sear
 }
 
 void Movehistory::update_continuation(const position& p, const SearchNode* stack, const Move& best,
-                                      int bonus, const std::vector<Move>& quiets) {
+                                      int bonus, std::span<const Move> quiets) {
     if (best.type != static_cast<U8>(Movetype::quiet))
         return;
     Color c = p.to_move();
@@ -87,7 +87,7 @@ void Movehistory::update_continuation(const position& p, const SearchNode* stack
 }
 
 void Movehistory::malus_continuation(const position& p, const SearchNode* stack, int bonus,
-                                     const std::vector<Move>& quiets) {
+                                     std::span<const Move> quiets) {
     Color c = p.to_move();
     for (int plane = 0; plane < 2; ++plane)
         for (const auto& q : quiets)
@@ -123,7 +123,7 @@ int Movehistory::capture_score(const position& p, const Move& m) const {
 }
 
 void Movehistory::update_capture(const position& p, const Move& best, int bonus,
-                                 const std::vector<Move>& captures) {
+                                 std::span<const Move> captures) {
     if (int16_t* h = capture_slot(p, best))
         apply_history_bonus(*h, bonus);
 
@@ -136,7 +136,7 @@ void Movehistory::update_capture(const position& p, const Move& best, int bonus,
 }
 
 void Movehistory::update(const Color& c, const Move& m, const Move& previous, int bonus,
-                         int16_t eval, const std::vector<Move>& quiets, Move* killers) {
+                         int16_t eval, std::span<const Move> quiets, Move* killers) {
     if (m.type == static_cast<U8>(Movetype::quiet)) {
         apply_history_bonus(history_[c][m.f][m.t], bonus);
         if (previous.type != static_cast<U8>(no_type)) {
@@ -165,7 +165,7 @@ void Movehistory::update(const Color& c, const Move& m, const Move& previous, in
     }
 }
 
-void Movehistory::malus(const Color& c, int bonus, const std::vector<Move>& quiets) {
+void Movehistory::malus(const Color& c, int bonus, std::span<const Move> quiets) {
     for (auto& q : quiets)
         apply_history_bonus(history_[c][q.f][q.t], -bonus);
 }

@@ -142,9 +142,22 @@ struct hash_data {
 
 constexpr unsigned cluster_size = 4;
 
-struct hash_cluster {
+/// A cluster is exactly one cache line, and is aligned to one so that it
+/// actually occupies one. Four 16-byte entries come to 64 bytes, but the
+/// natural alignment of the atomics inside is only 8, so an unaligned array
+/// leaves roughly half of all clusters straddling a line boundary -- and every
+/// probe of such a cluster pulls in two lines instead of one, for no benefit.
+///
+/// `new[]` routes over-aligned types to the aligned allocation functions in
+/// C++17 and later, so `make_unique<hash_cluster[]>` honours this.
+struct alignas(64) hash_cluster {
     entry cluster_entries[cluster_size];
 };
+
+static_assert(sizeof(hash_cluster) == 64,
+              "a cluster is meant to be exactly one cache line; adding a field "
+              "to `entry` has made it something else");
+static_assert(alignof(hash_cluster) == 64, "clusters must be cache-line aligned");
 
 // ─── Hash table ─────────────────────────────────────────────────────────────
 
@@ -193,9 +206,20 @@ class hash_table {
     [[nodiscard]] size_t size_mb() const { return sz_mb_; }
     [[nodiscard]] int hashfull() const;
 
+    /// Warms the cache line this key will probe.
+    ///
+    /// Called right after a move is made, so the miss is paid while the child
+    /// is still computing whatever it computes before its first probe. The
+    /// prefetch that used to sit inside fetch() bought nothing: it was one
+    /// instruction ahead of the very load it was meant to hide, so the
+    /// hardware had no window to work in.
+    inline void prefetch_key(U64 key) {
+        if (entries_ != nullptr)
+            prefetch(first_entry(key));
+    }
+
     [[nodiscard]] inline entry* first_entry(U64 key) {
         return &entries_[key & (cluster_count_ - 1)].cluster_entries[0];
     }
 };
-
 } // namespace havoc

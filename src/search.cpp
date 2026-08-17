@@ -704,8 +704,19 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     U8 tt_bound = static_cast<U8>(no_bound);
 
     bool in_check = pos.in_check();
-    std::vector<Move> quiets;
-    std::vector<Move> captures;
+    // Quiet and capture moves actually searched at this node, kept for the
+    // history updates below. These were std::vector, which put a malloc and a
+    // free on the path of essentially every interior node. The bound is the
+    // same 256 the move generator is capped at, so the counters cannot
+    // overflow: a node can never search more moves than can be generated.
+    Move quiets_buf[kMaxMoves];
+    Move captures_buf[kMaxMoves];
+    int quiets_n = 0;
+    int captures_n = 0;
+    const auto quiets = [&] { return std::span<const Move>(quiets_buf, static_cast<size_t>(quiets_n)); };
+    const auto captures = [&] {
+        return std::span<const Move>(captures_buf, static_cast<size_t>(captures_n));
+    };
     stack->in_check = in_check;
     stack->ply = (stack - 1)->ply + 1;
 
@@ -810,9 +821,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                     // populates killers and countermoves at all -- nodes that
                     // return here never reach a move loop. Leave it.
                     thread_history(thread_id).update(pos.to_move(), ttm, (stack - 1)->curr_move,
-                                    history_bonus(depth), static_cast<int16_t>(ttvalue), quiets,
+                                    history_bonus(depth), static_cast<int16_t>(ttvalue), quiets(),
                                     stack->killers);
-                    thread_history(thread_id).update_continuation(pos, stack, ttm, history_bonus(depth), quiets);
+                    thread_history(thread_id).update_continuation(pos, stack, ttm, history_bonus(depth), quiets());
                     // The capture table, unlike the quiet ones above, is only
                     // allowed to learn here from a genuine fail-high. The
                     // asymmetry is not an oversight and it is not small: with
@@ -846,7 +857,7 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                     // the only evidence this table wants.
                     if (e.bound == bound_low && ttvalue >= beta)
                         thread_history(thread_id).update_capture(pos, ttm, history_bonus(depth),
-                                                                 captures);
+                                                                 captures());
                     return ttvalue;
                 }
             }
@@ -908,8 +919,6 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
     // Static evaluation
     const bool anyPawnsOn7th = pos.pawns_near_promotion();
-    const bool weHavePawnsOn7th = pos.pawns_on_7th();
-    (void)weHavePawnsOn7th;
 
     int16_t static_eval_val;
     if (in_check) {
@@ -1417,9 +1426,9 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
         ++moves_searched;
 
         if (move.type == static_cast<U8>(Movetype::quiet))
-            quiets.emplace_back(move);
+            quiets_buf[quiets_n++] = move;
         else if (is_capture(static_cast<Movetype>(move.type)))
-            captures.emplace_back(move);
+            captures_buf[captures_n++] = move;
 
         undo_move(pos, move, thread_id);
 
@@ -1453,11 +1462,11 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
 
             if (score_val >= beta) {
                 thread_history(thread_id).update(pos.to_move(), best_move, (stack - 1)->curr_move,
-                                history_bonus(depth), static_cast<int16_t>(bestScore), quiets,
+                                history_bonus(depth), static_cast<int16_t>(bestScore), quiets(),
                                 stack->killers);
-                thread_history(thread_id).update_continuation(pos, stack, best_move, history_bonus(depth), quiets);
+                thread_history(thread_id).update_continuation(pos, stack, best_move, history_bonus(depth), quiets());
                 thread_history(thread_id).update_capture(pos, best_move, history_bonus(depth),
-                                                         captures);
+                                                         captures());
                 break;
             }
 
@@ -1481,10 +1490,10 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
     // because history_malus_pct is 0, which makes the malus itself 0 -- so the
     // first thing an SPSA fit does when it raises that parameter is corrupt the
     // continuation tables at every cutoff node in the search.
-    if (bestScore <= alpha_orig && !quiets.empty()) {
+    if (bestScore <= alpha_orig && quiets_n > 0) {
         const int malus = history_bonus(depth) * params_.history_malus_pct / 100;
-        thread_history(thread_id).malus(to_mv, malus, quiets);
-        thread_history(thread_id).malus_continuation(pos, stack, malus, quiets);
+        thread_history(thread_id).malus(to_mv, malus, quiets());
+        thread_history(thread_id).malus_continuation(pos, stack, malus, quiets());
     }
 
     // Best move bonus
