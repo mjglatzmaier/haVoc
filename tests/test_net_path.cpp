@@ -142,7 +142,14 @@ TEST_F(NetPathEnv, HavocNetDirIsHonoured) {
     set_env("HAVOC_NET_DIR", "/opt/havoc-nets");
     const std::string name = "nn-000000000000.nnue";
     const auto paths = havoc::net::candidate_paths(name);
-    EXPECT_TRUE(contains(paths, (std::filesystem::path("/opt/havoc-nets") / name).string()));
+    const std::string configured = (std::filesystem::path("/opt/havoc-nets") / name).string();
+    ASSERT_TRUE(contains(paths, configured));
+
+    // Setting HAVOC_NET_DIR is a statement about which network to use, so it
+    // has to beat a file that merely happens to sit next to the binary.
+    const std::filesystem::path exe_dir(havoc::net::executable_dir());
+    ASSERT_FALSE(exe_dir.empty());
+    EXPECT_LT(index_of(paths, configured), index_of(paths, (exe_dir / name).string()));
 }
 
 TEST_F(NetPathEnv, ExecutableDirectoryIsAbsoluteAndReal) {

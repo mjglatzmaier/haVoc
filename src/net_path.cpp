@@ -101,6 +101,12 @@ std::vector<std::string> candidate_paths(std::string_view name) {
         out.push_back((dir / "nets" / leaf).string());
     };
 
+    // Explicit configuration outranks discovery: someone who set HAVOC_NET_DIR
+    // said which network they want, and a file that merely happens to sit next
+    // to the binary should not silently win over that.
+    if (const auto dir = env("HAVOC_NET_DIR"))
+        out.push_back((std::filesystem::path(*dir) / leaf).string());
+
     push(executable_dir());
 
     std::error_code ec;
@@ -108,12 +114,8 @@ std::vector<std::string> candidate_paths(std::string_view name) {
     if (!ec)
         push(cwd);
 
-    if (const auto dir = env("HAVOC_NET_DIR"))
-        out.push_back((std::filesystem::path(*dir) / leaf).string());
-
-    // Platform convention for per-user application data. This is where
-    // scripts/nnue/fetch-net.sh installs, so a fetched network is found by a
-    // binary anywhere on the system.
+    // Platform convention for per-user application data, so a network installed
+    // once is found by a binary run from anywhere on the system.
 #if defined(_WIN32)
     if (const auto appdata = env("LOCALAPPDATA"))
         out.push_back((std::filesystem::path(*appdata) / "havoc" / leaf).string());

@@ -5,293 +5,187 @@
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/mjglatzmaier/haVoc.svg)](LICENSE)
 
-A UCI chess engine written in C++20.
+A UCI chess engine in C++20: magic bitboards, alpha-beta search, and — since
+v2.3 — an NNUE evaluation trained on the engine's own self-play.
 
-haVoc is a hobby chess engine I've developed on and off for several years.
-It uses bitboard move generation with magic bitboards, an alpha-beta search, and
-a hand-written evaluation function.
+The hand-written evaluation it started with is still in the tree and still works
+(`EvalFile none` selects it). It is kept deliberately: the network was
+bootstrapped from it, and an engine that cannot play without its network has no
+way to show where its network came from.
 
 ## Strength
 
-Estimated **~2580 Elo** on the CCRL 40/40 scale, measured 16 August 2026 over
-1000 games against five anchors. Treat the uncertainty as roughly ±50, not the
-±12 the fit reports; see below.
+| Version | Evaluation | Rating | Games | Measured |
+|---|---|---|---|---|
+| v2.3 | NNUE, L1=256 | *pending gauntlet* | — | — |
+| v2.2 | handcrafted | **2582** ±12 | 1000 | 2026-08-16 |
 
-| Date | Rating | fit ± | Games | Anchors | Notes |
-|------|--------|-------|-------|---------|-------|
-| 2026-08-16 | **2582** | ±12 | 1000 | 5 | First run with anchors below the engine |
-| 2026-08-14 | 2503 | ±55 | 240 | 2 | Correction history, mobility counts captures |
-| 2026-08-14 | 2523 | ±53 | 240 | 2 | Evaluation coverage batch |
-| 2026-08-13 | 2473 | ±60 | 224 | 2 | Correctness batch |
-| (earlier) | 2413 | ±82 | 150 | 2 | Prior baseline |
-
-The jump from ~2500 to ~2580 is mostly a change of instrument, not of engine.
-Every earlier row was fitted against Fruit and Glaurung alone, both ~200 Elo
-*above* haVoc, where the model extrapolates; this run adds three anchors at or
-below it, so the fit interpolates. The anchor binaries were also rebuilt from
-source for this run, and are not the same builds that produced the older rows.
-Do not read the column as a trajectory.
-
-Per-anchor results, which are more informative than the pooled number:
-
-| anchor | published | haVoc score | implies |
-|---|---|---|---|
-| Zurichess Fribourg | 2412 | 69.5% | 2555 |
-| Arasan 12.2 | 2505 | 69.2% | 2646 |
-| Phalanx XXIV | 2521 | 55.2% | 2558 |
-| Fruit 2.1 | 2694 | 34.5% | 2583 |
-| Glaurung 2.2 | 2793 | 21.5% | 2568 |
-
-Four of the five agree closely (2555–2583). Arasan is an outlier: haVoc scores
-69.2% against it but only 55.2% against Phalanx, whose published rating is 16
-points *higher* — a ~100 Elo discrepancy between two engines rated the same.
-One of those published ratings does not describe the engine as built here, and
-dropping the anchor that disagrees would be choosing the answer, so the pooled
-figure keeps it and the spread is reported instead. Excluding Arasan the fit
-gives 2566 ± 13.
-
-Two further things limit the number, and they are worth stating plainly:
-
-- **The fit's ± is statistical only.** It describes how well the model fits
-  these games. It says nothing about measuring at blitz against ratings
-  established at 40/40, and older engines tend to look relatively stronger at
-  long time control, so a systematic offset sits on top of it.
-- **A single strength scale is an approximation.** The Arasan and Phalanx
-  results above cannot both be right under one scale, which is what a
-  non-transitive matchup looks like when a one-parameter model is asked to
-  absorb it.
-
-The per-change SPRTs remain the trustworthy measurements; this table is a
-periodic check that the engine has not drifted away from the field.
-
-The method is a maximum-likelihood fit of the logistic Elo model with opponent
-ratings held fixed at their published CCRL 40/40 values, at 20+0.2 on one thread
-with `OwnBook` and `Ponder` forced off. It is an estimate *on* the CCRL scale,
-not a CCRL rating. The anchors are built by
-[`scripts/testing/fetch-anchors.sh`](scripts/testing/fetch-anchors.sh), which
-pins each version; the harness and the rules for choosing anchors are in
-[`scripts/testing/`](scripts/testing/README.md).
-
-To reproduce a rating from a gauntlet log:
-
-```sh
-scripts/testing/anchor_rating.py testruns/gauntlet-<tag>.log
-```
+Estimated on the CCRL 40/40 scale against five anchors. Treat the uncertainty
+as roughly ±50 rather than the ±12 the fit reports — it is statistical only,
+and the games are played at blitz against ratings established at 40/40. The
+per-change SPRTs are the trustworthy measurements; this table is a periodic
+check that the engine has not drifted away from the field. Method, per-anchor
+results and superseded measurements are in [`docs/ratings.md`](docs/ratings.md).
 
 ## Building
 
-Requirements:
-
-- A C++20 compiler (GCC 12+, Clang 15+, AppleClang 16+, or MSVC 2022+)
-- CMake 3.20 or newer
+Needs a C++20 compiler (GCC 12+, Clang 15+, AppleClang 16+, MSVC 2022+) and
+CMake 3.20+.
 
 ```sh
 git clone https://github.com/mjglatzmaier/haVoc.git
 cd haVoc
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
+scripts/fetch-net.sh          # download the evaluation network, ~20 MB
 ```
 
-The engine binary is written to `build/havoc`.
-
-### CMake options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `HAVOC_ENABLE_TESTS` | `ON` | Build the unit tests (GoogleTest is fetched automatically) |
-| `HAVOC_ENABLE_BENCH` | `OFF` | Build the microbenchmark targets |
-| `HAVOC_ENABLE_SANITIZERS` | `OFF` | Enable ASan/UBSan in Debug builds |
-| `HAVOC_WERROR` | `OFF` | Treat compiler warnings as errors (CI enables this) |
-| `HAVOC_NATIVE` | `ON` | Compile with `-march=native` |
-| `HAVOC_BUILD_TOOLS` | `OFF` | Build the tuning tools (`havoc_datagen`, `havoc_texel`, `havoc_pgn2epd`) |
-
-`HAVOC_NATIVE` produces a binary tuned for the machine it was built on. Turn it
-off if you intend to copy the binary to another machine.
-
-## Running
-
-haVoc speaks the [UCI protocol](https://www.chessprogramming.org/UCI) and can be
-used with any UCI-compatible GUI (Arena, Cute Chess, Banksia, and others). It can
-also be driven directly from a terminal:
-
-```
-$ ./build/havoc
-haVoc v2.1.0
-by M.Glatzmaier
-uci
-position startpos moves e2e4
-go depth 12
-```
-
-### The network
-
-haVoc plays strongest with a neural network evaluation. Networks are not kept in
-git -- one ~20 MB blob per training iteration would make the repository
-permanently expensive to clone -- so the repository commits the hash and the
-provenance, which is what makes a network reproducible, and serves the bytes
-from the release page:
-
-```
-$ scripts/fetch-net.sh
-fetch-net: verified nets/havoc-a311596752e1.nnue
-```
-
-The script checks the download against the SHA256 in `nets/default.txt` and
-refuses a file that does not match. Then either point the engine at it:
-
-```
-setoption name EvalFile value nets/havoc-a311596752e1.nnue
-```
-
-or set `EvalFile` to `none` to fall back to the handcrafted evaluation. Against
-that handcrafted evaluation the current network measures **+75.9 +/- 18.9 Elo**
-over 1000 games at 10+0.1. `nets/*.provenance.json` records, for each network,
-the architecture, the corpus it was trained on, the engine commit that labelled
-that corpus, and what it measured.
-
-Commonly used commands:
-
-```
-uci                            Print engine name and options
-isready                        Synchronisation check
-position startpos moves e2e4   Set up a position
-position fen <fen> moves ...   Set up a position from FEN
-go depth 15                    Search to a fixed depth
-go movetime 5000               Search for a fixed number of milliseconds
-go wtime 60000 btime 60000     Search under a time control
-go infinite                    Search until 'stop'
-stop                           Stop the current search
-d                              Print the board, hash key, and FEN
-bench [depth]                  Search a fixed set of 12 positions (default depth 10)
-quit                           Exit
-```
-
-`bench` is useful as a quick regression check: it reports total nodes and nodes
-per second over the same positions every time, so two builds can be compared
-directly.
-
-### Options
-
-| Option | Type | Default | Notes |
-|--------|------|---------|-------|
-| `Threads` | spin, 1–1024 | 1 | Number of search threads (Lazy SMP) |
-| `Hash` | spin, 1–33554432 | 1024 | Transposition table size in MB |
-| `ParamFile` | string | empty | Load evaluation parameters from a file |
-| `SyzygyPath` | string | empty | Directory of Syzygy tablebases, up to 6 pieces |
-| `BookFile` | string | empty | Accepted but currently inert (see below) |
-
-#### Syzygy tablebases
-
-Set `SyzygyPath` to a directory of `.rtbw` files and the search resolves any
-position small enough to be in them exactly, rather than evaluating it:
-
-```
-setoption name SyzygyPath value /path/to/syzygy
-```
-
-The engine reports what it loaded (`info string Syzygy tablebases loaded, up to
-5 pieces`) and counts resolved positions in the `tbhits` field of every `info`
-line, so you can confirm it is actually being used. Several directories may be
-joined with the platform path separator, and the path may contain spaces.
-
-Only WDL is probed, and only inside the search. There is no DTZ, so the engine
-knows a position is won without knowing how far off the win is; it substitutes
-a preference for winning sooner, which converts but plays less precisely than a
-DTZ-aware engine. Probing is skipped whenever the position has castling rights
-or a non-zero fifty-move counter, because the tables model neither.
-
-Building with `-DHAVOC_SYZYGY=OFF` removes the probing code and the vendored
-Fathom library entirely; the option then reports that no tables were found.
-
-`BookFile` is still advertised and parsed, but `src/book.cpp` is a placeholder
-that always reports "not available". Setting it has no effect on play.
-
-## How it works
-
-### Search
-
-Iterative deepening with aspiration windows around a principal-variation search.
-The main heuristics in use are:
-
-- Transposition table with 4-entry clusters, XOR key verification, and
-  depth/age-based replacement
-- Late move reductions, adjusted by history score and node type
-- Null move pruning, reverse futility pruning, and ProbCut
-- Singular extensions
-- Internal iterative reductions
-- Killer moves, countermoves, butterfly history, capture history, and
-  continuation history for move ordering
-- Correction history on the static evaluation
-- Quiescence search with delta pruning and static exchange evaluation
-
-Multi-threaded search is Lazy SMP: each thread runs an independent search over a
-shared transposition table, and the main thread reports the result.
-
-### Evaluation
-
-Evaluation is hand-written and goes through an `IEvaluator` interface, so an
-alternative evaluator can be substituted without touching the search. The current
-implementation covers:
-
-- Material and piece-square tables, interpolated between middlegame and endgame
-- Pawn structure (doubled, isolated, backward, and passed pawns)
-- King safety from attacker counts, pawn shelter, and piece coordination
-- Mobility, threats, and space
-- Some specific endgame knowledge
-- Per-thread pawn and material hash tables
-
-## Development
-
-Run the test suite (175 tests, including perft against the five standard
-positions from the Chess Programming Wiki):
+The binary is written to `build/havoc`. Run the tests with:
 
 ```sh
 ctest --test-dir build --output-on-failure
 ```
 
-Tuning tools live in `tools/` and are built with `-DHAVOC_BUILD_TOOLS=ON`:
+| CMake option | Default | Description |
+|--------|---------|-------------|
+| `HAVOC_ENABLE_TESTS` | `ON` | Build the unit tests (GoogleTest is fetched automatically) |
+| `HAVOC_ENABLE_BENCH` | `OFF` | Build the microbenchmark targets |
+| `HAVOC_ENABLE_SANITIZERS` | `OFF` | Enable ASan/UBSan in Debug builds |
+| `HAVOC_WERROR` | `OFF` | Treat compiler warnings as errors (CI enables this) |
+| `HAVOC_NATIVE` | `ON` | Compile with `-march=native`; turn off to copy the binary to another machine |
+| `HAVOC_SYZYGY` | `ON` | Build Syzygy tablebase probing |
+| `HAVOC_BUILD_TOOLS` | `OFF` | Build the tuning tools (`havoc_datagen`, `havoc_texel`, `havoc_pgn2epd`) |
 
-- `havoc_datagen` — generate self-play training positions
-- `havoc_texel` — Texel-style evaluation tuning over labelled positions
-- `havoc_pgn2epd` — convert PGN games to EPD
+## The network
 
-`scripts/tune.sh` wraps the datagen/tune loop, and `scripts/bake_params.py`
-writes a tuned parameter set back into the source.
+haVoc plays roughly 160 Elo stronger with its network than without, so getting
+it loaded matters more than any other setup step.
 
-Continuous integration runs the build and test suite on Linux, macOS, and
-Windows: [ci.yml](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml).
+Networks are not kept in git — one ~20 MB blob per training iteration would make
+the repository permanently expensive to clone — so the repository commits the
+hash and the provenance, and the release page serves the bytes:
 
-## Current state and known gaps
+```
+$ scripts/fetch-net.sh
+fetch-net: verified nets/havoc-69c7d05e4298.nnue
+```
 
-- **The evaluation is hand-set, and Texel tuning is not the way out of that.** A
-  parameter's gradient is independent of its current value, so the fit is
-  unmoved by better starting points, and the error is dominated by material
-  while the quiet filter discards exactly the positions where tactical terms
-  fire. The fit it converges to measured +1.4 ± 19.9 Elo over 781 games. Useful
-  for material and piece-square tables, and little else.
-- **The search is capped at 64 plies** (`MAX_PLY`). Search and quiescence stop
-  cleanly at the bound, but the cap is low: ten seconds already reaches ply 29.
+The script checks the download against the SHA256 in `nets/default.txt` and
+refuses a file that does not match. The engine then finds it automatically on
+startup, searching in this order:
+
+1. `EvalFile`, if you set it
+2. `$HAVOC_NET_DIR`
+3. beside the binary, then `nets/` beside the binary
+4. the current directory, then `nets/` under it — where `fetch-net.sh` installs
+5. `~/.local/share/havoc/`, or the platform equivalent
+
+So the usual case needs no configuration. To point at a specific file, or to
+select the handcrafted evaluation:
+
+```
+setoption name EvalFile value /path/to/havoc-69c7d05e4298.nnue
+setoption name EvalFile value none
+```
+
+The startup banner and the `bench` line both name the evaluation actually in
+use, so the two are never silently confused. `nets/*.provenance.json` records,
+for each network, its architecture, the corpus it was trained on, the engine
+commit that labelled that corpus, and what it measured.
+
+## Running
+
+haVoc speaks the [UCI protocol](https://www.chessprogramming.org/UCI) and works
+with any UCI GUI (Arena, Cute Chess, Banksia). It can also be driven directly:
+
+```
+$ ./build/havoc
+haVoc v2.3.0
+by M.Glatzmaier
+info string Loaded network from nets/havoc-69c7d05e4298.nnue
+uci
+position startpos moves e2e4
+go depth 12
+```
+
+```
+uci / isready                  Handshake and synchronisation
+position startpos moves e2e4   Set up a position
+position fen <fen> moves ...   Set up a position from FEN
+go depth 15                    Search to a fixed depth
+go movetime 5000               Search for a fixed number of milliseconds
+go wtime 60000 btime 60000     Search under a time control
+go infinite / stop             Search until stopped
+d                              Print the board, hash key, and FEN
+bench [depth]                  Search 12 fixed positions (default depth 10)
+quit                           Exit
+```
+
+`bench` is a quick regression check: it reports total nodes and nodes per second
+over the same positions every time, so two builds can be compared directly.
+Comparing across evaluations is meaningless, which is why the line names it.
+
+| Option | Type | Default | Notes |
+|--------|------|---------|-------|
+| `Threads` | spin, 1–1024 | 1 | Search threads (Lazy SMP) |
+| `Hash` | spin, 1–33554432 | 1024 | Transposition table size in MB |
+| `EvalFile` | string | auto | Network path, or `none` for the handcrafted evaluation |
+| `SyzygyPath` | string | empty | Directory of Syzygy tablebases, up to 6 pieces |
+| `ParamFile` | string | empty | Load search/evaluation parameters from a file |
+| `BookFile` | string | empty | Accepted but inert; `src/book.cpp` is a placeholder |
+
+Syzygy probing is WDL-only and happens inside the search; resolved positions are
+counted in the `tbhits` field of every `info` line. It is skipped when the
+position has castling rights or a non-zero fifty-move counter, because the
+tables model neither. Without DTZ the engine knows a position is won but not how
+far off the win is, so it substitutes a preference for winning sooner.
+
+## How it works
+
+**Search.** Iterative deepening with aspiration windows around a
+principal-variation search, a 4-entry-cluster transposition table, late move
+reductions, null move pruning, reverse futility pruning, ProbCut, singular and
+double extensions, internal iterative reductions, and a quiescence search with
+delta pruning and SEE. Move ordering uses killers, countermoves, butterfly,
+capture and continuation history; correction history adjusts the static
+evaluation. Multi-threading is Lazy SMP over a shared transposition table.
+
+**Evaluation.** A HalfKP network, 40960→256×2→32→32→1, quantised to int8/int16
+and run with AVX2. It was trained on ~29M positions from the engine's own
+self-play, labelled by the previous network, with WDL blended into the search
+score. Both evaluators sit behind one `IEvaluator` interface, so the search is
+unaware of which is in use. Training and data-generation details are in
+[`docs/nnue-data.md`](docs/nnue-data.md) and
+[`docs/nnue-integration.md`](docs/nnue-integration.md).
+
+## Known gaps
+
+- **The search is capped at 64 plies** (`MAX_PLY`). Ten seconds already reaches
+  ply 29.
+- **Search parameters are tuned below their own resolution.** SPSA at 32 games
+  an iteration cannot resolve anything below ~8–10 Elo per parameter, which is
+  why recent tunes move one parameter and leave the rest untouched. Fixed-node
+  rather than fixed-time games would remove the timing variance; not done yet.
 - **Several depth-indexed constants are calibrated to a bug that no longer
-  exists.** The reduction and futility formulas, null-move reduction and
-  reverse-futility margins were tuned while the depth counter ran at roughly
-  twice the real remaining depth, and none has been retuned since.
+  exists** — they were tuned while the depth counter ran at roughly twice the
+  real remaining depth. Retuning them hits the resolution floor above.
 - **The transposition key mixes in the fifty-move and half-move counters**,
-  which blocks transpositions between identical positions reached at different
+  blocking transpositions between identical positions reached at different
   plies. That looks like a mistake, but removing it measured ~20% more nodes, so
   it stays until something better replaces it.
-- **Polyglot book support is a stub**, although `BookFile` is advertised and
-  parsed. (Syzygy probing was a stub too; it is now implemented.)
-- **Syzygy probing is WDL-only.** Without DTZ the engine knows the result of a
-  tablebase position but not the distance to it, so conversion is driven by a
-  preference for winning sooner rather than by a proven shortest path.
-- **The search is not saturated:** 29% of positions change their preferred move
-  at depth 8, and 12% are still changing at depth 12, so nodes remain valuable.
+- **The network's width is not obviously right.** L1=256 was chosen by
+  measurement: at 512 and 1024 the network predicts its training labels *better*
+  and still loses badly, because the feature transformer outgrows the 36 MB L3
+  cache (21 MB at 256, 42 MB at 512, 84 MB at 1024). That is an implementation
+  limit, not a fact about chess — sparse propagation, AVX-VNNI and lazy
+  accumulator updates are all unimplemented, and each would move the trade.
+- **Texel tuning was a dead end**, left in the tree as history: its fit measured
+  +1.4 ± 19.9 Elo over 781 games.
+- **Polyglot book support is a stub.**
 
-The direction from here is a learned, CPU-side evaluation rather than further
-hand-tuning. The reasoning, the alternatives that were ruled out and the
-measured dead ends are in
-[`docs/neural-direction.md`](docs/neural-direction.md) and
-[`docs/roadmap.md`](docs/roadmap.md).
+Where the remaining strength is thought to be, and what has already been ruled
+out, is in [`docs/roadmap.md`](docs/roadmap.md) and
+[`docs/neural-direction.md`](docs/neural-direction.md).
 
 ## License
 

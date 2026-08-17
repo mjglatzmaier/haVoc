@@ -22,7 +22,7 @@
 
 namespace havoc::net {
 
-/// The network filename this binary was built against, e.g. "nn-69c7d05e4298.nnue".
+/// The network filename this binary was built against, e.g. "havoc-69c7d05e4298.nnue".
 /// Empty if the build did not specify one, in which case discovery is skipped
 /// and the handcrafted evaluation is used unless `EvalFile` says otherwise.
 [[nodiscard]] std::string_view default_net_name();
@@ -38,12 +38,12 @@ namespace havoc::net {
 ///
 /// Order, most specific first:
 ///   1. `$HAVOC_EVAL_FILE`             -- an explicit override, used verbatim
-///   2. `<executable dir>/<name>`      -- shipped alongside the binary
-///   3. `<executable dir>/nets/<name>`
-///   4. `<cwd>/<name>`                 -- the usual place while developing
-///   5. `<cwd>/nets/<name>`
-///   6. `$HAVOC_NET_DIR/<name>`
-///   7. `<user data dir>/havoc/<name>` -- where fetch-net.sh installs
+///   2. `$HAVOC_NET_DIR/<name>`        -- an explicitly configured directory
+///   3. `<executable dir>/<name>`      -- shipped alongside the binary
+///   4. `<executable dir>/nets/<name>`
+///   5. `<cwd>/<name>`                 -- the usual place while developing
+///   6. `<cwd>/nets/<name>`            -- where fetch-net.sh installs by default
+///   7. `<user data dir>/havoc/<name>` -- installed once, found from anywhere
 [[nodiscard]] std::vector<std::string> candidate_paths(std::string_view name);
 
 /// First candidate that exists and is a regular file, if any.

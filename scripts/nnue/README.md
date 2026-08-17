@@ -66,32 +66,35 @@ history. git-lfs was rejected too: it puts a bandwidth meter on a public
 repository, and the failure mode when the quota runs out is that clones start
 handing people pointer files that the engine cannot load.
 
-Instead they are assets on a permanent GitHub release tagged
-[`nets`](https://github.com/mjglatzmaier/haVoc/releases/tag/nets), which is
-deliberately **not** tied to an engine version — any binary can fetch any
-network, and networks are only added there, never replaced.
+Instead each network is an asset on its own permanent release, tagged
+`net-<hash>`. These are deliberately **not** tied to an engine version: any
+binary can fetch any network, and a release is only ever added, never
+rewritten, so a hash that resolved once resolves forever.
 
 A network is named after the first 12 hex digits of its own sha256:
 
 ```
-nn-69c7d05e4298.nnue
+havoc-69c7d05e4298.nnue
    └── sha256sum of the file begins 69c7d05e4298
 ```
 
-That makes the name a complete integrity check rather than something to be
-maintained separately. `fetch-net.sh` verifies every download against its own
-filename and refuses to install a mismatch, so a truncated or corrupted fetch
-cannot masquerade as a good network, and two files with the same name are
-necessarily the same file.
+So the name identifies the contents, and two files with the same name are
+necessarily the same file. `fetch-net.sh` checks the download against the full
+sha256 in `nets/default.txt` rather than the 48-bit prefix in the name, and
+verifies before moving the file into place, so a truncated or corrupted fetch
+can neither masquerade as a good network nor be left sitting where the engine
+looks.
 
 ```bash
-scripts/nnue/fetch-net.sh            # the network this checkout expects
-scripts/nnue/fetch-net.sh --list     # everything published
-scripts/nnue/fetch-net.sh --dir ./   # install somewhere specific
+scripts/fetch-net.sh            # the network this checkout expects
+scripts/fetch-net.sh --list     # everything published
+scripts/fetch-net.sh --dir ./   # install somewhere specific
 ```
 
-With no arguments it reads `HAVOC_DEFAULT_NET` out of `CMakeLists.txt`, so it
-always fetches the network matching the code you are about to build.
+With no arguments it reads `nets/default.txt`, which is also where CMake reads
+the name it compiles in, so it always fetches the network matching the code you
+are about to build. Networks land in `nets/` by default, which is on the
+engine's search path.
 
 ### Where the engine looks
 
@@ -101,11 +104,14 @@ weaker, with no error — is a bad default. Search order is in
 `include/havoc/net_path.hpp` and pinned by `tests/test_net_path.cpp`:
 
 1. `$HAVOC_EVAL_FILE` (used verbatim)
-2. next to the binary, then `<binary dir>/nets/`
-3. the working directory, then `./nets/`
-4. `$HAVOC_NET_DIR`
-5. `~/.local/share/havoc/` (`%LOCALAPPDATA%\havoc\` on Windows) — where
-   `fetch-net.sh` installs by default
+2. `$HAVOC_NET_DIR`
+3. next to the binary, then `<binary dir>/nets/`
+4. the working directory, then `./nets/` — where `fetch-net.sh` installs
+5. `~/.local/share/havoc/` (`%LOCALAPPDATA%\havoc\` on Windows)
+
+Explicit configuration comes first: someone who set `HAVOC_NET_DIR` said which
+network they want, and a file that merely happens to sit beside the binary
+should not quietly outrank that.
 
 The UCI `EvalFile` option overrides all of it, and `EvalFile none` returns the
 engine to the handcrafted evaluation. If nothing is found the engine says so
@@ -115,13 +121,14 @@ and keeps playing rather than refusing to start.
 
 | network | L1 | corpus | notes |
 |---|---|---|---|
-| `nn-69c7d05e4298.nnue` | 256 | 28.9M positions, iteration 4 | ships with v2.3; +60.8 ± 22.0 Elo over the iteration-3 net |
+| `havoc-69c7d05e4298.nnue` | 256 | 28.9M positions, iteration 4 | ships with v2.3; +60.8 ± 22.0 Elo over the one below |
+| `havoc-a311596752e1.nnue` | 256 | iteration 3 | first network to beat HCE; superseded |
 
 Because `bench` node counts differ between evaluations, the bench line names
 the evaluation it used. Do not compare across them:
 
 ```
-Bench: 728941 nodes, ..., eval NNUE     # with nn-69c7d05e4298.nnue
+Bench: 728941 nodes, ..., eval NNUE     # with havoc-69c7d05e4298.nnue
 Bench: 709908 nodes, ..., eval HCE      # no network, e.g. in CI
 ```
 

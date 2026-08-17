@@ -1,0 +1,17 @@
+{
+  "name": "havoc-69c7d05e4298.nnue",
+  "sha256": "69c7d05e429873cb10c1f42738daee4f474a637b71bd42f5ef57b328952b8975",
+  "architecture": {"feature_set": "HalfKP", "input_dim": 40960, "l1": 256, "l2": 32, "l3": 32, "qa": 127},
+  "training": {
+    "positions": 28900000,
+    "labels": "self-play, WDL-blended search score",
+    "corpus": "iteration 4",
+    "labelled_by": "havoc-a311596752e1.nnue",
+    "validation": "held-out, leaked positions dropped"
+  },
+  "measured": {
+    "vs_havoc-a311596752e1": "+60.8 +/- 22.0 Elo, 600 games",
+    "bench_nodes": 728941
+  },
+  "notes": "Selected from a four-arm width sweep (L1 = 256, 256, 512, 1024). The two wider arms fit their labels better and still lost: the feature transformer outgrows the 36 MB L3 cache at 42 MB and 84 MB, and the search loses more nodes than the evaluation gains accuracy. Validation MAE ranked all four arms in exactly the reverse of their measured strength, so MAE was not used to choose."
+}

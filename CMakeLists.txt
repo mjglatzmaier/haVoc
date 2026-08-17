@@ -20,12 +20,34 @@ option(HAVOC_WERROR            "Treat compiler warnings as errors"    OFF)
 option(HAVOC_NATIVE            "Enable -march=native for SIMD/popcnt" ON)
 option(HAVOC_SYZYGY            "Build Syzygy tablebase probing (Fathom)" ON)
 
-# Network the binary looks for on startup when EvalFile is not set. Networks are
-# named after their own sha256 so the name pins the contents; see
-# include/havoc/net_path.hpp. Set to "" to build an engine that only ever uses
-# the handcrafted evaluation unless told otherwise.
-set(HAVOC_DEFAULT_NET "nn-69c7d05e4298.nnue" CACHE STRING
+# Network the binary looks for on startup when EvalFile is not set. Read from
+# nets/default.txt rather than written here, so that the build, the fetch
+# script and the committed provenance cannot disagree about which network is
+# current. Override with -DHAVOC_DEFAULT_NET=..., or set it empty to build an
+# engine that only ever uses the handcrafted evaluation.
+set(_havoc_net_from_spec "")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nets/default.txt")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/nets/default.txt" _net_spec REGEX "^name=")
+    if(_net_spec)
+        list(GET _net_spec 0 _net_line)
+        string(REGEX REPLACE "^name=" "" _havoc_net_from_spec "${_net_line}")
+    endif()
+endif()
+
+# When the spec names a different network than it did at the last configure,
+# adopt it. Without this an existing build tree keeps whatever was cached the
+# first time and silently builds an engine that looks for a network nobody
+# ships any more -- which is not a hypothetical, it is how this was found.
+# An explicit -DHAVOC_DEFAULT_NET still survives, until the spec itself moves.
+if(NOT "${_havoc_net_from_spec}" STREQUAL "${HAVOC_DEFAULT_NET_SPEC_SEEN}")
+    set(HAVOC_DEFAULT_NET "${_havoc_net_from_spec}" CACHE STRING
+        "Filename of the evaluation network to auto-load at startup" FORCE)
+    set(HAVOC_DEFAULT_NET_SPEC_SEEN "${_havoc_net_from_spec}" CACHE INTERNAL
+        "nets/default.txt name at the last configure")
+endif()
+set(HAVOC_DEFAULT_NET "${_havoc_net_from_spec}" CACHE STRING
     "Filename of the evaluation network to auto-load at startup")
+message(STATUS "Default network: ${HAVOC_DEFAULT_NET}")
 
 # ── CMake Modules ────────────────────────────────────────────────────────────
 include(cmake/CompilerWarnings.cmake)
