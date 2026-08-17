@@ -228,8 +228,14 @@ constexpr int16_t kInf = 10000;
 constexpr int16_t kNegInf = -10000;
 constexpr int16_t kMate = kInf - 1;
 constexpr int16_t kMated = kNegInf + 1;
-constexpr int16_t kMateMaxPly = kMate - 64;
-constexpr int16_t kMatedMaxPly = kMated + 64;
+// Derived from MAX_PLY rather than spelled 64. These bands exist to hold every
+// score the search can return that is relative to the root distance, and a
+// mate cannot be further away than the deepest ply the search can reach. Left
+// as a literal, raising MAX_PLY would silently narrow the band until deep mate
+// scores fell out of it and stopped being rebased on their way through the
+// transposition table -- a bug that shows up only in long searches.
+constexpr int16_t kMateMaxPly = static_cast<int16_t>(kMate - Depth::MAX_PLY);
+constexpr int16_t kMatedMaxPly = static_cast<int16_t>(kMated + Depth::MAX_PLY);
 
 /// Tablebase verdicts sit in their own band, immediately below the mate band
 /// and above anything the evaluation can produce.
@@ -243,9 +249,18 @@ constexpr int16_t kMatedMaxPly = kMated + 64;
 /// the same reason.
 constexpr int16_t kTbWin = kMateMaxPly - 1;
 constexpr int16_t kTbLoss = static_cast<int16_t>(-kTbWin);
-constexpr int16_t kTbWinMaxPly = static_cast<int16_t>(kTbWin - 64);
+constexpr int16_t kTbWinMaxPly = static_cast<int16_t>(kTbWin - Depth::MAX_PLY);
 constexpr int16_t kTbLossMaxPly = static_cast<int16_t>(-kTbWinMaxPly);
 constexpr int16_t kDraw = 0;
+
+// The three bands must stay disjoint and must stay above anything the
+// evaluation can produce, which is what makes a single comparison against
+// kTbWinMaxPly enough to catch both a tablebase score and a mate score on
+// their way into the transposition table. Checked here so that raising
+// MAX_PLY fails the build rather than the search.
+static_assert(kTbWin < kMateMaxPly, "tablebase and mate bands overlap");
+static_assert(kTbWinMaxPly > 4000, "tablebase band has eaten the evaluation's range");
+static_assert(kMatedMaxPly < 0 && kTbLossMaxPly < 0, "score bands underflow");
 } // namespace score
 
 // ---------------------------------------------------------------------------
