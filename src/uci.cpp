@@ -135,8 +135,26 @@ bool parse_command(const std::string& input, SearchEngine& engine, position& uci
                     engine.set_threads(n);
                 break;
             }
-            if (cmd == "syzygypath" && instream >> cmd && instream >> cmd) {
-                havoc::tablebase::init(cmd);
+            if (cmd == "syzygypath" && instream >> cmd) {
+                // A tablebase path is very often several directories joined by
+                // the platform separator, and on Windows it routinely contains
+                // spaces. Reading a single whitespace token would silently
+                // load the first word of it, so take the rest of the line.
+                std::string path;
+                std::getline(instream, path);
+                const auto first = path.find_first_not_of(" \t");
+                const auto last = path.find_last_not_of(" \t\r");
+                path = (first == std::string::npos) ? std::string()
+                                                    : path.substr(first, last - first + 1);
+                if (!havoc::tablebase::init(path)) {
+                    std::cout << "info string SyzygyPath: no tablebases found at " << path
+                              << std::endl;
+                } else if (havoc::tablebase::available()) {
+                    std::cout << "info string Syzygy tablebases loaded, up to "
+                              << havoc::tablebase::max_pieces() << " pieces" << std::endl;
+                } else {
+                    std::cout << "info string Syzygy tablebases unloaded" << std::endl;
+                }
                 break;
             }
             if (cmd == "bookfile" && instream >> cmd && instream >> cmd) {
