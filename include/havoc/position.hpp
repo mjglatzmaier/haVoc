@@ -109,6 +109,10 @@ class position {
     // every thread for the node limit and by the UCI loop for live nps.
     single_writer_counter nodes_searched;
     single_writer_counter qnodes_searched;
+    /// Positions this thread resolved from a tablebase rather than by
+    /// searching. Reported as UCI `tbhits`, which is the only way an operator
+    /// can tell that SyzygyPath actually took effect.
+    single_writer_counter tb_hits_;
 
   public:
     position() { history_.reserve(1024); }
@@ -215,6 +219,15 @@ class position {
 
     [[nodiscard]] inline Square eps() const { return ifo.eps; }
     [[nodiscard]] inline Color to_move() const { return ifo.stm; }
+
+    /// Halfmoves since the last capture or pawn move. Tablebase probes need
+    /// this to be zero, since the tables encode no progress toward the
+    /// fifty-move rule.
+    [[nodiscard]] inline int rule50() const { return static_cast<int>(ifo.move50); }
+
+    /// The raw castling-rights mask. Tablebase probes need this to be zero for
+    /// the same reason.
+    [[nodiscard]] inline U16 castle_mask() const { return ifo.cmask; }
     [[nodiscard]] inline U64 key() const { return ifo.key; }
     [[nodiscard]] inline U64 repkey() const { return ifo.repkey; }
     [[nodiscard]] inline U64 pawnkey() const { return ifo.pawnkey; }
@@ -242,6 +255,9 @@ class position {
     inline void set_qnodes_searched(U64 qn) { qnodes_searched.set(qn); }
     inline void adjust_nodes(const U64& dn) { nodes_searched.add(dn); }
     inline void adjust_qnodes(const U64& dn) { qnodes_searched.add(dn); }
+    [[nodiscard]] inline U64 tb_hits() const { return tb_hits_.get(); }
+    inline void set_tb_hits(U64 n) { tb_hits_.set(n); }
+    inline void adjust_tb_hits(const U64& dn) { tb_hits_.add(dn); }
 
     template <Color c, Piece p> [[nodiscard]] inline U64 get_pieces() const {
         return pcs.bitmap[c][p];

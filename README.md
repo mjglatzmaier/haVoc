@@ -177,12 +177,34 @@ directly.
 | `Threads` | spin, 1–1024 | 1 | Number of search threads (Lazy SMP) |
 | `Hash` | spin, 1–33554432 | 1024 | Transposition table size in MB |
 | `ParamFile` | string | empty | Load evaluation parameters from a file |
-| `SyzygyPath` | string | empty | Accepted but currently inert (see below) |
+| `SyzygyPath` | string | empty | Directory of Syzygy tablebases, up to 6 pieces |
 | `BookFile` | string | empty | Accepted but currently inert (see below) |
 
-`SyzygyPath` and `BookFile` are advertised and parsed, but `src/tablebase.cpp`
-and `src/book.cpp` are placeholders that always report "not available". Setting
-them has no effect on play.
+#### Syzygy tablebases
+
+Set `SyzygyPath` to a directory of `.rtbw` files and the search resolves any
+position small enough to be in them exactly, rather than evaluating it:
+
+```
+setoption name SyzygyPath value /path/to/syzygy
+```
+
+The engine reports what it loaded (`info string Syzygy tablebases loaded, up to
+5 pieces`) and counts resolved positions in the `tbhits` field of every `info`
+line, so you can confirm it is actually being used. Several directories may be
+joined with the platform path separator, and the path may contain spaces.
+
+Only WDL is probed, and only inside the search. There is no DTZ, so the engine
+knows a position is won without knowing how far off the win is; it substitutes
+a preference for winning sooner, which converts but plays less precisely than a
+DTZ-aware engine. Probing is skipped whenever the position has castling rights
+or a non-zero fifty-move counter, because the tables model neither.
+
+Building with `-DHAVOC_SYZYGY=OFF` removes the probing code and the vendored
+Fathom library entirely; the option then reports that no tables were found.
+
+`BookFile` is still advertised and parsed, but `src/book.cpp` is a placeholder
+that always reports "not available". Setting it has no effect on play.
 
 ## How it works
 
@@ -257,8 +279,11 @@ Windows: [ci.yml](https://github.com/mjglatzmaier/haVoc/actions/workflows/ci.yml
   which blocks transpositions between identical positions reached at different
   plies. That looks like a mistake, but removing it measured ~20% more nodes, so
   it stays until something better replaces it.
-- **Syzygy probing and Polyglot books are stubs**, although both options are
-  advertised and parsed.
+- **Polyglot book support is a stub**, although `BookFile` is advertised and
+  parsed. (Syzygy probing was a stub too; it is now implemented.)
+- **Syzygy probing is WDL-only.** Without DTZ the engine knows the result of a
+  tablebase position but not the distance to it, so conversion is driven by a
+  preference for winning sooner rather than by a proven shortest path.
 - **The search is not saturated:** 29% of positions change their preferred move
   at depth 8, and 12% are still changing at depth 12, so nodes remain valuable.
 

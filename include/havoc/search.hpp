@@ -137,6 +137,9 @@ class SearchEngine {
     SearchSignals& signals() { return signals_; }
     hash_table& tt() { return tt_; }
     U64 total_nodes() const;
+    /// Summed across threads, like total_nodes(). Zero unless SyzygyPath is
+    /// set and the search actually reached a position in the tables.
+    U64 total_tb_hits() const;
 
     void set_threads(int n);
     /// Number of search threads currently running. Exposed so the clamp on
@@ -191,6 +194,10 @@ class SearchEngine {
     std::atomic<bool> searching_{false};
     std::mutex output_mutex_;
     int multi_pv_ = 1;
+    /// Cached from tablebase::max_pieces() when a search starts, so the hot
+    /// path tests an int rather than calling into the probe layer at every
+    /// node. Zero disables probing entirely, which is the default.
+    int tb_max_pieces_ = 0;
 
     // Per-search state
     std::vector<std::unique_ptr<position>> positions_;

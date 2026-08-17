@@ -230,6 +230,21 @@ constexpr int16_t kMate = kInf - 1;
 constexpr int16_t kMated = kNegInf + 1;
 constexpr int16_t kMateMaxPly = kMate - 64;
 constexpr int16_t kMatedMaxPly = kMated + 64;
+
+/// Tablebase verdicts sit in their own band, immediately below the mate band
+/// and above anything the evaluation can produce.
+///
+/// They need a band of their own for two reasons. A WDL probe proves the
+/// result but says nothing about the distance to it, so it must not be
+/// reported to a GUI as "mate in N" -- that would be a claim the engine cannot
+/// back. And because the score carries a `- ply` term so the search prefers
+/// converting sooner, it is ply-relative in exactly the way a mate score is,
+/// and has to be adjusted on its way in and out of the transposition table for
+/// the same reason.
+constexpr int16_t kTbWin = kMateMaxPly - 1;
+constexpr int16_t kTbLoss = static_cast<int16_t>(-kTbWin);
+constexpr int16_t kTbWinMaxPly = static_cast<int16_t>(kTbWin - 64);
+constexpr int16_t kTbLossMaxPly = static_cast<int16_t>(-kTbWinMaxPly);
 constexpr int16_t kDraw = 0;
 } // namespace score
 

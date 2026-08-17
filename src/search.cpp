@@ -4,6 +4,7 @@
 #include "havoc/eval/hce.hpp"
 #include "havoc/movegen.hpp"
 #include "havoc/position.hpp"
+#include "havoc/tablebase.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -35,18 +36,22 @@ bool has_legal_move(position& p) {
     return false;
 }
 
+// Both the mate band and the tablebase band below it are ply-relative: the
+// score means "this many plies from *here*", so it has to be rebased on the
+// way into the table and back again on the way out. kTbWinMaxPly is the lower
+// edge of the two bands taken together, so one comparison covers both.
 inline int16_t score_to_tt(int score, int ply) {
-    if (score >= score::kMateMaxPly)
+    if (score >= score::kTbWinMaxPly)
         return static_cast<int16_t>(score + ply);
-    if (score <= score::kMatedMaxPly)
+    if (score <= score::kTbLossMaxPly)
         return static_cast<int16_t>(score - ply);
     return static_cast<int16_t>(score);
 }
 
 inline int score_from_tt(int score, int ply) {
-    if (score >= score::kMateMaxPly)
+    if (score >= score::kTbWinMaxPly)
         return score - ply;
-    if (score <= score::kMatedMaxPly)
+    if (score <= score::kTbLossMaxPly)
         return score + ply;
     return score;
 }
@@ -219,6 +224,13 @@ void SearchEngine::start(position& p, const SearchLimits& lims, bool silent) {
 
     p.set_nodes_searched(0);
     p.set_qnodes_searched(0);
+    p.set_tb_hits(0);
+
+    // Read once per search rather than per node. It also means a SyzygyPath
+    // change arriving mid-search cannot take effect until the next one, which
+    // is the behaviour we want: the tables must not be swapped underneath a
+    // running search.
+    tb_max_pieces_ = tablebase::available() ? tablebase::max_pieces() : 0;
 
     // Load root moves
     Movegen mvs(p);
@@ -838,6 +850,59 @@ int SearchEngine::search(position& pos, int alpha, int beta, U16 depth, SearchNo
                     return ttvalue;
                 }
             }
+        }
+    }
+
+    // Syzygy. A WDL hit is ground truth: it settles the position outright, so
+    // it is worth more than any search of it and is stored at a depth that
+    // says so.
+    //
+    // The score carries `- root_dist` so that the same proven win found nearer
+    // the root outranks it found further away. Without that term every move in
+    // a won position scores identically, the search has nothing to maximise,
+    // and the engine shuffles until the fifty-move rule takes the win off it.
+    // That is the substitute for DTZ, which is what would otherwise supply the
+    // distance.
+    //
+    // Not at the root: the root needs a move, and a bare verdict does not
+    // provide one. Not on a singular verification search either, which is
+    // asking a different question about a specific excluded move.
+    if (!root_node && !singular_search && tb_max_pieces_ > 0 &&
+        bits::count(pos.all_pieces()) <= tb_max_pieces_ && pos.rule50() == 0 &&
+        pos.castle_mask() == 0) {
+        const int wdl = tablebase::probe_wdl(pos);
+        if (wdl != tablebase::kProbeFailed) {
+            pos.adjust_tb_hits(1);
+
+            const int tb_score = wdl > 0   ? score::kTbWin - root_dist
+                                 : wdl < 0 ? score::kTbLoss + root_dist
+                                           : score::kDraw;
+
+            // Returned unconditionally, and stored exact.
+            //
+            // The obvious alternative -- enter a win as a lower bound and a
+            // loss as an upper bound, and only cut when the bound clears the
+            // window -- is what this did first, and it was wrong. On the
+            // re-search that follows an aspiration fail-high the window opens
+            // to (-inf, beta), a proven loss of -9932 is no longer <= alpha of
+            // -9997, the bound test fails, and the node falls through into an
+            // ordinary search. A verdict that is *ground truth* was then
+            // overwritten by a heuristic evaluation: the tablebase said "black
+            // is lost" and the node returned -638. Using it as a bound is only
+            // sound if the bound is re-imposed on whatever the search returns,
+            // and nothing here did that.
+            //
+            // What is given up by returning it directly is distance, not
+            // result. A tablebase win might also be a forced mate, and a mate
+            // score would rank above this one -- but we cannot see it without
+            // searching, and the win is already guaranteed. The `- root_dist`
+            // term is what stands in for DTZ: it makes the same proven win
+            // worth more nearer the root, so the search still converts instead
+            // of shuffling until the fifty-move rule takes the win away.
+            tt_.save(pos.key(), static_cast<U8>(std::min(depth + 6, int(MAX_PLY) - 1)),
+                     static_cast<U8>(bound_exact), Move{}, score_to_tt(tb_score, stack->ply),
+                     pvNode);
+            return tb_score;
         }
     }
 
@@ -1724,6 +1789,7 @@ void SearchEngine::readout_pv(SearchNode* /*stack*/, const Rootmoves& mRoots, in
                                       : "")
                   << " nodes " << nodes
                   << " nps " << nps
+                  << " tbhits " << total_tb_hits()
                   << " hashfull " << tt_.hashfull()
                   << " time " << elapsed_ms
                   << " pv " << res << std::endl;
@@ -1736,6 +1802,13 @@ U64 SearchEngine::total_nodes() const {
     U64 n = 0;
     for (const auto& t : positions_)
         n += t->nodes() + t->qnodes();
+    return n;
+}
+
+U64 SearchEngine::total_tb_hits() const {
+    U64 n = 0;
+    for (const auto& t : positions_)
+        n += t->tb_hits();
     return n;
 }
 

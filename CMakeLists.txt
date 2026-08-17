@@ -4,7 +4,7 @@ project(haVoc
     VERSION 2.2.0
     DESCRIPTION "A modern UCI chess engine"
     HOMEPAGE_URL "https://github.com/mjglatzmaier/haVoc"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # ── C++ Standard ─────────────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ option(HAVOC_ENABLE_BENCH      "Build benchmarks"                     OFF)
 option(HAVOC_ENABLE_SANITIZERS "Enable ASan/UBSan in Debug builds"    OFF)
 option(HAVOC_WERROR            "Treat compiler warnings as errors"    OFF)
 option(HAVOC_NATIVE            "Enable -march=native for SIMD/popcnt" ON)
+option(HAVOC_SYZYGY            "Build Syzygy tablebase probing (Fathom)" ON)
 
 # ── CMake Modules ────────────────────────────────────────────────────────────
 include(cmake/CompilerWarnings.cmake)
@@ -55,6 +56,24 @@ set(HAVOC_CORE_SOURCES
 )
 
 add_library(havoc_core STATIC ${HAVOC_CORE_SOURCES})
+
+# ── Syzygy tablebases (Fathom, vendored, MIT) ────────────────────────────────
+# Third-party C sources are their own target: they are not ours to keep clean,
+# so havoc_set_warnings deliberately does not touch them. tbchess.c is included
+# by tbprobe.c rather than compiled separately, which is how Fathom is built.
+if(HAVOC_SYZYGY)
+    add_library(fathom STATIC third_party/fathom/tbprobe.c)
+    target_include_directories(fathom PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/fathom>)
+    set_target_properties(fathom PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
+    if(NOT MSVC)
+        target_compile_options(fathom PRIVATE -w)
+    endif()
+    find_package(Threads REQUIRED)
+    target_link_libraries(fathom PUBLIC Threads::Threads)
+    target_link_libraries(havoc_core PUBLIC fathom)
+    target_compile_definitions(havoc_core PUBLIC HAVOC_SYZYGY=1)
+endif()
 
 # The commit a binary was built from, regenerated on every build so it cannot
 # go stale. Anything that writes a training corpus stamps it into the sidecar,

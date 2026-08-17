@@ -23,6 +23,7 @@ set(HAVOC_TEST_SOURCES
     test_nnue_network.cpp
     test_nnue_evaluator.cpp
     test_search.cpp
+    test_tablebase.cpp
 )
 
 add_executable(havoc_tests ${HAVOC_TEST_SOURCES})
