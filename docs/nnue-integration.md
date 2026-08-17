@@ -369,7 +369,9 @@ board.
   suit it, with `forward_reference` kept as the definition it is checked
   against.
 
-The HCE path is untouched: `bench` is 709908 with and without the branch.
+The HCE path is untouched by that branch: `bench` was 709908 with and without
+it. (Both bench figures moved later, when the search constants were retuned
+against the network; see `include/havoc/parameters.hpp`.)
 
 ### Correctness, and what each check can actually see
 

@@ -128,8 +128,8 @@ Because `bench` node counts differ between evaluations, the bench line names
 the evaluation it used. Do not compare across them:
 
 ```
-Bench: 728941 nodes, ..., eval NNUE     # with havoc-69c7d05e4298.nnue
-Bench: 709908 nodes, ..., eval HCE      # no network, e.g. in CI
+Bench: 776644 nodes, ..., eval NNUE      # with havoc-69c7d05e4298.nnue
+Bench: 1028826 nodes, ..., eval HCE      # no network, e.g. in CI
 ```
 
 ## Notes
