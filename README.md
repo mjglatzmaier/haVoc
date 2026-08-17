@@ -17,15 +17,16 @@ way to show where its network came from.
 
 | Version | Evaluation | Rating | Games | Measured |
 |---|---|---|---|---|
-| v2.3 | NNUE, L1=256 | *pending gauntlet* | — | — |
+| v2.3 | NNUE, L1=256 | **2834** ±12 | 1200 | 2026-08-17 |
 | v2.2 | handcrafted | **2582** ±12 | 1000 | 2026-08-16 |
 
-Estimated on the CCRL 40/40 scale against five anchors. Treat the uncertainty
-as roughly ±50 rather than the ±12 the fit reports — it is statistical only,
-and the games are played at blitz against ratings established at 40/40. The
-per-change SPRTs are the trustworthy measurements; this table is a periodic
-check that the engine has not drifted away from the field. Method, per-anchor
-results and superseded measurements are in [`docs/ratings.md`](docs/ratings.md).
+Estimated on the CCRL 40/40 scale against six anchors spanning 2412–2985.
+Treat the uncertainty as roughly ±50 rather than the ±12 the fit reports — it
+is statistical only, and the games are played at blitz against ratings
+established at 40/40. The per-change SPRTs are the trustworthy measurements;
+this table is a periodic check that the engine has not drifted away from the
+field. Method, per-anchor results and superseded measurements are in
+[`docs/ratings.md`](docs/ratings.md).
 
 ## Building
 

@@ -37,6 +37,74 @@ exactly what happens below.
 the engine is extrapolating. This is the single largest source of error in the
 older measurements.
 
+## 2026-08-17, NNUE L1=256, 2834 ±12, 1200 games
+
+Six anchors, 20+0.2, one thread, 64 MB hash, `OwnBook` and `Ponder` forced
+off. Two games out of 1200 ended on time (0.17%) and none crashed or played
+an illegal move, so the spread below is a property of the anchors, not of
+corrupted results.
+
+| anchor | published | haVoc score | implies |
+|---|---|---|---|
+| Zurichess Fribourg | 2412 | 88.0% | 2758 |
+| Arasan 12.2 | 2505 | 88.0% | 2851 |
+| Phalanx XXIV | 2521 | 80.2% | 2764 |
+| Fruit 2.1 | 2694 | 76.2% | 2896 |
+| Glaurung 2.2 | 2793 | 59.2% | 2858 |
+| Senpai 1.0 | 2985 | 29.8% | 2836 |
+
+Senpai 1.0 was added for this run. The previous set topped out at Glaurung
+2793; at this strength a fit against it would have been extrapolating past its
+highest anchor, which is the defect that invalidated every superseded row
+below.
+
+The analyser warns that the 139-point spread exceeds its threshold, and the
+warning is correct, but it does not threaten the central value. Every
+defensible subset agrees:
+
+| subset | estimate |
+|---|---|
+| all six | 2834 ±12 |
+| excluding Arasan (the outlier in the 2582 run too) | 2832 ±13 |
+| only anchors scored between 25% and 75%, where the logistic model is least saturated | 2848 ±18 |
+
+The disagreement is between the anchors' published ratings, not about where
+haVoc sits. Zurichess and Arasan yield identical 88.0% scores while their
+published ratings differ by 93 points, so at least one of those two figures
+does not describe the binary built here. Arasan implied high in the 2582 run
+as well, which points at the Arasan build rather than at anything that moved
+this time.
+
+### The prediction was wrong, and the naive method beat the careful one
+
+Before the run two estimates were on record:
+
+| method | prediction | error |
+|---|---|---|
+| naive sum of self-play SPRT gains, 2582 + 261 | 2843 | **+9** |
+| discounting those gains by a 0.6–0.75 "transfer factor" | 2690 | **−144** |
+
+Restricting the new fit to the same five anchors used for the 2582 run, to
+compare like with like, gives 2834 ±14, so the measured gain is **+252**
+against the +261 the self-play SPRTs claimed.
+
+The reasoning behind the discount was that self-play overstates gains, that
+Elo is not additive across a moving baseline, and that fixed-depth results do
+not transfer to time control. Each of those effects is real. The conclusion
+drawn from them was still wrong, because the correction was applied with no
+calibration data — it substituted a plausible story for a measurement and
+happened to be worth −144 Elo of pessimism.
+
+For now, treat the sum of self-play SPRT gains as an *unbiased* predictor of
+gauntlet movement in this rating range, and do not discount it again without
+evidence. One paired data point is thin, so the next gauntlet is a direct test:
+if the naive sum is accurate a second time, this stops being a coincidence.
+
+A caveat that cuts the other way: these games are blitz while the anchor
+ratings come from 40/40, and older engines generally gain relative strength at
+long time control. That systematic offset is not in the ±12 and is the reason
+the README quotes ±50.
+
 ## 2026-08-16, handcrafted evaluation, 2582 ±12, 1000 games
 
 Per-anchor results, which are more informative than the pooled number:
