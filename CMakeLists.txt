@@ -66,7 +66,18 @@ if(HAVOC_SYZYGY)
     target_include_directories(fathom PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/fathom>)
     set_target_properties(fathom PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
-    if(NOT MSVC)
+    if(MSVC)
+        # Fathom reaches for C11 <stdatomic.h>, which MSVC only offers behind
+        # /experimental:c11atomics. Rather than depend on an experimental
+        # switch, compile the one translation unit as C++ -- Fathom carries
+        # __cplusplus branches that select <atomic> and std::mutex for exactly
+        # this case, and tbprobe.h wraps its declarations in extern "C" so the
+        # linkage the rest of the engine sees is unchanged.
+        set_source_files_properties(third_party/fathom/tbprobe.c
+                                    PROPERTIES LANGUAGE CXX)
+        set_target_properties(fathom PROPERTIES CXX_STANDARD 20)
+        target_compile_options(fathom PRIVATE /w)
+    else()
         target_compile_options(fathom PRIVATE -w)
     endif()
     find_package(Threads REQUIRED)
