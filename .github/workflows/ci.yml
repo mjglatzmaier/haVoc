@@ -31,24 +31,62 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / ${{ matrix.compiler }}
+    # Without this a hung step runs until GitHub's 6-hour default.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
 
-      # Install newer compilers on Ubuntu
+      # These installs are the only network-dependent steps in the job and they
+      # have hung for 25+ minutes twice, once on apt.llvm.org and once on plain
+      # apt, blocking every other check on the PR. A hang is far more common
+      # than a genuine failure, so: skip the work when the runner image already
+      # ships the compiler, retry a few times, and cap the step so a stuck
+      # mirror fails in minutes instead of stalling the run.
       - name: Install GCC 13 (Ubuntu)
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13
+          set -u
+          if command -v g++-13 >/dev/null 2>&1; then
+            echo "g++-13 already present: $(g++-13 --version | head -1)"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            echo "::group::apt attempt $attempt"
+            if sudo apt-get update && sudo apt-get install -y gcc-13 g++-13; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            sleep 15
+          done
+          echo "gcc-13 install failed after 3 attempts"
+          exit 1
 
       - name: Install Clang 17 (Ubuntu)
         if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'clang'
+        timeout-minutes: 10
         run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 17
-          sudo apt-get install -y clang-17
+          set -u
+          if command -v clang++-17 >/dev/null 2>&1; then
+            echo "clang++-17 already present: $(clang++-17 --version | head -1)"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            echo "::group::llvm.sh attempt $attempt"
+            if wget --timeout=60 --tries=3 -O llvm.sh https://apt.llvm.org/llvm.sh \
+               && chmod +x llvm.sh \
+               && sudo ./llvm.sh 17 \
+               && sudo apt-get install -y clang-17; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            sleep 20
+          done
+          echo "clang-17 install failed after 3 attempts"
+          exit 1
 
       # Configure
       - name: Configure (Unix)
