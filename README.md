@@ -45,6 +45,8 @@ time control. There is no runtime CPU detection, so the AVX2 binary will not
 start on a CPU that lacks AVX2.
 
 Put the `.nnue` file next to the executable and it is found automatically.
+The executables are self-contained: the C runtime is linked statically, so no
+Visual C++ redistributable is required.
 Binaries are built by [CI](.github/workflows/release.yml) from the tagged
 commit and carry a signed provenance attestation:
 
