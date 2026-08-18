@@ -9,15 +9,31 @@ of positions and counts nodes. The node count is therefore an exact checksum on
 "same code, same parameters, same build configuration". The *time* and *nps*
 will differ between machines; the node count must not.
 
+**Fetch the network first.** Networks are not kept in git, so a fresh clone has
+none, and an engine that cannot find one silently evaluates with the
+handcrafted evaluation instead. That is a perfectly working engine reporting a
+completely different node count, which looks exactly like the build difference
+this check exists to catch.
+
 ```sh
+./scripts/fetch-net.sh                      # ~20 MB, hash-checked against nets/default.txt
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVOC_BUILD_TOOLS=ON
 cmake --build build -j
-printf 'bench\nquit\n' | ./build/havoc      # expect 697583 nodes
-./build/tests/havoc_tests                   # expect 133 passing
+printf 'bench\nquit\n' | ./build/havoc      # expect 776644 nodes, eval NNUE
+./build/tests/havoc_tests                   # expect 219 tests, 0 failing
 ```
 
-A different node count means a build difference, not a porting success. Track it
-down before measuring anything.
+`bench` prints which evaluation it used. If it says `eval HCE` the network was
+not found: check `scripts/fetch-net.sh` actually placed it in `nets/`. For
+reference the handcrafted evaluation benches **1028826 nodes** on the same
+positions, so that number is a missing network rather than a broken port.
+
+Six tablebase tests skip when no Syzygy tables are present, so 213 passing and
+6 skipped is the expected result on a machine without them. Skips are fine;
+failures are not.
+
+A different node count, with the network loaded, means a build difference
+rather than a porting success. Track it down before measuring anything.
 
 ## What does not travel
 

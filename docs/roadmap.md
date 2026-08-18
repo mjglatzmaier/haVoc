@@ -16,9 +16,17 @@ disagree, it wins.
 
 ## 1. Where the engine stands
 
-haVoc is a hand-crafted-evaluation (HCE) alpha-beta engine, currently around
-**2500 Elo** on the CCRL scale. `bench` is **697583 nodes** and there are **160
-passing tests**. Both are exact checksums — see `handoff.md`.
+haVoc is an alpha-beta engine with an NNUE evaluation, measured at **2834 ±12**
+on the CCRL 40/40 scale (1200 games against six anchors, 17 August 2026). With
+the network loaded `bench` is **776644 nodes**; without one it falls back to the
+handcrafted evaluation and benches **1028826**. There are **219 tests**, six of
+which skip without Syzygy tables present. All of those are exact checksums —
+see `handoff.md`.
+
+The handcrafted evaluation is still in the tree and still works
+(`EvalFile none`), but it is no longer what the engine plays with, and the
+tuned search parameters are specific to the network. Sections below that were
+written against the HCE describe a configuration that is no longer the default.
 
 The 15 August 2026 session merged a 15-PR backlog: the first working Windows
 build, soft/hard time limits, three infinite hangs, two segfaults, several
