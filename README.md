@@ -28,6 +28,32 @@ this table is a periodic check that the engine has not drifted away from the
 field. Method, per-anchor results and superseded measurements are in
 [`docs/ratings.md`](docs/ratings.md).
 
+## Download
+
+Windows binaries are attached to each [release](https://github.com/mjglatzmaier/haVoc/releases),
+together with the network they expect.
+
+| file | use it if |
+|---|---|
+| `havoc-<version>-windows-x86-64-avx2.exe` | your CPU supports AVX2 (Intel Haswell / AMD Excavator, 2013 or later) — almost certainly this one |
+| `havoc-<version>-windows-x86-64.exe` | older CPU without AVX2 |
+
+The AVX2 build is worth roughly **5x the nodes per second**, because the
+network evaluation is where the engine spends its time. Take the plain x86-64
+build only if AVX2 is unavailable: it works, but it is much weaker at the same
+time control. There is no runtime CPU detection, so the AVX2 binary will not
+start on a CPU that lacks AVX2.
+
+Put the `.nnue` file next to the executable and it is found automatically.
+Binaries are built by [CI](.github/workflows/release.yml) from the tagged
+commit and carry a signed provenance attestation:
+
+```sh
+gh attestation verify havoc-2.3.0-windows-x86-64-avx2.exe -R mjglatzmaier/haVoc
+```
+
+On other platforms, build from source.
+
 ## Building
 
 Needs a C++20 compiler (GCC 12+, Clang 15+, AppleClang 16+, MSVC 2022+) and
