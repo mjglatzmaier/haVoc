@@ -1,5 +1,14 @@
 # Thread scaling: preliminary profiling
 
+> **These numbers describe the hand-crafted evaluator and predate NNUE.**
+> They were measured on 2026-08-15 (PR #126); the NNUE evaluator landed
+> afterwards in #139/#140 and is now the default. Evaluation cost per node
+> changed substantially, so nothing below should be quoted as the scaling
+> behaviour of the engine as shipped. The 1.74 M nps single-thread figure in
+> particular is an HCE number and is not comparable to anything measured
+> since. A spot-check of the NNUE build is recorded at the bottom; a proper
+> re-measurement is still owed.
+
 Roadmap Tier 1 item 2 (`docs/neural-direction.md` §10) asks for nps *and*
 strength to be measured against thread count "before assuming it scales". This
 is a first pass at that. It is **profiling, not a verdict**: the sample is small
@@ -118,3 +127,47 @@ to justify shipping it on this evidence.
 
 This is a robustness fix that removes a pathology, not a source of Elo. It is
 bench-identical because thread 0 is unaffected either way.
+
+## NNUE spot-check (2026-08-17)
+
+Prompted by the question "does it get stronger with more threads?", the profile
+above was re-run against the NNUE build to check whether the shape still holds.
+Same harness, same 14 positions, `go movetime 1500`, Hash 1024. This is a spot
+check at 1/8/16 threads, not a replacement for the table above.
+
+| threads | NNUE nps | NNUE vs 1t | HCE vs 1t | NNUE mean depth |
+| --- | --- | --- | --- | --- |
+| 1 | 1.91 M | 1.00x | 1.00x | 24.64 |
+| 8 | 12.58 M | 6.58x | 6.81x | 25.50 |
+| 16 | 16.91 M | 8.85x | 9.39x | 23.96 |
+
+Two things worth recording.
+
+**Throughput scaling did not get worse with NNUE, contrary to what I expected.**
+The prediction was that a heavier evaluator sharing one network across threads
+would contend for L3 and scale visibly worse. It does scale slightly worse --
+6.58x against 6.81x at 8 threads -- but the gap is small enough to sit inside
+the run-to-run spread this harness has already been shown to have. The
+prediction was wrong and the honest summary is "no detectable difference".
+
+**16 threads searches *shallower* than 8, despite 38% more nps.** The drop is
+0.62 ply and it reproduced in an independent second run, so it is unlikely to
+be noise in the way most differences in this document are. The HCE build shows
+a smaller drop at the same point, so this is not created by NNUE, but it is
+worse with NNUE. Cause is unknown; the hybrid-core and TT-pressure confounds
+listed above are both live candidates and neither has been controlled.
+
+**None of this is a strength measurement.** Depth at fixed time is a proxy, and
+the question actually asked -- whether more threads win games -- remains
+unanswered for both evaluators. It needs an N-threads against 1-thread SPRT at
+equal time control, which is a multi-hour occupation of the machine and has not
+been run. Until it is, the useful-range guidance above should be treated as
+carried over from the HCE era rather than confirmed for the current engine.
+
+### Correctness of NNUE under SMP is separately covered
+
+Thread safety of the shared network is not in question here. Each thread owns
+its own evaluator and accumulator stack, and `SeveralThreadsShareOneNetworkSafely`
+runs four threads checking every thread's incrementally-updated accumulator
+against a from-scratch rebuild. That test passes. The open questions above are
+about *benefit*, not correctness.
