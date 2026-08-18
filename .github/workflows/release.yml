@@ -1,0 +1,190 @@
+name: Release
+
+# Builds Windows binaries and attaches them to the GitHub release for a tag.
+#
+# Runs on tag push, and can be dispatched manually against an existing tag to
+# rebuild assets without cutting a new release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and upload assets for'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: windows / ${{ matrix.variant }}
+    runs-on: windows-latest
+
+    # Two ISA levels, because the engine selects its SIMD path at compile time
+    # (`#if defined(__AVX2__)` in nnue/network.hpp) and has no runtime
+    # dispatch. One binary therefore serves exactly one instruction set.
+    #
+    # avx2 is the binary essentially everyone should use. On this repo's
+    # bench, at equal node counts, dropping AVX2 costs a factor of ~5 in nps
+    # -- the NNUE forward pass is the whole reason. The x64 variant exists so
+    # that a pre-2013 CPU gets a working engine rather than an illegal
+    # instruction crash, and it is much slower.
+    #
+    # MSVC has no flag matching gcc's x86-64-v2, and `std::popcount` only
+    # lowers to POPCNT at /arch:AVX or above, so there is no useful middle
+    # tier here: it is /arch:AVX2 or the default SSE2 baseline.
+    #
+    # HAVOC_NATIVE is the project's own switch and resolves to exactly
+    # `/arch:AVX2` under MSVC -- the -march=native branches are guarded on
+    # GNU/Clang/AppleClang. On this compiler it is therefore a fixed, portable
+    # ISA target rather than "whatever this runner is", which is why it is
+    # safe to turn on for a redistributable binary. Passing /arch:AVX2 through
+    # CMAKE_CXX_FLAGS instead would *replace* CMake's default flags rather
+    # than add to them.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: avx2
+            native: 'ON'
+          - variant: x64
+            native: 'OFF'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      # On MSVC this switch is a fixed ISA choice (see the matrix comment), so
+      # the resulting binary is reproducible across runners rather than built
+      # for whichever CPU GitHub happened to allocate.
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DHAVOC_ENABLE_TESTS=ON
+          -DHAVOC_NATIVE=${{ matrix.native }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      # The release binary is tested, not merely compiled. This is the same
+      # suite CI runs on every pull request, re-run against the exact artifact
+      # being published.
+      - name: Test
+        working-directory: build
+        run: ctest -C Release --output-on-failure --parallel 4
+
+      # Without a network the engine falls back to the handcrafted evaluation,
+      # so a smoke test that skips this step would never execute the AVX2 NNUE
+      # kernels -- exactly the code most likely to fault on the wrong ISA.
+      - name: Fetch network
+        shell: pwsh
+        run: |
+          $spec = Get-Content nets/default.txt | Where-Object { $_ -match '^(name|sha256|url)=' }
+          $cfg = @{}
+          foreach ($line in $spec) { $k,$v = $line -split '=',2; $cfg[$k] = $v }
+          Invoke-WebRequest -Uri $cfg['url'] -OutFile $cfg['name']
+          $got = (Get-FileHash $cfg['name'] -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $cfg['sha256']) {
+            throw "network hash mismatch: expected $($cfg['sha256']), got $got"
+          }
+          Write-Host "network $($cfg['name']) verified"
+          echo "NET=$(Resolve-Path $cfg['name'])" >> $env:GITHUB_ENV
+
+      # A binary that starts and answers `uci` can still be one that cannot
+      # search. Requiring a bestmove catches that; requiring "eval NNUE"
+      # catches a binary that silently fell back to the handcrafted evaluation
+      # because it could not load the network.
+      #
+      # The node count is reported for comparison against the Linux reference
+      # (776644 for this network at the v2.3.0 tag). Identical node counts
+      # across platforms mean the search is genuinely deterministic; a
+      # difference is worth investigating but is not failed on here, since a
+      # legitimate compiler difference should not block a release.
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $exe = "build/Release/havoc.exe"
+          $bench = "setoption name EvalFile value $env:NET`nbench`nquit" | & $exe 2>&1 | Out-String
+          Write-Host $bench
+          if ($bench -notmatch 'eval NNUE') { throw "did not load the network: $bench" }
+          if ($bench -match 'Bench: (\d+) nodes') {
+            Write-Host "node count: $($Matches[1])  (linux reference 776644)"
+          } else { throw "no bench line from $exe" }
+
+          $search = "uci`nsetoption name EvalFile value $env:NET`nposition startpos`ngo depth 10`nquit" `
+                    | & $exe 2>&1 | Out-String
+          if ($search -notmatch 'uciok')    { throw "no uciok from $exe" }
+          if ($search -notmatch 'bestmove') { throw "no bestmove from $exe" }
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $ver = $tag -replace '^v',''
+          $name = "havoc-$ver-windows-x86-64-${{ matrix.variant }}.exe"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build/Release/havoc.exe "dist/$name"
+          (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower() + "  $name" `
+            | Out-File -Encoding ascii "dist/$name.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: havoc-windows-${{ matrix.variant }}
+          path: dist/*
+
+  publish:
+    name: publish
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # attach assets to the release
+      id-token: write       # OIDC, for the build provenance attestation
+      attestations: write
+
+    steps:
+      # Needed for nets/default.txt; the binaries themselves arrive as
+      # artifacts from the build job.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la dist
+
+      # Attach the network too. Windows users cannot run scripts/fetch-net.sh,
+      # and an engine binary without a network quietly plays with the
+      # handcrafted evaluation instead -- several hundred Elo weaker, with no
+      # obvious sign that anything is wrong. Shipping them together makes the
+      # download self-contained. The hash is verified before upload so a
+      # corrupted mirror cannot be published under our name.
+      - name: Fetch and verify network
+        run: |
+          name=$(grep '^name=' nets/default.txt | cut -d= -f2)
+          sha=$(grep '^sha256=' nets/default.txt | cut -d= -f2)
+          url=$(grep '^url=' nets/default.txt | cut -d= -f2-)
+          curl -fsSL "$url" -o "dist/$name"
+          echo "$sha  dist/$name" | sha256sum -c -
+          echo "$sha  $name" > "dist/$name.sha256"
+
+      # Signed SLSA provenance tying each binary to this commit, workflow and
+      # run. Consumers verify with:
+      #   gh attestation verify havoc-<ver>-windows-x86-64-avx2.exe -R mjglatzmaier/haVoc
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'dist/*.exe'
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release upload "$tag" dist/* --clobber \
+            --repo "${{ github.repository }}"
