@@ -47,8 +47,10 @@ jobs:
       matrix:
         include:
           - variant: avx2
+            suffix: '-avx2'
             native: 'ON'
           - variant: x64
+            suffix: ''
             native: 'OFF'
 
     steps:
@@ -59,12 +61,20 @@ jobs:
       # On MSVC this switch is a fixed ISA choice (see the matrix comment), so
       # the resulting binary is reproducible across runners rather than built
       # for whichever CPU GitHub happened to allocate.
+      #
+      # The CRT is linked statically. With the default dynamic CRT the binary
+      # imports MSVCP140.dll and VCRUNTIME140.dll, so anyone without the
+      # Visual C++ redistributable installed gets "VCRUNTIME140.dll was not
+      # found" and the engine never starts -- a poor failure for a download
+      # aimed at chess GUI users. This costs a little size and applies only to
+      # released binaries, not to the normal developer build.
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Release
           -DHAVOC_ENABLE_TESTS=ON
           -DHAVOC_NATIVE=${{ matrix.native }}
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -119,12 +129,28 @@ jobs:
           if ($search -notmatch 'uciok')    { throw "no uciok from $exe" }
           if ($search -notmatch 'bestmove') { throw "no bestmove from $exe" }
 
+          # The static CRT is what makes this download self-contained. If a
+          # future change reverts to the dynamic runtime the binary still
+          # builds, tests and searches here -- and then fails to start on any
+          # machine without the Visual C++ redistributable. Checking the
+          # import names directly is the only way that regression is visible
+          # from CI.
+          $ascii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          foreach ($dll in 'VCRUNTIME140', 'MSVCP140') {
+            if ($ascii -match $dll) { throw "$exe imports $dll; expected a static CRT" }
+          }
+          Write-Host "no dynamic CRT imports"
+
+      # Naming must match the table in README.md: the AVX2 build carries an
+      # -avx2 suffix and the baseline is plain x86-64. Deriving it from the
+      # variant name alone produced "windows-x86-64-x64.exe", which is both
+      # redundant and not what the README told people to download.
       - name: Stage artifact
         shell: pwsh
         run: |
           $tag = "${{ github.event.inputs.tag || github.ref_name }}"
           $ver = $tag -replace '^v',''
-          $name = "havoc-$ver-windows-x86-64-${{ matrix.variant }}.exe"
+          $name = "havoc-$ver-windows-x86-64${{ matrix.suffix }}.exe"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item build/Release/havoc.exe "dist/$name"
           (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower() + "  $name" `
